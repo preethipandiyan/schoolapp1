@@ -39,14 +39,6 @@ interface FacultyItem {
   email: string;
 }
 
-interface LeaveRequest {
-  id: string;
-  teacherName: string;
-  reason: string;
-  date: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
-}
-
 interface ModuleItem {
   id: string;
   name: string;
@@ -61,6 +53,56 @@ const IconComp = ({ name, size = 20, color = '#64748B' }: { name: string; size?:
   } catch (e) {
     return <Text style={{ fontSize: size * 0.7, color: color || '#64748B' }}>●</Text>;
   }
+};
+
+// --- Reusable Professional Pagination Component ---
+interface PaginationProps {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}
+
+const PaginationControls = ({ currentPage, totalPages, totalItems, pageSize, onPageChange }: PaginationProps) => {
+  if (totalItems === 0 || totalPages <= 1) return null;
+
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+
+  return (
+    <View style={styles.paginationWrapper}>
+      <Text style={styles.paginationInfoText}>
+        Showing <Text style={styles.paginationBoldText}>{startItem}–{endItem}</Text> of{' '}
+        <Text style={styles.paginationBoldText}>{totalItems}</Text>
+      </Text>
+      <View style={styles.paginationBtnGroup}>
+        <TouchableOpacity
+          style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
+          onPress={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          activeOpacity={0.7}>
+          <IconComp name="chevron-back-outline" size={16} color={currentPage === 1 ? '#CBD5E1' : '#334155'} />
+          <Text style={[styles.paginationBtnText, currentPage === 1 && styles.paginationBtnTextDisabled]}>Prev</Text>
+        </TouchableOpacity>
+
+        <View style={styles.pageIndicatorBadge}>
+          <Text style={styles.pageIndicatorText}>
+            {currentPage} / {totalPages}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.paginationBtn, currentPage === totalPages && styles.paginationBtnDisabled]}
+          onPress={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          activeOpacity={0.7}>
+          <Text style={[styles.paginationBtnText, currentPage === totalPages && styles.paginationBtnTextDisabled]}>Next</Text>
+          <IconComp name="chevron-forward-outline" size={16} color={currentPage === totalPages ? '#CBD5E1' : '#334155'} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 };
 
 function App() {
@@ -92,16 +134,24 @@ function App() {
   const [moduleSearchQuery, setModuleSearchQuery] = useState<string>('');
   const [attendanceFilter, setAttendanceFilter] = useState<'All' | 'Present' | 'Absent' | 'OD'>('All');
 
+  // --- Pagination States ---
+  const [studentPage, setStudentPage] = useState<number>(1);
+  const [attendancePage, setAttendancePage] = useState<number>(1);
+  const [feePage, setFeePage] = useState<number>(1);
+  const [modulePage, setModulePage] = useState<number>(1);
+
+  const RECORD_PAGE_SIZE = 4;
+  const MODULE_PAGE_SIZE = 9;
+
   // --- Student Registration State ---
   const [newStudentName, setNewStudentName] = useState('');
-  const [newStudentGrade, setNewStudentGrade] = useState('Class 10A');
+  const [newStudentGrade, setNewStudentGrade] = useState('Class 10');
   const [newStudentRollNo, setNewStudentRollNo] = useState('');
   const [newStudentFeePaid, setNewStudentFeePaid] = useState(true);
 
   // --- Faculty Onboarding State ---
   const [newFacultyName, setNewFacultyName] = useState('');
   const [newFacultySubject, setNewFacultySubject] = useState('');
-
   const [facultyCount, setFacultyCount] = useState(28);
 
   // --- Sample Data ---
@@ -113,6 +163,9 @@ function App() {
     { id: '5', name: 'Vikram Patel', grade: 'Class 11', rollNo: '105', attendanceStatus: 'OD', feePaid: true },
     { id: '6', name: 'Sneha Iyer', grade: 'Class 12', rollNo: '106', attendanceStatus: 'Present', feePaid: true },
     { id: '7', name: 'Karthik S', grade: 'Class 12', rollNo: '107', attendanceStatus: 'Present', feePaid: false },
+    { id: '8', name: 'Divya Nair', grade: 'Class 10', rollNo: '108', attendanceStatus: 'Present', feePaid: true },
+    { id: '9', name: 'Rohan Gupta', grade: 'Class 11', rollNo: '109', attendanceStatus: 'Absent', feePaid: false },
+    { id: '10', name: 'Meera Menon', grade: 'Class 12', rollNo: '110', attendanceStatus: 'Present', feePaid: true },
   ]);
 
   // --- 21 Admin Modules for "All Modules" Grid ---
@@ -139,6 +192,19 @@ function App() {
     { id: 'm20', name: 'Staff Directory', icon: 'person-add-outline', color: '#2563EB' },
     { id: 'm21', name: 'Noticeboard', icon: 'megaphone-outline', color: '#D97706' },
   ];
+
+  // --- Reset Pagination when Filters Change ---
+  useEffect(() => {
+    setStudentPage(1);
+  }, [studentSearchQuery, gradeFilter]);
+
+  useEffect(() => {
+    setAttendancePage(1);
+  }, [attendanceFilter]);
+
+  useEffect(() => {
+    setModulePage(1);
+  }, [moduleSearchQuery]);
 
   // --- Session Check ---
   useEffect(() => {
@@ -309,9 +375,9 @@ function App() {
         `🏫 ZUNA SCHOOL MANAGEMENT SYSTEM - EXECUTIVE AUDIT REPORT\n` +
         `--------------------------------------------------\n` +
         `Date: ${new Date().toLocaleDateString()}\n` +
-        `School ID: ZUNA-ACADEMY-2026\n\n` +
+        `School: ZUNA International Academy\n\n` +
         `📊 EXECUTIVE METRICS:\n` +
-        `• Total Enrolled Students: ${students.length + 405}\n` +
+        `• Total Enrolled Students: ${students.length + 402}\n` +
         `• Teaching Staff Count: ${facultyCount}\n` +
         `• Active Classes: 18 Sections\n` +
         `• Pending Fee Balance: ₹ 2,48,500\n`;
@@ -320,7 +386,7 @@ function App() {
     } catch (error) {}
   };
 
-  // --- Filtered Lists ---
+  // --- Filtered & Paginated Lists ---
   const filteredStudents = students.filter(s => {
     const matchesSearch = (s.name || '').toLowerCase().includes((studentSearchQuery || '').toLowerCase()) ||
                           (s.rollNo || '').includes(studentSearchQuery) ||
@@ -330,9 +396,20 @@ function App() {
     return matchesSearch && matchesGrade && matchesAttendance;
   });
 
+  const totalStudentPages = Math.ceil(filteredStudents.length / RECORD_PAGE_SIZE) || 1;
+  const paginatedStudents = filteredStudents.slice((studentPage - 1) * RECORD_PAGE_SIZE, studentPage * RECORD_PAGE_SIZE);
+
+  const totalAttendancePages = Math.ceil(filteredStudents.length / RECORD_PAGE_SIZE) || 1;
+  const paginatedAttendance = filteredStudents.slice((attendancePage - 1) * RECORD_PAGE_SIZE, attendancePage * RECORD_PAGE_SIZE);
+
+  const totalFeePages = Math.ceil(students.length / RECORD_PAGE_SIZE) || 1;
+  const paginatedFeeStudents = students.slice((feePage - 1) * RECORD_PAGE_SIZE, feePage * RECORD_PAGE_SIZE);
+
   const filteredModules = allModulesList.filter(m =>
     (m.name || '').toLowerCase().includes((moduleSearchQuery || '').toLowerCase())
   );
+  const totalModulePages = Math.ceil(filteredModules.length / MODULE_PAGE_SIZE) || 1;
+  const paginatedModules = filteredModules.slice((modulePage - 1) * MODULE_PAGE_SIZE, modulePage * MODULE_PAGE_SIZE);
 
   // =========================================================================
   // 1. SPLASH SCREEN
@@ -344,7 +421,7 @@ function App() {
           <StatusBar barStyle="light-content" backgroundColor="#7C3AED" translucent={false} />
           <View style={styles.splashContent}>
             <View style={styles.splashBadge}>
-              <IconComp name="school-outline" size={32} color="#FFFFFF" />
+              <IconComp name="school-outline" size={36} color="#FFFFFF" />
             </View>
             <Text style={styles.splashTitle}>ZUNA</Text>
             <Text style={styles.splashSubtitle}>School Management System</Text>
@@ -383,7 +460,7 @@ function App() {
               <View style={styles.loginTitleBlock}>
                 <Text style={styles.loginHeading}>Log in to your account</Text>
                 <Text style={styles.loginSubHeading}>
-                  Access your tasks, notes, and projects anytime, anywhere - and keep everything flowing in one place.
+                  Access your school management tasks, students, and modules seamlessly in one place.
                 </Text>
               </View>
 
@@ -462,24 +539,27 @@ function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* Quick Demo Access (Populates credentials without auto-login) */}
+              {/* Quick Demo Access (Replaced Emojis with Professional Icon Badges) */}
               <View style={styles.quickDemoCardSection}>
                 <Text style={styles.quickDemoHeaderTitle}>QUICK DEMO ACCESS</Text>
                 <View style={styles.quickPillsRowBox}>
                   <TouchableOpacity
                     style={styles.quickRolePillBtn}
                     onPress={() => handleDemoQuickLogin('Admin')}>
-                    <Text style={styles.quickRolePillText}>👑 Admin</Text>
+                    <IconComp name="shield-checkmark-outline" size={14} color="#7C3AED" />
+                    <Text style={styles.quickRolePillText}>Admin</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.quickRolePillBtn}
                     onPress={() => handleDemoQuickLogin('Teacher')}>
-                    <Text style={styles.quickRolePillText}>👨‍🏫 Teacher</Text>
+                    <IconComp name="school-outline" size={14} color="#2563EB" />
+                    <Text style={styles.quickRolePillText}>Teacher</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.quickRolePillBtn}
                     onPress={() => handleDemoQuickLogin('Student')}>
-                    <Text style={styles.quickRolePillText}>🎓 Student</Text>
+                    <IconComp name="person-outline" size={14} color="#059669" />
+                    <Text style={styles.quickRolePillText}>Student</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -489,7 +569,8 @@ function App() {
           {/* Toast Notification */}
           {toastMessage && (
             <View style={styles.toastBannerBox}>
-              <Text style={styles.toastBannerText}>✨ {toastMessage}</Text>
+              <IconComp name="sparkles-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.toastBannerText}>{toastMessage}</Text>
             </View>
           )}
 
@@ -497,7 +578,10 @@ function App() {
           <Modal visible={showForgotModal} transparent animationType="fade">
             <View style={styles.modalOverlayDark}>
               <View style={styles.modalCardContainer}>
-                <Text style={styles.modalCardTitle}>🔑 Forgot Password</Text>
+                <View style={styles.modalHeaderTitleRow}>
+                  <IconComp name="key-outline" size={20} color="#7C3AED" />
+                  <Text style={styles.modalCardTitle}>Forgot Password</Text>
+                </View>
                 <Text style={styles.modalCardDesc}>
                   Enter your registered school email address below to receive password recovery instructions.
                 </Text>
@@ -532,25 +616,29 @@ function App() {
   }
 
   // =========================================================================
-  // 3. MAIN ADMIN MOBILE EXPERIENCE (With Floating Bottom Navigation)
+  // 3. MAIN ADMIN MOBILE EXPERIENCE
   // =========================================================================
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.mainAppContainer} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
 
-        {/* --- Top Header Bar --- */}
+        {/* --- Top Header Bar with Enhanced School Branding & Single Navigation --- */}
         <View style={styles.topHeaderBar}>
           <View style={styles.headerLeftBrand}>
-            <TouchableOpacity style={styles.menuIconButton} onPress={() => showToast('ZUNA Admin Menu')}>
-              <IconComp name="menu-outline" size={24} color="#0F172A" />
-            </TouchableOpacity>
             <View style={styles.headerLogoBadge}>
-              <IconComp name="school-outline" size={18} color="#7C3AED" />
+              <IconComp name="school-outline" size={20} color="#FFFFFF" />
             </View>
-            <View>
-              <Text style={styles.headerBrandTitle}>ZUNA</Text>
-              <Text style={styles.headerBrandSub}>Admin Portal</Text>
+            <View style={styles.schoolBrandDetails}>
+              <View style={styles.schoolNameRow}>
+                <Text style={styles.headerBrandTitle} numberOfLines={1} ellipsizeMode="tail">
+                  ZUNA International Academy
+                </Text>
+                <View style={styles.officialBadgePill}>
+                  <Text style={styles.officialBadgeText}>OFFICIAL</Text>
+                </View>
+              </View>
+              <Text style={styles.headerBrandSub}>School Management System • Admin Portal</Text>
             </View>
           </View>
 
@@ -558,9 +646,9 @@ function App() {
             <View style={styles.avatarPill}>
               <Text style={styles.avatarPillText}>AD</Text>
             </View>
-            <TouchableOpacity style={styles.roleDropdownBtn} onPress={handleLogout}>
+            <TouchableOpacity style={styles.roleDropdownBtn} onPress={handleLogout} activeOpacity={0.7}>
               <Text style={styles.roleDropdownText}>{activeRole}</Text>
-              <IconComp name="chevron-down-outline" size={14} color="#64748B" />
+              <IconComp name="log-out-outline" size={14} color="#64748B" />
             </TouchableOpacity>
           </View>
         </View>
@@ -568,7 +656,8 @@ function App() {
         {/* Toast Banner */}
         {toastMessage && (
           <View style={styles.toastBannerBox}>
-            <Text style={styles.toastBannerText}>✨ {toastMessage}</Text>
+            <IconComp name="sparkles-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.toastBannerText}>{toastMessage}</Text>
           </View>
         )}
 
@@ -581,9 +670,12 @@ function App() {
               contentContainerStyle={styles.tabScrollContentWithFloatingNav}
               showsVerticalScrollIndicator={false}>
               
-              {/* Premium Welcome Gradient Banner */}
+              {/* Premium Welcome Gradient Banner (Icons instead of emoji) */}
               <View style={styles.greetingBannerCard}>
-                <Text style={styles.greetingTitle}>Good Morning, Admin 👋</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="sunny-outline" size={20} color="#F59E0B" />
+                  <Text style={styles.greetingTitle}>Good Morning, Admin</Text>
+                </View>
                 <Text style={styles.greetingSub}>Here's what's happening at your school today.</Text>
               </View>
 
@@ -700,7 +792,7 @@ function App() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.activityTitleText}>Leave request approved</Text>
-                      <Text style={styles.activitySubText}>Priya N • 1 day ago</Text>
+                      <Text style={styles.activitySubText}>Priya N • Staff</Text>
                     </View>
                     <Text style={styles.activityTimeText}>3 hours ago</Text>
                   </View>
@@ -745,19 +837,22 @@ function App() {
                     <TouchableOpacity
                       style={[styles.actionGridBtn, { backgroundColor: '#7C3AED' }]}
                       onPress={() => setShowStudentModal(true)}>
-                      <Text style={styles.actionGridBtnText}>+ Register Student</Text>
+                      <IconComp name="person-add-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.actionGridBtnText}>Register Student</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.actionGridBtn, { backgroundColor: '#059669' }]}
                       onPress={() => setShowFacultyModal(true)}>
-                      <Text style={styles.actionGridBtnText}>+ Add Faculty</Text>
+                      <IconComp name="people-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.actionGridBtnText}>Add Faculty</Text>
                     </TouchableOpacity>
                   </View>
 
                   <TouchableOpacity
                     style={[styles.actionGridBtn, { backgroundColor: '#2563EB', width: '100%' }]}
                     onPress={() => setShowReportModal(true)}>
-                    <Text style={styles.actionGridBtnText}>📄 Export Report</Text>
+                    <IconComp name="document-text-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.actionGridBtnText}>Export Executive Report</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -775,7 +870,8 @@ function App() {
                 <TouchableOpacity
                   style={styles.headerPrimaryBtn}
                   onPress={() => setShowStudentModal(true)}>
-                  <Text style={styles.headerPrimaryBtnText}>+ Add Student</Text>
+                  <IconComp name="person-add-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.headerPrimaryBtnText}>Add Student</Text>
                 </TouchableOpacity>
               </View>
 
@@ -810,8 +906,8 @@ function App() {
                 ))}
               </ScrollView>
 
-              {/* Student Directory List */}
-              {filteredStudents.map(s => (
+              {/* Student Directory List (Paginated) */}
+              {paginatedStudents.map(s => (
                 <View key={s.id} style={styles.studentListCardRow}>
                   <View style={styles.studentAvatarCircle}>
                     <Text style={styles.studentAvatarText}>{(s.name || 'S').split(' ').map(n => n[0]).join('')}</Text>
@@ -832,6 +928,15 @@ function App() {
                   </TouchableOpacity>
                 </View>
               ))}
+
+              {/* Pagination Controls for Student Directory */}
+              <PaginationControls
+                currentPage={studentPage}
+                totalPages={totalStudentPages}
+                totalItems={filteredStudents.length}
+                pageSize={RECORD_PAGE_SIZE}
+                onPageChange={setStudentPage}
+              />
 
             </ScrollView>
           )}
@@ -883,7 +988,7 @@ function App() {
                 ))}
               </View>
 
-              {/* Attendance Table Card */}
+              {/* Attendance Table Card (Paginated) */}
               <View style={styles.sectionCardBox}>
                 <View style={styles.tableHeaderRow}>
                   <Text style={[styles.tableHeaderText, { width: 50 }]}>Roll No</Text>
@@ -891,7 +996,7 @@ function App() {
                   <Text style={[styles.tableHeaderText, { width: 80, textAlign: 'right' }]}>Status</Text>
                 </View>
 
-                {filteredStudents.map(student => (
+                {paginatedAttendance.map(student => (
                   <View key={student.id} style={styles.tableDataRow}>
                     <Text style={[styles.tableCellText, { width: 50, color: '#64748B' }]}>{student.rollNo}</Text>
                     <Text style={[styles.tableCellText, { flex: 1, fontWeight: '600' }]}>{student.name}</Text>
@@ -907,6 +1012,15 @@ function App() {
                     </TouchableOpacity>
                   </View>
                 ))}
+
+                {/* Pagination Controls for Attendance Roster */}
+                <PaginationControls
+                  currentPage={attendancePage}
+                  totalPages={totalAttendancePages}
+                  totalItems={filteredStudents.length}
+                  pageSize={RECORD_PAGE_SIZE}
+                  onPageChange={setAttendancePage}
+                />
 
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
                   <TouchableOpacity
@@ -948,10 +1062,10 @@ function App() {
                 </View>
               </View>
 
-              {/* Student Fee Roster */}
+              {/* Student Fee Roster (Paginated) */}
               <View style={styles.sectionCardBox}>
                 <Text style={styles.sectionCardTitle}>Student Fee Status</Text>
-                {students.map(s => (
+                {paginatedFeeStudents.map(s => (
                   <View key={s.id} style={styles.activityItemRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.studentNameText}>{s.name}</Text>
@@ -961,22 +1075,39 @@ function App() {
                     <TouchableOpacity
                       style={[styles.smallFeeActionBtn, s.feePaid ? styles.feePaidStyle : styles.feeUnpaidStyle]}
                       onPress={() => toggleFeeStatus(s.id)}>
-                      <Text style={styles.smallFeeActionBtnText}>{s.feePaid ? '✅ Paid' : '❌ Unpaid'}</Text>
+                      <IconComp
+                        name={s.feePaid ? 'checkmark-circle-outline' : 'close-circle-outline'}
+                        size={14}
+                        color={s.feePaid ? '#059669' : '#DC2626'}
+                      />
+                      <Text style={[styles.smallFeeActionBtnText, { marginLeft: 4 }]}>
+                        {s.feePaid ? 'Paid' : 'Unpaid'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 ))}
 
+                {/* Pagination Controls for Fee Roster */}
+                <PaginationControls
+                  currentPage={feePage}
+                  totalPages={totalFeePages}
+                  totalItems={students.length}
+                  pageSize={RECORD_PAGE_SIZE}
+                  onPageChange={setFeePage}
+                />
+
                 <TouchableOpacity
-                  style={[styles.primaryLoginBtn, { marginTop: 16, backgroundColor: '#7C3AED' }]}
+                  style={[styles.primaryLoginBtn, { marginTop: 16, backgroundColor: '#7C3AED', flexDirection: 'row', gap: 8 }]}
                   onPress={() => showToast('Fee Reminders dispatched via SMS & Email!')}>
-                  <Text style={styles.primaryLoginBtnText}>📲 Send Payment Reminders</Text>
+                  <IconComp name="send-outline" size={16} color="#FFFFFF" />
+                  <Text style={styles.primaryLoginBtnText}>Send Payment Reminders</Text>
                 </TouchableOpacity>
               </View>
 
             </ScrollView>
           )}
 
-          {/* ==================== TAB 5: ALL MODULES (GRID VIEW) ==================== */}
+          {/* ==================== TAB 5: ALL MODULES (GRID VIEW PAGINATED) ==================== */}
           {activeAdminTab === 'All Modules' && (
             <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
               
@@ -999,9 +1130,9 @@ function App() {
                 </View>
               </View>
 
-              {/* 21 Modules Responsive Grid */}
+              {/* 21 Modules Responsive Grid (Paginated 9 per page) */}
               <View style={styles.modulesGridContainer}>
-                {filteredModules.map(mod => (
+                {paginatedModules.map(mod => (
                   <TouchableOpacity
                     key={mod.id}
                     style={styles.moduleGridCard}
@@ -1018,13 +1149,22 @@ function App() {
                 ))}
               </View>
 
+              {/* Pagination Controls for All Modules Grid */}
+              <PaginationControls
+                currentPage={modulePage}
+                totalPages={totalModulePages}
+                totalItems={filteredModules.length}
+                pageSize={MODULE_PAGE_SIZE}
+                onPageChange={setModulePage}
+              />
+
             </ScrollView>
           )}
 
         </View>
 
         {/* ========================================================================= */}
-        {/* FLOATING BOTTOM NAVIGATION BAR (EXACTLY 5 TABS AS SPECIFIED IN REFERENCE) */}
+        {/* FLOATING BOTTOM NAVIGATION BAR (SINGLE CLEAN NAVIGATION EXPERIENCE) */}
         {/* ========================================================================= */}
         <View style={styles.floatingNavWrapper}>
           <View style={styles.floatingNavPillContainer}>
@@ -1063,7 +1203,10 @@ function App() {
         <Modal visible={showStudentModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
-              <Text style={styles.modalCardTitle}>+ Register New Student</Text>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="person-add-outline" size={20} color="#7C3AED" />
+                <Text style={styles.modalCardTitle}>Register New Student</Text>
+              </View>
               <Text style={styles.fieldLabelText}>Student Full Name *</Text>
               <TextInput
                 style={styles.modalInputBox}
@@ -1109,7 +1252,10 @@ function App() {
         <Modal visible={showFacultyModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
-              <Text style={styles.modalCardTitle}>+ Onboard Faculty Staff</Text>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="people-outline" size={20} color="#059669" />
+                <Text style={styles.modalCardTitle}>Onboard Faculty Staff</Text>
+              </View>
               <Text style={styles.fieldLabelText}>Faculty Name *</Text>
               <TextInput
                 style={styles.modalInputBox}
@@ -1146,9 +1292,12 @@ function App() {
         <Modal visible={showReportModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
-              <Text style={styles.modalCardTitle}>📄 Executive School Audit Report</Text>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="stats-chart-outline" size={20} color="#2563EB" />
+                <Text style={styles.modalCardTitle}>Executive School Audit Report</Text>
+              </View>
               <Text style={{ color: '#475569', fontSize: 13, marginBottom: 14 }}>
-                Generate and share full executive analytics overview for ZUNA School Management.
+                Generate and share full executive analytics overview for ZUNA International Academy.
               </Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
@@ -1173,8 +1322,11 @@ function App() {
         <Modal visible={!!activeModuleModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
-              <Text style={styles.modalCardTitle}>📱 {activeModuleModal} Module</Text>
-              <Text style={{ color: '#475569', fontSize: 13, marginBottom: 16 }}>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="apps-outline" size={20} color="#7C3AED" />
+                <Text style={styles.modalCardTitle}>{activeModuleModal} Module</Text>
+              </View>
+              <Text style={{ color: '#475569', fontSize: 13, marginBottom: 16, lineHeight: 18 }}>
                 Active mobile configuration for {activeModuleModal}. All real-time school data is synced with the main ZUNA Admin web database.
               </Text>
               <TouchableOpacity
@@ -1402,11 +1554,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   quickRolePillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 20,
   },
   quickRolePillText: {
@@ -1417,10 +1572,13 @@ const styles = StyleSheet.create({
 
   // --- Toast Banner ---
   toastBannerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     backgroundColor: '#059669',
     paddingVertical: 10,
     paddingHorizontal: 16,
-    alignItems: 'center',
   },
   toastBannerText: {
     color: '#FFFFFF',
@@ -1439,40 +1597,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
-    elevation: 1,
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
   },
   headerLeftBrand: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-  },
-  menuIconButton: {
-    padding: 4,
+    flex: 1,
   },
   headerLogoBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#F3E8FF',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#7C3AED',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  schoolBrandDetails: {
+    flex: 1,
+  },
+  schoolNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   headerBrandTitle: {
-    fontSize: 16,
-    fontWeight: '900',
+    fontSize: 14,
+    fontWeight: '800',
     color: '#0F172A',
-    lineHeight: 18,
+    flexShrink: 1,
+  },
+  officialBadgePill: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 0.5,
+    borderColor: '#A7F3D0',
+  },
+  officialBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#059669',
+    letterSpacing: 0.5,
   },
   headerBrandSub: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#64748B',
+    fontWeight: '500',
   },
   headerRightProfile: {
     flexDirection: 'row',
@@ -1483,78 +1662,64 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#F3E8FF',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
   },
   avatarPillText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#7C3AED',
   },
   roleDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#F8FAFC',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
   },
   roleDropdownText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#334155',
   },
 
-  // --- Scroll Content (With extra padding for floating nav) ---
+  // --- Scroll & Content ---
   tabScrollContentWithFloatingNav: {
     padding: 16,
-    paddingBottom: 110, // Generous padding so content is never obscured by floating nav
-  },
-  screenHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  screenTitleText: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 12,
+    paddingBottom: 110,
   },
 
-  // --- Premium Welcome Banner ---
+  // --- Greeting Banner ---
   greetingBannerCard: {
-    backgroundColor: '#7C3AED',
-    borderRadius: 18,
-    padding: 20,
-    marginBottom: 14,
-    shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    elevation: 1,
   },
   greetingTitle: {
-    fontSize: 21,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#0F172A',
   },
   greetingSub: {
-    fontSize: 13.5,
-    color: '#F3E8FF',
-    marginTop: 4,
+    fontSize: 13,
+    color: '#64748B',
   },
 
-  // --- Sub-Header Filter Row ---
+  // --- Sub-Header Row ---
   subHeaderFilterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    alignItems: 'center',
+    marginBottom: 16,
   },
   pillCardBtn: {
     flexDirection: 'row',
@@ -1563,20 +1728,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
   pillCardText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '600',
+    color: '#475569',
   },
 
-  // --- Metrics Cards (2x2 Grid with Chevrons) ---
+  // --- Metrics Cards 2x2 Grid ---
   metricsGridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 12,
     marginBottom: 16,
   },
@@ -1587,44 +1753,45 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.03,
     shadowRadius: 4,
-    elevation: 2,
   },
   metricIconRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   metricIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },
   metricLabelTitle: {
     fontSize: 12,
-    color: '#64748B',
     fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 2,
   },
   metricNumberValue: {
     fontSize: 22,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#0F172A',
-    marginVertical: 2,
+    marginBottom: 4,
   },
   metricTrendText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '700',
   },
 
   // --- Middle Section Cards ---
   middleSectionRow: {
-    gap: 14,
+    gap: 16,
   },
   sectionCardBox: {
     backgroundColor: '#FFFFFF',
@@ -1632,6 +1799,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    elevation: 2,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -1640,7 +1808,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   sectionCardTitle: {
-    fontSize: 15.5,
+    fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
   },
@@ -1652,14 +1820,14 @@ const styles = StyleSheet.create({
   activityItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
   activityIconBox: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1672,21 +1840,22 @@ const styles = StyleSheet.create({
   activitySubText: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 1,
   },
   activityTimeText: {
     fontSize: 10,
     color: '#94A3B8',
+    fontWeight: '600',
   },
 
-  // --- Navy System Status Card ---
+  // --- System Status Navy Card ---
   navyStatusCardBox: {
-    backgroundColor: '#1E1B4B',
+    backgroundColor: '#0F172A',
     borderRadius: 16,
     padding: 16,
+    elevation: 3,
   },
   navyCardTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#FFFFFF',
     marginBottom: 6,
@@ -1695,7 +1864,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 16,
   },
   greenPulseDot: {
     width: 8,
@@ -1705,13 +1874,14 @@ const styles = StyleSheet.create({
   },
   statusOnlineText: {
     fontSize: 12,
-    color: '#E2E8F0',
-    fontWeight: '500',
+    color: '#94A3B8',
   },
   navySubBoxContainer: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 12,
     padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   navySubBoxHeaderRow: {
     flexDirection: 'row',
@@ -1720,51 +1890,65 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   navySubBoxTitle: {
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+    color: '#FFFFFF',
   },
   noInvoicesBadgePill: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    paddingVertical: 3,
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
     paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 10,
   },
   noInvoicesBadgeText: {
-    color: '#CBD5E1',
-    fontSize: 10.5,
-    fontWeight: '600',
+    fontSize: 10,
+    color: '#F59E0B',
+    fontWeight: '700',
   },
   progressBarTrack: {
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 3,
-    marginVertical: 4,
+    marginBottom: 6,
+    overflow: 'hidden',
   },
   progressBarFill: {
-    height: 6,
-    backgroundColor: '#10B981',
-    borderRadius: 3,
+    height: '100%',
+    backgroundColor: '#F59E0B',
   },
   percentCollectedText: {
     fontSize: 11,
     color: '#94A3B8',
-    textAlign: 'right',
-    marginTop: 4,
   },
+
+  // --- Quick Actions ---
   actionGridBtn: {
     flex: 1,
-    paddingVertical: 11,
-    borderRadius: 10,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 44,
+    borderRadius: 10,
   },
   actionGridBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 12,
+    fontSize: 13,
   },
 
-  // --- Search & Filter UI ---
+  // --- Student Directory & Search ---
+  screenHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  screenTitleText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
   searchFilterBoxContainer: {
     flexDirection: 'row',
     gap: 10,
@@ -1777,23 +1961,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
   },
   searchTextInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 14,
     color: '#0F172A',
     marginLeft: 8,
   },
   filterIconBtn: {
     width: 44,
     height: 44,
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1802,9 +1986,9 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   gradePillBtn: {
-    paddingVertical: 6,
     paddingHorizontal: 14,
-    borderRadius: 20,
+    paddingVertical: 6,
+    borderRadius: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1815,22 +1999,20 @@ const styles = StyleSheet.create({
   },
   gradePillText: {
     fontSize: 12,
-    color: '#64748B',
     fontWeight: '600',
+    color: '#64748B',
   },
   gradePillTextActive: {
     color: '#FFFFFF',
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
-
-  // --- Student Roster Card ---
   studentListCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     gap: 12,
@@ -1850,43 +2032,115 @@ const styles = StyleSheet.create({
   },
   studentNameText: {
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#0F172A',
   },
   studentDetailsSubText: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
   statusBadgeGreenPill: {
-    marginTop: 2,
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginTop: 4,
   },
   statusBadgeGreenText: {
     fontSize: 10,
-    fontWeight: '700',
     color: '#059669',
+    fontWeight: '700',
   },
   smallFeeActionBtn: {
-    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
-    borderRadius: 6,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  feePaidStyle: { backgroundColor: '#ECFDF5' },
-  feeUnpaidStyle: { backgroundColor: '#FEF2F2' },
+  feePaidStyle: {
+    backgroundColor: '#DCFCE7',
+  },
+  feeUnpaidStyle: {
+    backgroundColor: '#FEE2E2',
+  },
   smallFeeActionBtnText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '800',
+    color: '#1E293B',
   },
 
-  // --- Attendance View Styles ---
-  attendanceFilterCard: {
+  // --- Reusable Pagination Controls ---
+  paginationWrapper: {
+    marginTop: 12,
+    marginBottom: 8,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paginationInfoText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  paginationBoldText: {
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  paginationBtnGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  paginationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  paginationBtnDisabled: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
+  },
+  paginationBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  paginationBtnTextDisabled: {
+    color: '#94A3B8',
+  },
+  pageIndicatorBadge: {
+    backgroundColor: '#F3E8FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  pageIndicatorText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#7C3AED',
+  },
+
+  // --- Attendance View ---
+  attendanceFilterCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
   },
   controlDropdownRow: {
     flexDirection: 'row',
@@ -1895,44 +2149,44 @@ const styles = StyleSheet.create({
   dropdownBox: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     height: 38,
-    gap: 6,
   },
   dropdownTextValue: {
-    fontSize: 11.5,
-    color: '#334155',
+    fontSize: 12,
     fontWeight: '600',
+    color: '#334155',
   },
   loadStudentsBtn: {
     backgroundColor: '#7C3AED',
+    borderRadius: 8,
     paddingHorizontal: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 8,
   },
   loadStudentsBtnText: {
     color: '#FFFFFF',
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '700',
   },
   attendanceStatusRowBox: {
     flexDirection: 'row',
     gap: 6,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   statusSummaryPill: {
     flex: 1,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderRadius: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
   },
   statusSummaryPillActive: {
     backgroundColor: '#7C3AED',
@@ -1940,12 +2194,12 @@ const styles = StyleSheet.create({
   },
   statusSummaryPillText: {
     fontSize: 11,
-    color: '#64748B',
     fontWeight: '600',
+    color: '#64748B',
   },
   statusSummaryPillTextActive: {
     color: '#FFFFFF',
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
   tableHeaderRow: {
     flexDirection: 'row',
@@ -2032,13 +2286,8 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
 
-  tabScrollContentWithFloatingNav: {
-    padding: 16,
-    paddingBottom: 110,
-  },
-
   // =========================================================================
-  // FLOATING BOTTOM NAVIGATION BAR (PILL CONTAINER FLOATING ABOVE EDGE)
+  // FLOATING BOTTOM NAVIGATION BAR (SINGLE CLEAN NAVIGATION EXPERIENCE)
   // =========================================================================
   floatingNavWrapper: {
     position: 'absolute',
@@ -2100,11 +2349,16 @@ const styles = StyleSheet.create({
     padding: 20,
     elevation: 5,
   },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
   modalCardTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 10,
   },
   modalCardDesc: {
     fontSize: 13,
@@ -2142,6 +2396,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   headerPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#7C3AED',
     paddingVertical: 6,
     paddingHorizontal: 12,
