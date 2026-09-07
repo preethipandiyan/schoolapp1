@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "244590277924",
+    "firebase_url": "https://school-management-system-6a2c4-default-rtdb.firebaseio.com",
+    "project_id": "school-management-system-6a2c4",
+    "storage_bucket": "school-management-system-6a2c4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:244590277924:android:ec8242667d82306ed72fb1",
+        "android_client_info": {
+          "package_name": "com.zuna.school"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "244590277924-8lc3qa0tta5mipkg4s506p4pnle68f5h.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCsrVD9vFYJ5mqZz2JlervpZSyEOtKYCI4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "244590277924-8lc3qa0tta5mipkg4s506p4pnle68f5h.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,47 @@
+buildscript {
+    ext {
+        buildToolsVersion = "37.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 37
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.2.0"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        classpath("com.google.gms:google-services:4.4.1")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
+
+subprojects { subproject ->
+    if (subproject.name != "app") {
+        subproject.pluginManager.withPlugin("com.android.library") {
+            subproject.android {
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
+            }
+        }
+    }
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach { task ->
+        if (subproject.hasProperty("android") && subproject.android.hasProperty("compileOptions")) {
+            def target = subproject.android.compileOptions.targetCompatibility.toString()
+            if (target == "1.8" || target == "8") {
+                task.kotlinOptions.jvmTarget = "1.8"
+            } else {
+                task.kotlinOptions.jvmTarget = "17"
+            }
+        } else {
+            task.kotlinOptions.jvmTarget = "17"
+        }
+    }
+}
