@@ -1,8 +1,5 @@
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
-const fs = require('fs');
 const path = require('path');
-
-const realRoot = fs.realpathSync(__dirname);
 
 /**
  * Metro configuration
@@ -11,11 +8,9 @@ const realRoot = fs.realpathSync(__dirname);
  * @type {import('@react-native/metro-config').MetroConfig}
  */
 const config = {
-  projectRoot: realRoot,
-  watchFolders: [
-    realRoot,
-    path.resolve(__dirname),
-  ],
+  projectRoot: __dirname,
+  watchFolders: [__dirname],
 };
 
-module.exports = mergeConfig(getDefaultConfig(realRoot), config);
+module.exports = mergeConfig(getDefaultConfig(__dirname), config);
+
