@@ -34,7 +34,7 @@ export const NotificationProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!schoolId || !currentUser) {
+    if (!schoolId || !currentUser || !db) {
       setUnreadCounts({ noticeboard: 0, homework: 0, complaints: 0, leaves: 0, canteen: 0, chats: 0 });
       return;
     }

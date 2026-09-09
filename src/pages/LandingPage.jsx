@@ -6,6 +6,24 @@ import { Float, MeshDistortMaterial } from '@react-three/drei';
 import { LuAtom as Atom, LuSparkles as Sparkles, LuShieldCheck as ShieldCheck, LuUsers as Users, LuChevronRight as ChevronRight, LuZap as Zap, LuGlobe as Globe, LuCheck as Check, LuGraduationCap as GraduationCap, LuBookOpen as BookOpen, LuLaptop as Laptop, LuMail as Mail, LuMapPin as MapPin, LuPhone as Phone, LuMenu as Menu, LuX as X, LuBriefcase, LuClock as Clock, LuMessageSquare as MessageSquare, LuFileText as FileText } from 'react-icons/lu';
 import { subscribeToSubscriptionPlans } from '../firebase/firestore';
 
+// --- Canvas Error Boundary ---
+class CanvasErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error) {
+    console.warn("3D Canvas rendering disabled or error caught:", error);
+  }
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
 // --- 3D Background Component ---
 function Hero3DBackground() {
   const meshRef = useRef(null);
@@ -199,11 +217,13 @@ export default function LandingPage() {
         <section id="home" className="relative min-h-screen flex items-center justify-center pt-20 overflow-hidden">
           {/* 3D Canvas Background */}
           <div className="absolute inset-0 z-0 opacity-80">
-            <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
-              <ambientLight intensity={0.5} />
-              <directionalLight position={[10, 10, 10]} intensity={1} color="#E5BDDF" />
-              <Hero3DBackground />
-            </Canvas>
+            <CanvasErrorBoundary>
+              <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
+                <ambientLight intensity={0.5} />
+                <directionalLight position={[10, 10, 10]} intensity={1} color="#E5BDDF" />
+                <Hero3DBackground />
+              </Canvas>
+            </CanvasErrorBoundary>
           </div>
 
           {/* Mouse Parallax Floating Icons */}

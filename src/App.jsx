@@ -25,6 +25,7 @@ const PublicLeadForm = lazy(() => import('./pages/PublicLeadForm'));
 const PublicAdmissionForm = lazy(() => import('./pages/PublicAdmissionForm'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Unauthorized = lazy(() => import('./pages/Unauthorized'));
+const MobileAppPreview = lazy(() => import('./pages/MobileAppPreview'));
 
 // Super Admin Workflow
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard'));
@@ -169,6 +170,8 @@ function App() {
             <Route path="/apply/:schoolId" element={<PublicAdmissionForm />} />
             <Route path="/leads/form/:schoolId/:formId" element={<PublicLeadForm />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
+            <Route path="/mobile" element={<MobileAppPreview />} />
+            <Route path="/mobile-app" element={<MobileAppPreview />} />
             <Route path="/404" element={<NotFound />} />
             
             {/* Super Admin Routes */}

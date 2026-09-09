@@ -18,6 +18,9 @@ const firebaseConfig = {
 let app, auth, db, storage;
 
 try {
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    throw new Error("Missing VITE_FIREBASE_API_KEY or VITE_FIREBASE_PROJECT_ID environment variables");
+  }
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   // Initialize Firestore with offline persistence enabled across multiple tabs
@@ -26,11 +29,10 @@ try {
   });
   storage = getStorage(app);
 } catch (error) {
-  console.warn("Firebase not properly configured. Please update src/firebase/config.js with your credentials.");
-  // Mock objects for UI development before firebase config is provided
-  auth = {};
-  db = {};
-  storage = {};
+  console.warn("Firebase not configured or missing keys. Running in UI demo mode:", error.message);
+  auth = null;
+  db = null;
+  storage = null;
 }
 
 export { auth, db, storage };

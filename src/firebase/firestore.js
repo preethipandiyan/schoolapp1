@@ -1668,13 +1668,38 @@ export const subscribeToInvoices = (schoolId, callback) => {
 
 // --- Subscription Plans ---
 export const subscribeToSubscriptionPlans = (callback) => {
-  return onSnapshot(collection(db, "subscriptionPlans"), (snapshot) => {
-    const plans = [];
-    snapshot.forEach((doc) => {
-      plans.push({ id: doc.id, ...doc.data() });
-    });
-    callback(plans);
-  });
+  const defaultPlans = [
+    { id: 'base', name: 'Base Plan', userLimit: 300, pricePerUserPerYear: 160, cloudStorageGB: 25, custom: false, active: true, modules: {} },
+    { id: 'standard', name: 'Standard Plan', userLimit: 600, pricePerUserPerYear: 240, cloudStorageGB: 60, custom: false, active: true, modules: {} },
+    { id: 'premium', name: 'Premium Plan', userLimit: 1200, pricePerUserPerYear: 320, cloudStorageGB: 120, custom: false, active: true, modules: {} },
+    { id: 'enterprise', name: 'Enterprise Plan', userLimit: 0, pricePerUserPerYear: 0, cloudStorageGB: 0, custom: true, active: true, modules: {} }
+  ];
+
+  if (!db) {
+    callback(defaultPlans);
+    return () => {};
+  }
+
+  try {
+    return onSnapshot(
+      collection(db, "subscriptionPlans"), 
+      (snapshot) => {
+        const plans = [];
+        snapshot.forEach((doc) => {
+          plans.push({ id: doc.id, ...doc.data() });
+        });
+        callback(plans.length > 0 ? plans : defaultPlans);
+      },
+      (error) => {
+        console.warn("Firestore subscription error:", error);
+        callback(defaultPlans);
+      }
+    );
+  } catch (err) {
+    console.warn("Error subscribing to subscription plans:", err);
+    callback(defaultPlans);
+    return () => {};
+  }
 };
 
 export const getSubscriptionPlans = async () => {

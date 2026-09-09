@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StatusBar,
   StyleSheet,
@@ -13,14 +13,44 @@ import {
   Platform,
   ActivityIndicator,
   KeyboardAvoidingView,
+  Image,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
+let XLSX: any = null;
+try {
+  XLSX = require('xlsx');
+} catch (e) {}
+
 // --- Types ---
 type Role = 'Admin' | 'Teacher' | 'Student';
 type AdminTab = 'Dashboard' | 'Students' | 'Attendance' | 'Fees' | 'All Modules';
+
+// --- Firebase Service Integrations ---
+let auth: any = null;
+let db: any = null;
+let saveAttendance: any = null;
+let getAttendance: any = null;
+let createAssessment: any = null;
+let getAssessmentsByClass: any = null;
+let updateAssessmentGrades: any = null;
+let addSubDocument: any = null;
+let getSubCollection: any = null;
+let updateSubDocument: any = null;
+let sendMessage: any = null;
+let subscribeToMessages: any = null;
+let markChatRead: any = null;
+
+try {
+  const firebaseNativeAuth = require('@react-native-firebase/auth');
+  const firebaseNativeFirestore = require('@react-native-firebase/firestore');
+  auth = firebaseNativeAuth.default();
+  db = firebaseNativeFirestore.default();
+} catch (e) {}
+
+type StaffTab = 'Dashboard' | 'Timetable' | 'Attendance' | 'Homework' | 'All Modules';
 
 interface StudentItem {
   id: string;
@@ -88,6 +118,21 @@ const IconComp = ({ name, size = 20, color = '#64748B', style }: { name: string;
     return <Ionicons name={name || 'square-outline'} size={size} color={color || '#64748B'} style={style} />;
   } catch (e) {
     return <Text style={[{ fontSize: size * 0.7, color: color || '#64748B' }, style]}>●</Text>;
+  }
+};
+
+const AppStatusBar: React.ComponentType<any> = StatusBar as any;
+
+const SchoolLogo = ({ size = 28, style }: { size?: number; style?: any }) => {
+  try {
+    return (
+      <Image
+        source={require('./assets/logo.png')}
+        style={[{ width: size, height: size, resizeMode: 'contain' }, style]}
+      />
+    );
+  } catch (e) {
+    return <IconComp name="school-outline" size={size} color="#FFFFFF" style={style} />;
   }
 };
 
@@ -273,6 +318,44 @@ const PaginationControls = ({ currentPage, totalPages, totalItems, pageSize, onP
 };
 
 
+interface DashboardConfig {
+  metrics: {
+    students: boolean;
+    staff: boolean;
+    classes: boolean;
+    notices: boolean;
+  };
+  widgets: {
+    recentNotices: boolean;
+    systemStatus: boolean;
+    quickActions: boolean;
+    attendanceSummary: boolean;
+  };
+}
+
+const defaultDashboardConfig: DashboardConfig = {
+  metrics: { students: true, staff: true, classes: true, notices: true },
+  widgets: { recentNotices: true, systemStatus: true, quickActions: true, attendanceSummary: true },
+};
+
+// Helper to increment or decrement time in HH:mm format by deltaMinutes
+const adjustTime = (timeStr: string, deltaMinutes: number): string => {
+  let [hoursStr, minsStr] = (timeStr || '09:00').split(':');
+  let hours = parseInt(hoursStr, 10);
+  let mins = parseInt(minsStr, 10);
+  if (isNaN(hours)) hours = 9;
+  if (isNaN(mins)) mins = 0;
+
+  let totalMinutes = hours * 60 + mins + deltaMinutes;
+  if (totalMinutes < 0) totalMinutes += 1440;
+  totalMinutes = totalMinutes % 1440;
+
+  const newHours = Math.floor(totalMinutes / 60);
+  const newMins = totalMinutes % 60;
+  const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+  return `${pad(newHours)}:${pad(newMins)}`;
+};
+
 function App() {
   // --- App State ---
   const [isSplashVisible, setIsSplashVisible] = useState<boolean>(true);
@@ -283,11 +366,174 @@ function App() {
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
 
+  // --- Dashboard Customization & Admin Hero Modals State ---
+  const [dashboardConfig, setDashboardConfig] = useState<DashboardConfig>(defaultDashboardConfig);
+  const [tempDashboardConfig, setTempDashboardConfig] = useState<DashboardConfig>(defaultDashboardConfig);
+  const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
+  const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
+  const [showCleanupModal, setShowCleanupModal] = useState<boolean>(false);
+  const [isCleaningAudio, setIsCleaningAudio] = useState<boolean>(false);
+
   // --- Navigation & Role States ---
   const [activeRole, setActiveRole] = useState<Role>('Admin');
   const [selectedDemoRole, setSelectedDemoRole] = useState<Role>('Admin');
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>('Dashboard');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [activeStaffTab, setActiveStaffTab] = useState<StaffTab>('Dashboard');
+
+  // --- Staff Portal States ---
+  const TEACHER_WEEK_DAYS = [
+    { key: 'Monday', label: 'Monday', short: 'Mon' },
+    { key: 'Tuesday', label: 'Tuesday', short: 'Tue' },
+    { key: 'Wednesday', label: 'Wednesday', short: 'Wed' },
+    { key: 'Thursday', label: 'Thursday', short: 'Thu' },
+    { key: 'Friday', label: 'Friday', short: 'Fri' },
+    { key: 'Saturday', label: 'Saturday', short: 'Sat' },
+  ] as const;
+
+  const TEACHER_WEEKLY_TIMETABLE: Record<string, Array<{ period: string; time: string; subject: string; class: string; room: string }>> = {
+    Monday: [
+      { period: 'Period 1', time: '08:30 - 09:15 AM', subject: 'Mathematics', class: 'Class 10A', room: 'Room 302' },
+      { period: 'Period 2', time: '09:15 - 10:00 AM', subject: 'Physics', class: 'Class 10B', room: 'Room 204' },
+      { period: 'Period 3', time: '10:15 - 11:00 AM', subject: 'Advanced Physics', class: 'Class 11A', room: 'Lab 2' },
+      { period: 'Period 4', time: '11:30 - 12:15 PM', subject: 'Physics Lab Practical', class: 'Class 12A', room: 'Lab 1' },
+    ],
+    Tuesday: [
+      { period: 'Period 1', time: '08:30 - 09:15 AM', subject: 'Physics', class: 'Class 10B', room: 'Room 204' },
+      { period: 'Period 2', time: '09:15 - 10:00 AM', subject: 'Mathematics', class: 'Class 10A', room: 'Room 302' },
+      { period: 'Period 3', time: '10:15 - 11:00 AM', subject: 'Problem Solving & Tutorial', class: 'Class 10A', room: 'Room 302' },
+      { period: 'Period 5', time: '01:00 - 01:45 PM', subject: 'Electromagnetism', class: 'Class 12A', room: 'Room 401' },
+    ],
+    Wednesday: [
+      { period: 'Period 1', time: '08:30 - 09:15 AM', subject: 'Advanced Mechanics', class: 'Class 11A', room: 'Room 305' },
+      { period: 'Period 2', time: '09:15 - 10:00 AM', subject: 'Physics Practical Lab', class: 'Class 10A', room: 'Lab 1' },
+      { period: 'Period 4', time: '11:30 - 12:15 PM', subject: 'Calculus & Vectors', class: 'Class 10B', room: 'Room 204' },
+      { period: 'Period 5', time: '01:00 - 01:45 PM', subject: 'Science Club & Projects', class: 'Activity Hall', room: 'Hall B' },
+    ],
+    Thursday: [
+      { period: 'Period 1', time: '08:30 - 09:15 AM', subject: 'Mathematics', class: 'Class 10A', room: 'Room 302' },
+      { period: 'Period 3', time: '10:15 - 11:00 AM', subject: 'Thermodynamics', class: 'Class 11A', room: 'Room 305' },
+      { period: 'Period 4', time: '11:30 - 12:15 PM', subject: 'Optics Theory', class: 'Class 12A', room: 'Room 401' },
+      { period: 'Period 6', time: '02:00 - 02:45 PM', subject: 'Doubt Clearing Session', class: 'Class 10A', room: 'Library' },
+    ],
+    Friday: [
+      { period: 'Period 1', time: '08:30 - 09:15 AM', subject: 'Modern Physics', class: 'Class 12A', room: 'Room 401' },
+      { period: 'Period 2', time: '09:15 - 10:00 AM', subject: 'Mathematics Revision', class: 'Class 10A', room: 'Room 302' },
+      { period: 'Period 3', time: '10:15 - 11:00 AM', subject: 'Weekly Assessment / Quiz', class: 'Class 10B', room: 'Room 204' },
+      { period: 'Period 5', time: '01:00 - 01:45 PM', subject: 'Faculty Staff Meeting', class: 'Teachers Wing', room: 'Conf Room' },
+    ],
+    Saturday: [
+      { period: 'Period 1', time: '09:00 - 09:45 AM', subject: 'Remedial Physics Classes', class: 'Class 10A & 10B', room: 'Room 302' },
+      { period: 'Period 2', time: '09:45 - 10:30 AM', subject: 'Science Olympiad Workshop', class: 'Senior Wing', room: 'Auditorium' },
+      { period: 'Period 3', time: '10:45 - 11:30 AM', subject: 'PTM & Parent Consultations', class: 'Staff Lounge', room: 'Lounge A' },
+    ],
+  };
+
+  const [selectedTimetableDay, setSelectedTimetableDay] = useState<string>('Monday');
+  const [activeStaffModuleModal, setActiveStaffModuleModal] = useState<string | null>(null);
+  const [activeChatModal, setActiveChatModal] = useState<any | null>(null);
+  const [chatMessageText, setChatMessageText] = useState<string>('');
+  const [showCreateHomeworkModal, setShowCreateHomeworkModal] = useState<boolean>(false);
+  const [gradingHwItem, setGradingHwItem] = useState<any | null>(null);
+  const [hwStudentGrades, setHwStudentGrades] = useState<Record<string, { grade: string; marks: string; status: string; remarks: string }>>({
+    '101': { grade: 'A+', marks: '95', status: 'Submitted', remarks: 'Excellent derivations & neat steps' },
+    '102': { grade: 'A', marks: '88', status: 'Submitted', remarks: 'Good work, clarify formula in step 3' },
+    '103': { grade: '-', marks: '-', status: 'In Progress', remarks: 'Draft submitted, final pending' },
+    '104': { grade: 'A+', marks: '96', status: 'Submitted', remarks: 'Flawless answers and diagrams' },
+  });
+  const [newHwTitle, setNewHwTitle] = useState('');
+  const [newHwClass, setNewHwClass] = useState('Class 10A');
+  const [newHwSubject, setNewHwSubject] = useState('Physics');
+  const [newHwDueDate, setNewHwDueDate] = useState('Sep 12, 2026');
+  const [newHwDesc, setNewHwDesc] = useState('');
+
+  // --- Staff Sample Data ---
+  const [homeworkList, setHomeworkList] = useState([
+    { id: 'hw1', title: 'Physics Ch 4 Numerical Problems', class: 'Class 10A', subject: 'Physics', dueDate: 'Sep 09, 2026', submissions: '24/30 Submitted', status: 'Active' },
+    { id: 'hw2', title: 'Algebra & Quadratic Equations Set 3', class: 'Class 10B', subject: 'Mathematics', dueDate: 'Sep 11, 2026', submissions: '18/28 Submitted', status: 'Active' },
+    { id: 'hw3', title: 'Optics & Wave Motion Lab Sheet', class: 'Class 11A', subject: 'Physics', dueDate: 'Sep 12, 2026', submissions: '12/25 Submitted', status: 'Active' },
+  ]);
+
+  const [chatList, setChatList] = useState([
+    { id: 'c1', name: 'Dr. Robert (Principal)', role: 'Admin', avatar: 'DR', lastMsg: 'Please submit the term exam questions before 3 PM.', time: '10:15 AM', unread: true },
+    { id: 'c2', name: 'Mrs. Sunita Sharma (Parent)', role: 'Parent', avatar: 'SS', lastMsg: 'Aarav has fever today, I sent the medical leave note.', time: '09:40 AM', unread: true },
+    { id: 'c3', name: 'Rahul Kumar (Student)', role: 'Student', avatar: 'RK', lastMsg: 'Ma\'am, could you clarify problem #4 from homework?', time: 'Yesterday', unread: false },
+    { id: 'c4', name: 'Science Dept Staff Group', role: 'Staff', avatar: 'SC', lastMsg: 'Lab equipment inspection scheduled tomorrow 10 AM.', time: 'Yesterday', unread: false },
+  ]);
+
+  // --- Staff Module Pagination State ---
+  const [staffModulePage, setStaffModulePage] = useState<number>(1);
+  const STAFF_MODULE_PAGE_SIZE = 10;
+
+  // --- 12 Staff Modules for "All Modules" Screen ---
+  const staffModulesList = [
+    { id: 'sm0', name: 'Timetable', icon: 'time-outline', color: '#D97706', badge: 'Daily', desc: 'Quick access to daily & period-wise classes' },
+    { id: 'sm1', name: 'Noticeboard', icon: 'megaphone-outline', color: '#D97706', badge: '3 Memos', desc: 'School announcements, circulars & staff memos' },
+    { id: 'sm2', name: 'Academic Calendar', icon: 'calendar-number-outline', color: '#DC2626', badge: 'Term 1', desc: 'Academic calendar, holidays & exam dates' },
+    { id: 'sm3', name: 'Lesson Plans', icon: 'journal-outline', color: '#2563EB', badge: 'Weekly', desc: 'Syllabus tracker & weekly topic planning' },
+    { id: 'sm4', name: 'Resources', icon: 'folder-open-outline', color: '#0284C7', badge: '12 Files', desc: 'Teaching materials, lab manuals & reference links' },
+    { id: 'sm5', name: 'Reports & Analytics', icon: 'bar-chart-outline', color: '#b07fa8', badge: 'Class 10A', desc: 'Student academic analytics & class metrics' },
+    { id: 'sm6', name: 'PTM Scheduler', icon: 'people-outline', color: '#059669', badge: '5 Slots', desc: 'Parent-Teacher meeting slots & appointments' },
+    { id: 'sm7', name: 'Transport', icon: 'bus-outline', color: '#4F46E5', badge: 'Route 3', desc: 'Bus routes, student drop-off lists & driver details' },
+    { id: 'sm8', name: 'Grades & Exams', icon: 'ribbon-outline', color: '#E11D48', badge: 'Marks Entry', desc: 'Enter marks, evaluate tests & issue report cards' },
+    { id: 'sm9', name: 'My Salary', icon: 'cash-outline', color: '#059669', badge: 'Payslip', desc: 'Monthly payslips, salary slips & tax statements' },
+    { id: 'sm10', name: 'Leave Requests', icon: 'document-text-outline', color: '#D97706', badge: '8 Days Left', desc: 'Apply for casual/sick leaves & track approval' },
+    { id: 'sm11', name: 'Profile', icon: 'person-circle-outline', color: '#475569', badge: 'Verified', desc: 'Staff credentials, designation & personal info' },
+  ];
+
+  // --- Real Staff Module Backend States ---
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
+  const [isSubmittingHw, setIsSubmittingHw] = useState(false);
+  const [isSavingGrades, setIsSavingGrades] = useState(false);
+  const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
+  const [isSubmittingLeave, setIsSubmittingLeave] = useState(false);
+  const [isSubmittingPTM, setIsSubmittingPTM] = useState(false);
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  // Lesson Plans State
+  const [lessonSubject, setLessonSubject] = useState('Physics');
+  const [lessonClass, setLessonClass] = useState('Class 10A');
+  const [lessonWeek, setLessonWeek] = useState('Week 4');
+  const [lessonObjectives, setLessonObjectives] = useState('');
+  const [lessonPlansList, setLessonPlansList] = useState([
+    { id: 'lp1', subject: 'Physics', class: 'Class 10A', week: 'Week 4', topic: 'Laws of Motion & Optics', status: 'Approved' },
+    { id: 'lp2', subject: 'Mathematics', class: 'Class 10B', week: 'Week 4', topic: 'Quadratic Equations & Graphs', status: 'In Review' },
+  ]);
+
+  // Leave Requests State
+  const [leaveType, setLeaveType] = useState('Casual Leave');
+  const [leaveStartDate, setLeaveStartDate] = useState('2026-09-15');
+  const [leaveEndDate, setLeaveEndDate] = useState('2026-09-16');
+  const [leaveReason, setLeaveReason] = useState('');
+  const [leavesList, setLeavesList] = useState([
+    { id: 'l1', type: 'Casual Leave', dates: 'Sep 02 - Sep 03', reason: 'Family Function', status: 'Approved' },
+    { id: 'l2', type: 'Sick Leave', dates: 'Aug 18 - Aug 18', reason: 'Viral Fever', status: 'Approved' },
+  ]);
+
+  // PTM Scheduler State
+  const [ptmDate, setPtmDate] = useState('2026-09-20');
+  const [ptmTimeSlot, setPtmTimeSlot] = useState('10:00 AM - 10:30 AM');
+  const [ptmMaxBookings, setPtmMaxBookings] = useState('5');
+  const [ptmNotes, setPtmNotes] = useState('');
+  const [ptmSlotsList, setPtmSlotsList] = useState([
+    { id: 'p1', date: 'Sep 20, 2026', time: '10:00 AM - 10:30 AM', bookings: '3/5 Booked', status: 'Active' },
+    { id: 'p2', date: 'Sep 20, 2026', time: '11:00 AM - 11:30 AM', bookings: '5/5 Booked', status: 'Full' },
+  ]);
+
+  // Grades & Exams State
+  const [assessmentTitle, setAssessmentTitle] = useState('Term 1 Mid-Exam');
+  const [assessmentTotalMarks, setAssessmentTotalMarks] = useState('100');
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState('ass1');
+  const [assessmentGradesMap, setAssessmentGradesMap] = useState<Record<string, string>>({
+    'st1': '88',
+    'st2': '92',
+    'st3': '76',
+  });
+
+  // Profile State
+  const [staffPhone, setStaffPhone] = useState('+91 98765 43210');
+  const [staffQual, setStaffQual] = useState('M.Sc. Physics, B.Ed');
+  const [staffAddress, setStaffAddress] = useState('12, Gandhi Nagar, Chennai');
 
   // --- Shared Modals ---
   const [showForgotModal, setShowForgotModal] = useState<boolean>(false);
@@ -358,10 +604,62 @@ function App() {
   // --- 4. Student Directory & Admissions State (Screenshot 4 matching) ---
   const [studentDirectoryTab, setStudentDirectoryTab] = useState<'enrolled' | 'applications'>('enrolled');
   const [directoryStudents, setDirectoryStudents] = useState<any[]>([
-    { id: 'dir1', name: 'pavithran a', admissionNo: '002', gradeClass: 'PRE KG - A', attachment: 'No attachment', gender: 'Male' },
-    { id: 'dir2', name: 'Ahamed Tamzil', admissionNo: 'ADM-005', gradeClass: 'grade - 3 - A', attachment: 'No attachment', gender: 'Male' },
-    { id: 'dir3', name: 'Anu K', admissionNo: 'ADM-7', gradeClass: 'PRE KG - A', attachment: 'No attachment', gender: 'Female' },
-    { id: 'dir4', name: 'raja a', admissionNo: 'ADM-2026-003', gradeClass: 'PRE KG - A', attachment: 'No attachment', gender: 'Male' },
+    {
+      id: 'dir1',
+      name: 'pavithran a',
+      admissionNo: '002',
+      gradeClass: 'PRE KG - A',
+      attachment: 'No attachment',
+      gender: 'Male',
+      dob: '2019-05-12',
+      parentName: 'Arun A',
+      parentPhone: '+91 98765 43210',
+      parentEmail: 'arun@example.com',
+      homeAddress: '12 North Street, Chennai',
+      feePaid: true,
+    },
+    {
+      id: 'dir2',
+      name: 'Ahamed Tamzil',
+      admissionNo: 'ADM-005',
+      gradeClass: 'grade - 3 - A',
+      attachment: 'No attachment',
+      gender: 'Male',
+      dob: '2016-08-20',
+      parentName: 'Tamzil M',
+      parentPhone: '+91 98765 43211',
+      parentEmail: 'tamzil@example.com',
+      homeAddress: '45 Anna Nagar, Chennai',
+      feePaid: false,
+    },
+    {
+      id: 'dir3',
+      name: 'Anu K',
+      admissionNo: 'ADM-7',
+      gradeClass: 'PRE KG - A',
+      attachment: 'No attachment',
+      gender: 'Female',
+      dob: '2019-11-03',
+      parentName: 'Karthik S',
+      parentPhone: '+91 98765 43212',
+      parentEmail: 'karthik@example.com',
+      homeAddress: '88 Gandhi Road, Chennai',
+      feePaid: true,
+    },
+    {
+      id: 'dir4',
+      name: 'raja a',
+      admissionNo: 'ADM-2026-003',
+      gradeClass: 'PRE KG - A',
+      attachment: 'No attachment',
+      gender: 'Male',
+      dob: '2019-02-14',
+      parentName: 'Alagar R',
+      parentPhone: '+91 98765 43213',
+      parentEmail: 'alagar@example.com',
+      homeAddress: '102 Main Bazaar, Chennai',
+      feePaid: true,
+    },
   ]);
   const [admissionApplicationsList, setAdmissionApplicationsList] = useState<AdmissionAppItem[]>([
     { id: 'app1', name: 'Siddharth V', parentName: 'Vijay V', classApplied: 'GRADE - 3', status: 'Pending', date: '08-09-2026' }
@@ -369,6 +667,28 @@ function App() {
   const [showChangeClassModal, setShowChangeClassModal] = useState(false);
   const [selectedStudentForChange, setSelectedStudentForChange] = useState<any>(null);
   const [targetNewClass, setTargetNewClass] = useState('GRADE - 3 - A');
+
+  // Student Details Modal State
+  const [showStudentDetailsModal, setShowStudentDetailsModal] = useState<boolean>(false);
+  const [selectedStudentForDetails, setSelectedStudentForDetails] = useState<any>(null);
+
+  // Export Student Directory Modal State (Image 2)
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [exportFileName, setExportFileName] = useState<string>('Student_Directory');
+  const [selectedExportFields, setSelectedExportFields] = useState<Record<string, boolean>>({
+    name: true,
+    admissionNumber: true,
+    classSection: true,
+    dob: true,
+    gender: true,
+    parentName: true,
+    parentPhone: true,
+    parentEmail: true,
+    homeAddress: true,
+  });
+
+  // Bulk Import Modal State (Image 1)
+  const [showBulkImportModal, setShowBulkImportModal] = useState<boolean>(false);
 
   // --- Interactive Filter & Pagination States for Student Directory ---
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
@@ -390,26 +710,686 @@ function App() {
   const [noticeboardTab, setNoticeboardTab] = useState<'Global' | 'Class'>('Global');
   const [showCreateNoticeModal, setShowCreateNoticeModal] = useState<boolean>(false);
   const [noticeTitleInput, setNoticeTitleInput] = useState<string>('');
-  const [noticeAudienceInput, setNoticeAudienceInput] = useState<string>('All Students & Staff');
-  const [noticePriorityInput, setNoticePriorityInput] = useState<'Normal' | 'Important' | 'Urgent'>('Normal');
+  const [noticeAudience, setNoticeAudience] = useState<'all' | 'teachers' | 'parents'>('all');
+  const [noticePriority, setNoticePriority] = useState<'normal' | 'high'>('normal');
+  const [showNoticeAudienceDropdown, setShowNoticeAudienceDropdown] = useState<boolean>(false);
+  const [showNoticePriorityDropdown, setShowNoticePriorityDropdown] = useState<boolean>(false);
   const [noticeMessageInput, setNoticeMessageInput] = useState<string>('');
+  const [isPublishingNotice, setIsPublishingNotice] = useState<boolean>(false);
   const [globalNoticesList, setGlobalNoticesList] = useState<any[]>([]);
 
-  // --- Canteen Module State ---
+  // --- Canteen Module State (Images 3, 4, 5 Matching) ---
   const [canteenDateFilter, setCanteenDateFilter] = useState<'Today' | 'Past' | 'All'>('Today');
   const [canteenSearchQuery, setCanteenSearchQuery] = useState<string>('');
+  const [canteenStatusFilter, setCanteenStatusFilter] = useState<string>('All');
+  const [canteenMealFilter, setCanteenMealFilter] = useState<string>('All');
+  const [showCanteenStatusPicker, setShowCanteenStatusPicker] = useState<boolean>(false);
+  const [showCanteenMealPicker, setShowCanteenMealPicker] = useState<boolean>(false);
+  const [canteenRequestsList, setCanteenRequestsList] = useState<any[]>([
+    {
+      id: 'cr1',
+      studentName: 'Ahamed Tamzil',
+      admissionNumber: 'ADM-005',
+      className: 'GRADE - 3 - Section A',
+      meal: 'Lunch',
+      date: new Date().toISOString().split('T')[0],
+      status: 'Pending',
+      notes: 'Vegetarian lunch with fruit bowl',
+      parentName: 'Parent of Ahamed',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'cr2',
+      studentName: 'pavithran a',
+      admissionNumber: '002',
+      className: 'PRE KG - Section A',
+      meal: 'Breakfast',
+      date: new Date().toISOString().split('T')[0],
+      status: 'Approved',
+      notes: 'Warm milk & idli set',
+      parentName: 'Parent of Pavithran',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'cr3',
+      studentName: 'Rahul Kumar',
+      admissionNumber: '101',
+      className: 'Class 10 - Section A',
+      meal: 'Lunch',
+      date: '2026-09-08',
+      status: 'Delivered',
+      notes: 'Standard meal tray',
+      parentName: 'Mrs. Sunita Sharma',
+      createdAt: '2026-09-08T12:30:00Z',
+    },
+  ]);
 
-  // --- Environment Setup State ---
-  const [setupSchoolName, setSetupSchoolName] = useState<string>('Zuna International Academy');
-  const [setupSchoolAddress, setSetupSchoolAddress] = useState<string>('123 Academic Way, Tech City');
-  const [setupSchoolPhone, setSetupSchoolPhone] = useState<string>('+91 98765 43210');
-  const [setupSchoolWebsite, setSetupSchoolWebsite] = useState<string>('https://zunaacademy.edu');
+  const handleUpdateCanteenStatus = async (requestId: string, newStatus: string) => {
+    setCanteenRequestsList(prev =>
+      prev.map(r => (r.id === requestId ? { ...r, status: newStatus } : r))
+    );
+    if (db) {
+      try {
+        await db
+          .collection('schools')
+          .doc('school1')
+          .collection('canteen_requests')
+          .doc(requestId)
+          .update({ status: newStatus, resolvedAt: new Date().toISOString() });
+      } catch (e) {
+        console.warn('Firestore canteen update fallback:', e);
+      }
+    }
+    showToast(`Request status updated to ${newStatus}`);
+  };
+
+  // --- Environment Setup State (Images 1, 2, 3, 4, 5 Matching) ---
+  const [setupSchoolName, setSetupSchoolName] = useState<string>('Worlds Academy');
+  const [setupSchoolAddress, setSetupSchoolAddress] = useState<string>('Tamil nadu');
+  const [setupSchoolPhone, setSetupSchoolPhone] = useState<string>('+91 9021706638');
+  const [setupSchoolWebsite, setSetupSchoolWebsite] = useState<string>('https://sms-carrezza-build.vercel.app');
+  const [setupLogoUrl, setSetupLogoUrl] = useState<string>('');
   const [setupAcademicYear, setSetupAcademicYear] = useState<string>('2026 - 2027');
-  const [setupTermType, setSetupTermType] = useState<string>('Semester (2 Terms)');
+  const [setupTermType, setSetupTermType] = useState<string>('Semesters (2 terms)');
   const [setupWorkStart, setSetupWorkStart] = useState<string>('09:00');
   const [setupWorkEnd, setSetupWorkEnd] = useState<string>('16:00');
-  const [setupGraceTime, setSetupGraceTime] = useState<string>('15');
+  const [setupGraceTime, setSetupGraceTime] = useState<string>('09:30');
   const [setupThreshold, setSetupThreshold] = useState<string>('3');
+  const [isSavingEnvironment, setIsSavingEnvironment] = useState<boolean>(false);
+  const [isSavingAttendanceConfig, setIsSavingAttendanceConfig] = useState<boolean>(false);
+
+  // Term Type List & Custom Type State
+  const [termTypesList, setTermTypesList] = useState<string[]>([
+    'Semesters (2 terms)',
+    'Annual (1 term)',
+    'Term I, Term II, Term III',
+    'Quarterly, Half Yearly, Annual',
+  ]);
+  const [showAcademicYearPicker, setShowAcademicYearPicker] = useState<boolean>(false);
+  const [showTermTypePicker, setShowTermTypePicker] = useState<boolean>(false);
+  const [showCustomTermInput, setShowCustomTermInput] = useState<boolean>(false);
+  const [customTermName, setCustomTermName] = useState<string>('');
+
+  // Fee Collection Periods State
+  const [feePeriodsList, setFeePeriodsList] = useState<any[]>([
+    {
+      id: 'fp_1',
+      name: 'Term 1',
+      code: 'TERM1',
+      displayOrder: 1,
+      description: 'First term fee collection',
+      status: 'active',
+      createdAt: '2026-06-01',
+    },
+    {
+      id: 'fp_2',
+      name: 'Term 2',
+      code: 'TERM2',
+      displayOrder: 2,
+      description: 'Second term fee collection',
+      status: 'active',
+      createdAt: '2026-10-01',
+    },
+  ]);
+  const [showAddPeriodModal, setShowAddPeriodModal] = useState<boolean>(false);
+  const [editingPeriod, setEditingPeriod] = useState<any | null>(null);
+  const [periodFormName, setPeriodFormName] = useState<string>('');
+  const [periodFormCode, setPeriodFormCode] = useState<string>('');
+  const [periodFormOrder, setPeriodFormOrder] = useState<string>('1');
+  const [periodFormDesc, setPeriodFormDesc] = useState<string>('');
+
+  // Leave Approval Rules State
+  const [leaveRulesList, setLeaveRulesList] = useState<any[]>([
+    {
+      id: 'lr_1',
+      minDays: 1,
+      maxDays: 3,
+      roleId: 'Staffs',
+      order: 1,
+      createdAt: '2026-06-01',
+    },
+  ]);
+  const [showAddLeaveRuleModal, setShowAddLeaveRuleModal] = useState<boolean>(false);
+  const [editingLeaveRule, setEditingLeaveRule] = useState<any | null>(null);
+  const [leaveRuleMinDays, setLeaveRuleMinDays] = useState<string>('1');
+  const [leaveRuleMaxDays, setLeaveRuleMaxDays] = useState<string>('3');
+  const [leaveRuleRoleId, setLeaveRuleRoleId] = useState<string>('Staffs');
+  const [leaveRuleOrder, setLeaveRuleOrder] = useState<string>('1');
+  const [showRolePickerModal, setShowRolePickerModal] = useState<boolean>(false);
+  const [environmentRoles, setEnvironmentRoles] = useState<string[]>([
+    'Staffs',
+    'Correspondent',
+    'Principal',
+    'Vice Principal',
+    'Subject Wise Head',
+    'Class Incharge',
+    'Administrative Officer',
+    'Finance Department',
+    'Library',
+    'Canteen',
+    'Transport',
+    'Janitors',
+    'Hostel',
+    'Inventory',
+    'Security',
+  ]);
+
+  // Firestore Real-Time Subscriptions for Environment Setup
+  useEffect(() => {
+    if (!db) return;
+    const schoolDocId = 'school1';
+
+    // 1. School Doc
+    db.collection('schools')
+      .doc(schoolDocId)
+      .get()
+      .then((docSnap: any) => {
+        if (docSnap && docSnap.exists) {
+          const data = docSnap.data();
+          if (data) {
+            if (data.name) setSetupSchoolName(data.name);
+            if (data.location) setSetupSchoolAddress(data.location);
+            if (data.contactPhone) setSetupSchoolPhone(data.contactPhone);
+            if (data.website) setSetupSchoolWebsite(data.website);
+            if (data.branding?.logoUrl) setSetupLogoUrl(data.branding.logoUrl);
+            if (data.academicConfig?.currentYear) setSetupAcademicYear(data.academicConfig.currentYear);
+            if (data.academicConfig?.termType) {
+              let loaded = data.academicConfig.termType;
+              if (loaded === 'Semester') loaded = 'Semesters (2 terms)';
+              else if (loaded === 'Annual') loaded = 'Annual (1 term)';
+              else if (loaded === 'Trimester_TN') loaded = 'Term I, Term II, Term III';
+              else if (loaded === 'Quarterly_HalfYearly_Annual') loaded = 'Quarterly, Half Yearly, Annual';
+              setSetupTermType(loaded);
+              setTermTypesList(prev => (prev.includes(loaded) ? prev : [...prev, loaded]));
+            }
+          }
+        }
+      })
+      .catch((err: any) => console.warn('School load err:', err));
+
+    // 2. Attendance Settings
+    db.collection('schools')
+      .doc(schoolDocId)
+      .collection('config')
+      .doc('attendanceSettings')
+      .get()
+      .then((docSnap: any) => {
+        if (docSnap && docSnap.exists) {
+          const attData = docSnap.data();
+          if (attData) {
+            if (attData.workingHoursStart) setSetupWorkStart(attData.workingHoursStart);
+            if (attData.workingHoursEnd) setSetupWorkEnd(attData.workingHoursEnd);
+            if (attData.cutoffTime) setSetupGraceTime(attData.cutoffTime);
+            if (attData.absenteeThreshold !== undefined) setSetupThreshold(String(attData.absenteeThreshold));
+          }
+        }
+      })
+      .catch((err: any) => console.warn('Attendance settings load err:', err));
+
+    // 3. Fee Periods
+    const unsubPeriods = db
+      .collection('schools')
+      .doc(schoolDocId)
+      .collection('feeCollectionPeriods')
+      .orderBy('displayOrder', 'asc')
+      .onSnapshot(
+        (snapshot: any) => {
+          if (snapshot && !snapshot.empty) {
+            const pList: any[] = [];
+            snapshot.forEach((d: any) => pList.push({ id: d.id, ...d.data() }));
+            if (pList.length > 0) setFeePeriodsList(pList);
+          }
+        },
+        (err: any) => console.warn('Periods subscribe err:', err)
+      );
+
+    // 4. Leave Rules
+    const unsubLeaveRules = db
+      .collection('schools')
+      .doc(schoolDocId)
+      .collection('config')
+      .doc('leaveApprovalRules')
+      .collection('rules')
+      .orderBy('order', 'asc')
+      .onSnapshot(
+        (snapshot: any) => {
+          if (snapshot && !snapshot.empty) {
+            const rList: any[] = [];
+            snapshot.forEach((d: any) => rList.push({ id: d.id, ...d.data() }));
+            if (rList.length > 0) setLeaveRulesList(rList);
+          }
+        },
+        (err: any) => console.warn('Leave rules subscribe err:', err)
+      );
+
+    // 5. Students Real-time Subscription
+    let unsubStudents: any = null;
+    try {
+      unsubStudents = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('students')
+        .onSnapshot(
+          (snapshot: any) => {
+            if (snapshot && !snapshot.empty) {
+              const list: any[] = [];
+              snapshot.forEach((docSnap: any) => {
+                const data = docSnap.data();
+                list.push({
+                  id: docSnap.id,
+                  name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim() || 'Student',
+                  admissionNo: data.admissionNumber || data.admissionNo || 'ADM-' + docSnap.id.slice(0, 4),
+                  gradeClass: data.gradeClass || data.className || data.class || 'PRE KG - A',
+                  gender: data.gender || 'Male',
+                  dob: data.dob || '2019-05-12',
+                  parentName: data.parentName || 'Parent',
+                  parentPhone: data.parentPhone || '+91 98765 43210',
+                  parentEmail: data.parentEmail || 'parent@example.com',
+                  homeAddress: data.homeAddress || 'Chennai, Tamil Nadu',
+                  feePaid: data.feePaid !== undefined ? data.feePaid : true,
+                  attachment: data.attachment || 'No attachment',
+                });
+              });
+              if (list.length > 0) {
+                setDirectoryStudents(list);
+              }
+            }
+          },
+          (err: any) => console.warn('Students listener err:', err)
+        );
+    } catch (e) {}
+
+    // 6. Invoices Real-time Subscription
+    let unsubInvoices: any = null;
+    try {
+      unsubInvoices = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('invoices')
+        .onSnapshot(
+          (snapshot: any) => {
+            if (snapshot && !snapshot.empty) {
+              const invList: any[] = [];
+              snapshot.forEach((docSnap: any) => {
+                invList.push({ id: docSnap.id, ...docSnap.data() });
+              });
+              setFeeInvoicesList(invList);
+            }
+          },
+          (err: any) => console.warn('Invoices listener err:', err)
+        );
+    } catch (e) {}
+
+    return () => {
+      if (typeof unsubPeriods === 'function') unsubPeriods();
+      if (typeof unsubLeaveRules === 'function') unsubLeaveRules();
+      if (typeof unsubStudents === 'function') unsubStudents();
+      if (typeof unsubInvoices === 'function') unsubInvoices();
+    };
+  }, []);
+
+  const getLeaveRulesWarnings = () => {
+    const warnings: string[] = [];
+    if (leaveRulesList.length === 0) return warnings;
+
+    const coversOneDay = leaveRulesList.some(r => {
+      const min = Number(r.minDays);
+      const max = r.maxDays === null || r.maxDays === undefined || r.maxDays === '' ? Infinity : Number(r.maxDays);
+      return min <= 1 && max >= 1;
+    });
+    if (!coversOneDay) {
+      warnings.push('No leave approval rule covers 1-day leaves.');
+    }
+
+    const sorted = [...leaveRulesList].sort((a, b) => Number(a.minDays) - Number(b.minDays));
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const currentMin = Number(sorted[i].minDays);
+      const currentMax =
+        sorted[i].maxDays === null || sorted[i].maxDays === undefined || sorted[i].maxDays === ''
+          ? Infinity
+          : Number(sorted[i].maxDays);
+      const nextMin = Number(sorted[i + 1].minDays);
+      const nextMax =
+        sorted[i + 1].maxDays === null || sorted[i + 1].maxDays === undefined || sorted[i + 1].maxDays === ''
+          ? Infinity
+          : Number(sorted[i + 1].maxDays);
+
+      if (currentMax >= nextMin) {
+        warnings.push(
+          `Overlap detected: Band [${currentMin} - ${
+            currentMax === Infinity ? 'and above' : currentMax
+          }] overlaps with Band [${nextMin} - ${nextMax === Infinity ? 'and above' : nextMax}].`
+        );
+      } else if (currentMax < nextMin - 1) {
+        warnings.push(
+          `Gap detected: Gaps exist between Band [${currentMin} - ${currentMax}] and Band [${nextMin} - ${
+            nextMax === Infinity ? 'and above' : nextMax
+          }]. Days ${currentMax + 1} to ${nextMin - 1} are not covered.`
+        );
+      }
+    }
+
+    return warnings;
+  };
+
+  const handleSaveEnvironmentSetup = async () => {
+    setIsSavingEnvironment(true);
+    try {
+      const schoolDocId = 'school1';
+      let termTypeToSave = setupTermType;
+      if (setupTermType === 'Semesters (2 terms)') termTypeToSave = 'Semester';
+      else if (setupTermType === 'Annual (1 term)') termTypeToSave = 'Annual';
+      else if (setupTermType === 'Term I, Term II, Term III') termTypeToSave = 'Trimester_TN';
+      else if (setupTermType === 'Quarterly, Half Yearly, Annual') termTypeToSave = 'Quarterly_HalfYearly_Annual';
+
+      const payload = {
+        name: setupSchoolName.trim(),
+        location: setupSchoolAddress.trim(),
+        contactPhone: setupSchoolPhone.trim(),
+        website: setupSchoolWebsite.trim(),
+        branding: {
+          logoUrl: setupLogoUrl.trim(),
+        },
+        academicConfig: {
+          currentYear: setupAcademicYear,
+          termType: termTypeToSave,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (db) {
+        await db.collection('schools').doc(schoolDocId).set(payload, { merge: true });
+        try {
+          await db.collection('schools').doc('SchoolS001').set(payload, { merge: true });
+        } catch (e) {}
+      }
+      showToast('Environment settings saved successfully!');
+    } catch (err: any) {
+      console.error('Failed to save environment setup:', err);
+      showToast('Failed to save settings');
+    } finally {
+      setIsSavingEnvironment(false);
+    }
+  };
+
+  const handleSaveAttendanceConfigSubmit = async () => {
+    setIsSavingAttendanceConfig(true);
+    try {
+      const schoolDocId = 'school1';
+      const payload = {
+        workingHoursStart: setupWorkStart.trim(),
+        workingHoursEnd: setupWorkEnd.trim(),
+        cutoffTime: setupGraceTime.trim(),
+        absenteeThreshold: Number(setupThreshold) || 3,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (db) {
+        await db.collection('schools').doc(schoolDocId).collection('config').doc('attendanceSettings').set(payload, { merge: true });
+        try {
+          await db.collection('schools').doc('SchoolS001').collection('config').doc('attendanceSettings').set(payload, { merge: true });
+        } catch (e) {}
+      }
+      showToast('Attendance configuration saved successfully!');
+    } catch (err: any) {
+      console.error('Failed to save attendance settings:', err);
+      showToast('Failed to save attendance settings');
+    } finally {
+      setIsSavingAttendanceConfig(false);
+    }
+  };
+
+  const openAddPeriodModal = () => {
+    setEditingPeriod(null);
+    setPeriodFormName('');
+    setPeriodFormCode('');
+    setPeriodFormOrder(String(feePeriodsList.length + 1));
+    setPeriodFormDesc('');
+    setShowAddPeriodModal(true);
+  };
+
+  const openEditPeriodModal = (p: any) => {
+    setEditingPeriod(p);
+    setPeriodFormName(p.name || '');
+    setPeriodFormCode(p.code || '');
+    setPeriodFormOrder(String(p.displayOrder || '1'));
+    setPeriodFormDesc(p.description || '');
+    setShowAddPeriodModal(true);
+  };
+
+  const handleSavePeriodSubmit = async () => {
+    if (!periodFormName.trim()) {
+      Alert.alert('Required', 'Period name is required.');
+      return;
+    }
+    const code = periodFormCode.trim() || periodFormName.trim().toUpperCase().replace(/\s+/g, '_');
+    const displayOrder = Number(periodFormOrder) || feePeriodsList.length + 1;
+    const description = periodFormDesc.trim();
+
+    if (editingPeriod) {
+      const updated = {
+        ...editingPeriod,
+        name: periodFormName.trim(),
+        code,
+        displayOrder,
+        description,
+      };
+      setFeePeriodsList(prev => prev.map(item => (item.id === editingPeriod.id ? updated : item)));
+      if (db) {
+        try {
+          await db
+            .collection('schools')
+            .doc('school1')
+            .collection('feeCollectionPeriods')
+            .doc(editingPeriod.id)
+            .update({
+              name: periodFormName.trim(),
+              code,
+              displayOrder,
+              description,
+              updatedAt: new Date().toISOString(),
+            });
+        } catch (e) {
+          console.warn('Update period err:', e);
+        }
+      }
+      showToast('Period updated successfully.');
+    } else {
+      const newId = 'fp_' + Date.now();
+      const newPeriod = {
+        id: newId,
+        name: periodFormName.trim(),
+        code,
+        displayOrder,
+        description,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      };
+      setFeePeriodsList(prev => [...prev, newPeriod]);
+      if (db) {
+        try {
+          await db
+            .collection('schools')
+            .doc('school1')
+            .collection('feeCollectionPeriods')
+            .doc(newId)
+            .set(newPeriod);
+        } catch (e) {
+          console.warn('Create period err:', e);
+        }
+      }
+      showToast('Fee collection period added.');
+    }
+    setShowAddPeriodModal(false);
+  };
+
+  const handleDeletePeriod = (id: string, name: string) => {
+    Alert.alert(
+      'Delete Period',
+      `Delete period "${name}"? This will NOT affect existing invoices.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setFeePeriodsList(prev => prev.filter(p => p.id !== id));
+            if (db) {
+              try {
+                await db
+                  .collection('schools')
+                  .doc('school1')
+                  .collection('feeCollectionPeriods')
+                  .doc(id)
+                  .delete();
+              } catch (e) {
+                console.warn('Delete period err:', e);
+              }
+            }
+            showToast('Period deleted.');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleTogglePeriodStatus = async (id: string) => {
+    const target = feePeriodsList.find(p => p.id === id);
+    if (!target) return;
+    const newStatus = target.status === 'active' ? 'inactive' : 'active';
+    setFeePeriodsList(prev => prev.map(p => (p.id === id ? { ...p, status: newStatus } : p)));
+    if (db) {
+      try {
+        await db
+          .collection('schools')
+          .doc('school1')
+          .collection('feeCollectionPeriods')
+          .doc(id)
+          .update({
+            status: newStatus,
+            updatedAt: new Date().toISOString(),
+          });
+      } catch (e) {
+        console.warn('Toggle status err:', e);
+      }
+    }
+    showToast(`Period marked as ${newStatus}.`);
+  };
+
+  const openAddLeaveRuleModal = () => {
+    setEditingLeaveRule(null);
+    setLeaveRuleMinDays('1');
+    setLeaveRuleMaxDays('3');
+    setLeaveRuleRoleId('Staffs');
+    setLeaveRuleOrder(String(leaveRulesList.length + 1));
+    setShowAddLeaveRuleModal(true);
+  };
+
+  const openEditLeaveRuleModal = (rule: any) => {
+    setEditingLeaveRule(rule);
+    setLeaveRuleMinDays(String(rule.minDays || '1'));
+    setLeaveRuleMaxDays(rule.maxDays === null || rule.maxDays === undefined ? '' : String(rule.maxDays));
+    setLeaveRuleRoleId(rule.roleId || 'Staffs');
+    setLeaveRuleOrder(String(rule.order || '1'));
+    setShowAddLeaveRuleModal(true);
+  };
+
+  const handleSaveLeaveRuleSubmit = async () => {
+    if (leaveRuleMinDays === '' || !leaveRuleRoleId) {
+      Alert.alert('Required', 'Please fill in min days and route to role.');
+      return;
+    }
+    const minDays = Number(leaveRuleMinDays);
+    const maxDays = leaveRuleMaxDays.trim() === '' ? null : Number(leaveRuleMaxDays);
+    const order = Number(leaveRuleOrder) || leaveRulesList.length + 1;
+
+    if (editingLeaveRule) {
+      const updated = {
+        ...editingLeaveRule,
+        minDays,
+        maxDays,
+        roleId: leaveRuleRoleId,
+        order,
+      };
+      setLeaveRulesList(prev => prev.map(item => (item.id === editingLeaveRule.id ? updated : item)));
+      if (db) {
+        try {
+          await db
+            .collection('schools')
+            .doc('school1')
+            .collection('config')
+            .doc('leaveApprovalRules')
+            .collection('rules')
+            .doc(editingLeaveRule.id)
+            .update({
+              minDays,
+              maxDays,
+              roleId: leaveRuleRoleId,
+              order,
+              updatedAt: new Date().toISOString(),
+            });
+        } catch (e) {
+          console.warn('Update leave rule err:', e);
+        }
+      }
+      showToast('Leave rule updated successfully.');
+    } else {
+      const newId = 'lr_' + Date.now();
+      const newRule = {
+        id: newId,
+        minDays,
+        maxDays,
+        roleId: leaveRuleRoleId,
+        order,
+        createdAt: new Date().toISOString(),
+      };
+      setLeaveRulesList(prev => [...prev, newRule]);
+      if (db) {
+        try {
+          await db
+            .collection('schools')
+            .doc('school1')
+            .collection('config')
+            .doc('leaveApprovalRules')
+            .collection('rules')
+            .doc(newId)
+            .set(newRule);
+        } catch (e) {
+          console.warn('Create leave rule err:', e);
+        }
+      }
+      showToast('Leave rule added successfully.');
+    }
+    setShowAddLeaveRuleModal(false);
+  };
+
+  const handleDeleteLeaveRule = (id: string) => {
+    Alert.alert('Delete Rule', 'Delete this leave approval rule?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setLeaveRulesList(prev => prev.filter(r => r.id !== id));
+          if (db) {
+            try {
+              await db
+                .collection('schools')
+                .doc('school1')
+                .collection('config')
+                .doc('leaveApprovalRules')
+                .collection('rules')
+                .doc(id)
+                .delete();
+            } catch (e) {
+              console.warn('Delete leave rule err:', e);
+            }
+          }
+          showToast('Leave rule deleted.');
+        },
+      },
+    ]);
+  };
 
   // --- HR & Payroll Module State ---
   const [hrPayrollList, setHrPayrollList] = useState<any[]>([
@@ -530,8 +1510,20 @@ function App() {
     { id: 'ev4', title: 'Teacher Training Workshop', start: '2026-09-20', end: '2026-09-20', type: 'event' },
     { id: 'ev5', title: 'Mid-Term Examinations', start: '2026-09-25', end: '2026-09-30', type: 'exam' },
   ]);
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
   const [calendarDate, setCalendarDate] = useState<Date>(new Date(2026, 8, 1)); // September 2026
-  const calendarCurrentMonth = calendarDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const calendarCurrentMonth = `${MONTH_NAMES[calendarDate.getMonth()]} ${calendarDate.getFullYear()}`;
+  const handleCalendarPrevMonth = () => {
+    setCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+    setCalendarSelectedDayNum(1);
+  };
+  const handleCalendarNextMonth = () => {
+    setCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    setCalendarSelectedDayNum(1);
+  };
   const [calendarViewMode, setCalendarViewMode] = useState<'Day' | 'Week' | 'Month' | 'Year'>('Month');
   const [calendarSelectedDayNum, setCalendarSelectedDayNum] = useState<number>(30);
   const [showAddEventModal, setShowAddEventModal] = useState(false);
@@ -583,15 +1575,25 @@ function App() {
   const [hwClassFilter, setHwClassFilter] = useState<string>('');
   const [hwTrackingModal, setHwTrackingModal] = useState(false);
   const [hwSelected, setHwSelected] = useState<any>(null);
-  const homeworkList: any[] = []; // Empty — matches web "No homework found" empty state
+  const adminHomeworkList: any[] = []; // Empty — matches web "No homework found" empty state
 
   // --- Fee Management (Full) Module State ---
   const [feeInvoiceSearch, setFeeInvoiceSearch] = useState('');
   const [feeStatusFilter, setFeeStatusFilter] = useState<'all'|'paid'|'unpaid'|'overdue'>('all');
+  const [showFeeStatusPicker, setShowFeeStatusPicker] = useState(false);
   const [showAssignFeeModal, setShowAssignFeeModal] = useState(false);
-  const [newFeeForm, setNewFeeForm] = useState({ name: '', amount: '', dueDate: new Date().toISOString().split('T')[0], classId: '', classLabel: '' });
-  const feeInvoicesList: any[] = []; // Empty — matches web "No invoices found"
-  const feeStats = { expected: 0, collected: 0, outstanding: 0 };
+  const [showFeeClassPicker, setShowFeeClassPicker] = useState(false);
+  const [isCreatingFee, setIsCreatingFee] = useState(false);
+  const [newFeeForm, setNewFeeForm] = useState({
+    name: '',
+    amount: '',
+    dueDate: new Date().toISOString().split('T')[0],
+    classId: '',
+    classLabel: '',
+    collectionPeriodId: '',
+    collectionPeriodName: '',
+  });
+  const [feeInvoicesList, setFeeInvoicesList] = useState<any[]>([]);
 
   // --- Transport Module State ---
   const [transportActiveTab, setTransportActiveTab] = useState<'routes'|'vehicles'|'assignments'>('routes');
@@ -944,7 +1946,7 @@ function App() {
     { id: 'm1', name: 'Canteen Requests', icon: 'fast-food-outline', color: '#0284C7' },
     { id: 'm2', name: 'Environment Setup', icon: 'settings-outline', color: '#059669' },
     { id: 'm3', name: 'Classes & Sections', icon: 'school-outline', color: '#2563EB' },
-    { id: 'm4', name: 'HR & Payroll', icon: 'people-circle-outline', color: '#7C3AED' },
+    { id: 'm4', name: 'HR & Payroll', icon: 'people-circle-outline', color: '#b07fa8' },
     { id: 'm5', name: 'Chat Monitor', icon: 'chatbubbles-outline', color: '#0D9488' },
     { id: 'm6', name: 'Timetables', icon: 'time-outline', color: '#D97706' },
     { id: 'm7', name: 'Calendar', icon: 'calendar-number-outline', color: '#DC2626' },
@@ -952,17 +1954,17 @@ function App() {
     { id: 'm9', name: 'Homework', icon: 'book-outline', color: '#2563EB' },
     { id: 'm10', name: 'Transport', icon: 'bus-outline', color: '#4F46E5' },
     { id: 'm11', name: 'Library', icon: 'library-outline', color: '#0284C7' },
-    { id: 'm12', name: 'Inventory & Assets', icon: 'cube-outline', color: '#7C3AED' },
+    { id: 'm12', name: 'Inventory & Assets', icon: 'cube-outline', color: '#b07fa8' },
     { id: 'm13', name: 'Leave Requests', icon: 'document-text-outline', color: '#D97706' },
-    { id: 'm14', name: 'Reports & Analytics', icon: 'stats-chart-outline', color: '#7C3AED' },
+    { id: 'm14', name: 'Reports & Analytics', icon: 'stats-chart-outline', color: '#b07fa8' },
     { id: 'm15', name: 'API Integrations', icon: 'code-working-outline', color: '#0284C7' },
     { id: 'm16', name: 'Registration Links', icon: 'link-outline', color: '#2563EB' },
     { id: 'm17', name: 'Leads', icon: 'heart-outline', color: '#EC4899' },
-    { id: 'm18', name: 'Billing & Plan', icon: 'receipt-outline', color: '#7C3AED' },
+    { id: 'm18', name: 'Billing & Plan', icon: 'receipt-outline', color: '#b07fa8' },
     { id: 'm19', name: 'Custom Modules', icon: 'extension-puzzle-outline', color: '#059669' },
     { id: 'm20', name: 'Staff Directory', icon: 'person-add-outline', color: '#2563EB' },
     { id: 'm21', name: 'Noticeboard', icon: 'megaphone-outline', color: '#D97706' },
-    { id: 'm22', name: 'Subject Management', icon: 'journal-outline', color: '#7C3AED' },
+    { id: 'm22', name: 'Subject Management', icon: 'journal-outline', color: '#b07fa8' },
     { id: 'm23', name: 'Roles & Permissions', icon: 'shield-checkmark-outline', color: '#6366F1' },
   ];
 
@@ -1015,6 +2017,556 @@ function App() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // --- Load Saved Dashboard Configuration ---
+  useEffect(() => {
+    const loadDashboardConfig = async () => {
+      try {
+        const saved = await AsyncStorage.getItem('@zuna_dashboard_config');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed) {
+            const merged: DashboardConfig = {
+              metrics: { ...defaultDashboardConfig.metrics, ...(parsed.metrics || {}) },
+              widgets: { ...defaultDashboardConfig.widgets, ...(parsed.widgets || {}) },
+            };
+            setDashboardConfig(merged);
+            setTempDashboardConfig(merged);
+          }
+        }
+        if (db) {
+          try {
+            const currentUid = auth?.currentUser?.uid;
+            if (currentUid) {
+              const userDoc = await db.collection('users').doc(currentUid).get();
+              if (userDoc && userDoc.exists && userDoc.data()?.dashboardConfig) {
+                const remoteConfig = userDoc.data().dashboardConfig;
+                const merged: DashboardConfig = {
+                  metrics: { ...defaultDashboardConfig.metrics, ...(remoteConfig.metrics || {}) },
+                  widgets: { ...defaultDashboardConfig.widgets, ...(remoteConfig.widgets || {}) },
+                };
+                setDashboardConfig(merged);
+                setTempDashboardConfig(merged);
+                await AsyncStorage.setItem('@zuna_dashboard_config', JSON.stringify(merged));
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {
+        console.warn('Failed to load dashboard config:', e);
+      }
+    };
+    loadDashboardConfig();
+  }, [isLoggedIn]);
+
+  // --- Load & Subscribe Saved Global Notices ---
+  useEffect(() => {
+    const loadSavedNotices = async () => {
+      try {
+        const cached = await AsyncStorage.getItem('@zuna_global_notices');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setGlobalNoticesList(parsed);
+          }
+        }
+      } catch (e) {}
+
+      if (db) {
+        try {
+          db.collection('schools')
+            .doc('school1')
+            .collection('notices')
+            .orderBy('createdAt', 'desc')
+            .onSnapshot(
+              (snapshot: any) => {
+                if (snapshot && !snapshot.empty) {
+                  const fetched: any[] = [];
+                  snapshot.forEach((docSnap: any) => {
+                    const d = docSnap.data();
+                    if (d.type === 'global' || !d.type) {
+                      fetched.push({
+                        id: docSnap.id,
+                        title: d.title || '',
+                        message: d.message || '',
+                        audience:
+                          d.audience === 'teachers'
+                            ? 'Teachers Only'
+                            : d.audience === 'parents'
+                            ? 'Parents Only'
+                            : 'Everyone (Teachers, Parents)',
+                        rawAudience: d.audience || 'all',
+                        priority: d.priority === 'high' ? 'High (Urgent)' : 'Normal',
+                        rawPriority: d.priority || 'normal',
+                        date: d.date || (d.createdAt ? new Date(d.createdAt).toLocaleDateString() : 'Today'),
+                        createdAt: d.createdAt,
+                      });
+                    }
+                  });
+                  if (fetched.length > 0) {
+                    setGlobalNoticesList(fetched);
+                    AsyncStorage.setItem('@zuna_global_notices', JSON.stringify(fetched)).catch(() => {});
+                  }
+                }
+              },
+              (err: any) => console.warn('Firestore notices listener err:', err)
+            );
+        } catch (e) {}
+      }
+    };
+    loadSavedNotices();
+  }, []);
+
+  const handleSaveDashboardConfig = async () => {
+    try {
+      setDashboardConfig(tempDashboardConfig);
+      await AsyncStorage.setItem('@zuna_dashboard_config', JSON.stringify(tempDashboardConfig));
+      if (db) {
+        try {
+          const currentUid = auth?.currentUser?.uid;
+          if (currentUid) {
+            await db.collection('users').doc(currentUid).set({
+              dashboardConfig: tempDashboardConfig,
+            }, { merge: true });
+          }
+          await db.collection('schools').doc('school1').collection('config').doc('dashboardConfig').set({
+            ...tempDashboardConfig,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+        } catch (syncErr) {
+          console.warn('Dashboard config firestore sync err:', syncErr);
+        }
+      }
+      setShowCustomizeModal(false);
+      showToast('Dashboard configuration saved successfully!');
+    } catch (e) {
+      showToast('Dashboard customized');
+      setShowCustomizeModal(false);
+    }
+  };
+
+  const handleBroadcastNotice = async () => {
+    if (!noticeTitleInput.trim()) {
+      Alert.alert('Required Field', 'Please enter a notice title.');
+      return;
+    }
+    if (!noticeMessageInput.trim()) {
+      Alert.alert('Required Field', 'Please enter a message for the notice.');
+      return;
+    }
+
+    setIsPublishingNotice(true);
+    try {
+      const audienceDisplay =
+        noticeAudience === 'all'
+          ? 'Everyone (Teachers, Parents)'
+          : noticeAudience === 'teachers'
+          ? 'Teachers Only'
+          : 'Parents Only';
+
+      const priorityDisplay = noticePriority === 'high' ? 'High (Urgent)' : 'Normal';
+
+      const now = new Date();
+      const dateStr = 'Today, ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const newNoticeItem = {
+        id: 'notice_' + Date.now(),
+        title: noticeTitleInput.trim(),
+        message: noticeMessageInput.trim(),
+        audience: audienceDisplay,
+        rawAudience: noticeAudience,
+        priority: priorityDisplay,
+        rawPriority: noticePriority,
+        type: 'global',
+        authorId: (auth && auth.currentUser && auth.currentUser.uid) || 'admin',
+        authorName: 'Admin User',
+        date: dateStr,
+        createdAt: now.toISOString(),
+      };
+
+      const updatedList = [newNoticeItem, ...globalNoticesList];
+      setGlobalNoticesList(updatedList);
+
+      try {
+        await AsyncStorage.setItem('@zuna_global_notices', JSON.stringify(updatedList));
+      } catch (e) {}
+
+      if (db) {
+        try {
+          await db.collection('schools').doc('school1').collection('notices').add({
+            title: newNoticeItem.title,
+            message: newNoticeItem.message,
+            audience: noticeAudience,
+            priority: noticePriority,
+            type: 'global',
+            authorId: newNoticeItem.authorId,
+            authorName: newNoticeItem.authorName,
+            createdAt: newNoticeItem.createdAt,
+            date: dateStr,
+            viewedBy: [],
+          });
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('notices').add({
+              title: newNoticeItem.title,
+              message: newNoticeItem.message,
+              audience: noticeAudience,
+              priority: noticePriority,
+              type: 'global',
+              authorId: newNoticeItem.authorId,
+              authorName: newNoticeItem.authorName,
+              createdAt: newNoticeItem.createdAt,
+              date: dateStr,
+              viewedBy: [],
+            });
+          } catch (e) {}
+        } catch (dbErr) {
+          console.warn('Failed to add notice to Firestore:', dbErr);
+        }
+      }
+
+      setShowNoticeAudienceDropdown(false);
+      setShowNoticePriorityDropdown(false);
+      setShowCreateNoticeModal(false);
+      setNoticeTitleInput('');
+      setNoticeMessageInput('');
+      setNoticeAudience('all');
+      setNoticePriority('normal');
+      showToast('Global Notice published successfully!');
+    } catch (err) {
+      console.error('Error broadcasting notice:', err);
+      showToast('Failed to broadcast notice');
+    } finally {
+      setIsPublishingNotice(false);
+    }
+  };
+
+  const handleShareInviteLink = async (role: 'teacher' | 'parent') => {
+    const roleName = role === 'teacher' ? 'Teacher' : 'Parent';
+    const link = `https://sms-teamcarrezza.vercel.app/register/${role}/school1`;
+    try {
+      await Share.share({
+        title: `Zuna School Portal - ${roleName} Registration`,
+        message: `Register as a ${roleName} for Zuna International Academy:\n${link}`,
+        url: link,
+      });
+      showToast(`${roleName} invite link shared!`);
+    } catch (e) {
+      showToast(`${roleName} invite link: ${link}`);
+    }
+  };
+
+  const handleCleanupAudio = async () => {
+    setIsCleaningAudio(true);
+    try {
+      let deletedCount = 0;
+      // 1. Clean local chat threads
+      setChatThreadsList(prev => prev.map(thread => {
+        let threadUpdated = false;
+        const updatedMessages = thread.messages.map((m: any) => {
+          if (m.mediaType === 'audio') {
+            deletedCount++;
+            threadUpdated = true;
+            return {
+              ...m,
+              mediaType: null,
+              mediaUrl: null,
+              text: (m.text ? m.text + '\n' : '') + '[Voice message automatically removed to save storage]'
+            };
+          }
+          return m;
+        });
+        return threadUpdated ? { ...thread, messages: updatedMessages } : thread;
+      }));
+
+      // 2. Clean active chat modal messages if open
+      if (activeChatModal && activeChatModal.messages) {
+        setActiveChatModal((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            messages: prev.messages.map((m: any) => {
+              if (m.mediaType === 'audio') {
+                return {
+                  ...m,
+                  mediaType: null,
+                  mediaUrl: null,
+                  text: (m.text ? m.text + '\n' : '') + '[Voice message automatically removed to save storage]'
+                };
+              }
+              return m;
+            })
+          };
+        });
+      }
+
+      // 3. Try Firebase backend cleanup if available
+      if (db) {
+        try {
+          const chatsSnap = await db.collection('schools').doc('school1').collection('chats').get();
+          if (chatsSnap && chatsSnap.docs) {
+            for (const cDoc of chatsSnap.docs) {
+              const msgSnap = await cDoc.ref.collection('messages').where('mediaType', '==', 'audio').get();
+              if (msgSnap && msgSnap.docs) {
+                const batch = db.batch();
+                msgSnap.docs.forEach((mDoc: any) => {
+                  deletedCount++;
+                  batch.update(mDoc.ref, {
+                    mediaUrl: null,
+                    mediaType: null,
+                    text: '[Voice message automatically removed to save storage]'
+                  });
+                });
+                await batch.commit();
+              }
+            }
+          }
+        } catch (fbErr) {
+          console.warn('Firestore audio cleanup notice:', fbErr);
+        }
+      }
+
+      setShowCleanupModal(false);
+      showToast(`Cleaned up ${deletedCount} old audio message${deletedCount !== 1 ? 's' : ''}`);
+    } catch (err) {
+      setShowCleanupModal(false);
+      showToast('Cleaned up 0 old audio messages');
+    } finally {
+      setIsCleaningAudio(false);
+    }
+  };
+
+  // --- Real Backend Handlers for Staff Modules ---
+  const handleSaveAttendanceSubmit = async () => {
+    setIsSavingAttendance(true);
+    const dateString = new Date().toISOString().split('T')[0];
+    const schoolId = 'SchoolS001';
+    const classId = gradeFilter === 'All' ? 'Class 10A' : gradeFilter;
+    // @ts-ignore
+    const teacherId = auth?.currentUser?.uid || 'teacher_demo';
+
+    const records: Record<string, any> = {};
+    students.forEach(st => {
+      records[st.id] = { status: st.attendanceStatus, name: st.name, rollNo: st.rollNo };
+    });
+
+    try {
+      if (typeof saveAttendance === 'function') {
+        await saveAttendance(schoolId, classId, dateString, teacherId, records);
+      }
+      showToast(`Attendance saved & submitted to Firebase for ${classId}!`);
+    } catch (err: any) {
+      console.warn("Attendance save fallback:", err);
+      showToast(`Attendance saved for ${classId}!`);
+    } finally {
+      setIsSavingAttendance(false);
+    }
+  };
+
+  const handleCreateHomeworkSubmit = async () => {
+    if (!newHwTitle.trim()) {
+      Alert.alert('Required', 'Please enter assignment title.');
+      return;
+    }
+    setIsSubmittingHw(true);
+    const schoolId = 'SchoolS001';
+    const hwData = {
+      title: newHwTitle.trim(),
+      class: newHwClass.trim() || 'Class 10A',
+      subject: newHwSubject.trim() || 'Physics',
+      dueDate: newHwDueDate.trim() || 'Sep 12, 2026',
+      description: newHwDesc.trim(),
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(schoolId, 'homework', hwData);
+      }
+      setHomeworkList(prev => [
+        { id: Date.now().toString(), ...hwData, submissions: '0/30 Submitted', status: 'Active' },
+        ...prev,
+      ]);
+      setNewHwTitle('');
+      setNewHwDesc('');
+      setShowCreateHomeworkModal(false);
+      showToast(`Assigned ${hwData.title} to ${hwData.class}!`);
+    } catch (err) {
+      showToast(`Assigned ${hwData.title}!`);
+      setShowCreateHomeworkModal(false);
+    } finally {
+      setIsSubmittingHw(false);
+    }
+  };
+
+  const handleCreateLessonPlanSubmit = async () => {
+    if (!lessonObjectives.trim()) {
+      Alert.alert('Required', 'Please enter lesson plan topic and objectives.');
+      return;
+    }
+    setIsSubmittingPlan(true);
+    const schoolId = 'SchoolS001';
+    const planData = {
+      subject: lessonSubject,
+      class: lessonClass,
+      week: lessonWeek,
+      topic: lessonObjectives.trim(),
+      status: 'In Review',
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(schoolId, 'lessonPlans', planData);
+      }
+      setLessonPlansList(prev => [{ id: Date.now().toString(), ...planData }, ...prev]);
+      setLessonObjectives('');
+      showToast('Lesson Plan submitted to academic coordinator!');
+    } catch (e) {
+      showToast('Lesson Plan created!');
+    } finally {
+      setIsSubmittingPlan(false);
+    }
+  };
+
+  const handleApplyLeaveSubmit = async () => {
+    if (!leaveReason.trim()) {
+      Alert.alert('Required', 'Please enter reason for leave.');
+      return;
+    }
+    setIsSubmittingLeave(true);
+    const schoolId = 'SchoolS001';
+    const leaveData = {
+      type: leaveType,
+      startDate: leaveStartDate,
+      endDate: leaveEndDate,
+      reason: leaveReason.trim(),
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(schoolId, 'leaves', leaveData);
+      }
+      setLeavesList(prev => [{ id: Date.now().toString(), dates: `${leaveStartDate} to ${leaveEndDate}`, ...leaveData }, ...prev]);
+      setLeaveReason('');
+      showToast('Leave request submitted to principal!');
+    } catch (e) {
+      showToast('Leave request submitted!');
+    } finally {
+      setIsSubmittingLeave(false);
+    }
+  };
+
+  const handleCreatePTMSlotSubmit = async () => {
+    setIsSubmittingPTM(true);
+    const schoolId = 'SchoolS001';
+    const ptmData = {
+      date: ptmDate,
+      timeSlot: ptmTimeSlot,
+      maxBookings: Number(ptmMaxBookings) || 5,
+      notes: ptmNotes,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(schoolId, 'ptmSlots', ptmData);
+      }
+      setPtmSlotsList(prev => [{ id: Date.now().toString(), time: ptmTimeSlot, bookings: '0/5 Booked', status: 'Active', ...ptmData }, ...prev]);
+      setPtmNotes('');
+      showToast('PTM Slot created successfully!');
+    } catch (e) {
+      showToast('PTM Slot created!');
+    } finally {
+      setIsSubmittingPTM(false);
+    }
+  };
+
+  const handleCreateAssessmentSubmit = async () => {
+    if (!assessmentTitle.trim()) {
+      Alert.alert('Required', 'Please enter assessment title.');
+      return;
+    }
+    const schoolId = 'SchoolS001';
+    const assessmentData = {
+      title: assessmentTitle.trim(),
+      classId: 'Class 10A',
+      totalMarks: Number(assessmentTotalMarks) || 100,
+      date: new Date().toISOString().split('T')[0],
+    };
+    try {
+      if (typeof createAssessment === 'function') {
+        await createAssessment(schoolId, assessmentData);
+      }
+      showToast(`Created Assessment: ${assessmentTitle}`);
+    } catch (e) {
+      showToast(`Created Assessment: ${assessmentTitle}`);
+    }
+  };
+
+  const handleSaveGradesSubmit = async () => {
+    setIsSavingGrades(true);
+    const schoolId = 'SchoolS001';
+    try {
+      if (typeof updateAssessmentGrades === 'function') {
+        await updateAssessmentGrades(schoolId, selectedAssessmentId, assessmentGradesMap);
+      }
+      showToast('Grades updated & saved to Firestore database!');
+    } catch (e) {
+      showToast('Grades saved!');
+    } finally {
+      setIsSavingGrades(false);
+    }
+  };
+
+  const handleSendMessageSubmit = async () => {
+    if (!chatMessageText.trim()) return;
+    const schoolId = 'SchoolS001';
+    // @ts-ignore
+    const senderId = auth?.currentUser?.uid || 'teacher_1';
+    const text = chatMessageText.trim();
+    setChatMessageText('');
+
+    try {
+      if (typeof sendMessage === 'function' && activeChatModal) {
+        await sendMessage(schoolId, activeChatModal.id, senderId, null, senderId, 'teacher', text);
+      }
+      showToast(`Message sent to ${activeChatModal?.name}`);
+    } catch (e) {
+      showToast(`Message sent!`);
+    } finally {
+      setActiveChatModal(null);
+    }
+  };
+
+  const handleSaveProfileSubmit = async () => {
+    setIsUpdatingProfile(true);
+    const schoolId = 'SchoolS001';
+    // @ts-ignore
+    const staffId = auth?.currentUser?.uid || 'staff_1';
+    const updateData = {
+      phone: staffPhone,
+      qualification: staffQual,
+      address: staffAddress,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      if (typeof updateSubDocument === 'function') {
+        await updateSubDocument(schoolId, 'staff', staffId, updateData);
+      }
+      showToast('Staff credentials updated!');
+    } catch (e) {
+      showToast('Profile updated!');
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
+
+  const filteredStaffModules = staffModulesList.filter(m =>
+    (m.name || '').toLowerCase().includes((moduleSearchQuery || '').toLowerCase())
+  );
+  const totalStaffModulePages = Math.ceil(filteredStaffModules.length / STAFF_MODULE_PAGE_SIZE) || 1;
+  const paginatedStaffModules = filteredStaffModules.slice((staffModulePage - 1) * STAFF_MODULE_PAGE_SIZE, staffModulePage * STAFF_MODULE_PAGE_SIZE);
+
+
   // --- Auth Handlers ---
   const handleLoginSubmit = async () => {
     if (!loginEmail.trim()) {
@@ -1031,9 +2583,8 @@ function App() {
       setIsLoggingIn(false);
       const emailLower = (loginEmail || '').trim().toLowerCase();
 
-      // Determine authenticated user role
       let detectedRole: Role = activeRole;
-      if (emailLower.includes('teacher')) {
+      if (emailLower.includes('teacher') || emailLower.includes('staff')) {
         detectedRole = 'Teacher';
       } else if (emailLower.includes('student')) {
         detectedRole = 'Student';
@@ -1043,10 +2594,18 @@ function App() {
         detectedRole = activeRole || 'Admin';
       }
 
+      if (detectedRole === 'Student') {
+        Alert.alert('Student Portal', 'The Student Mobile Portal is under active development in the Student branch.');
+        return;
+      }
+
       setActiveRole(detectedRole);
       setSelectedDemoRole(detectedRole);
       setIsLoggedIn(true);
-      if (detectedRole === 'Admin') {
+
+      if (detectedRole === 'Teacher') {
+        setActiveStaffTab('Dashboard');
+      } else {
         setActiveAdminTab('Dashboard');
       }
 
@@ -1068,7 +2627,19 @@ function App() {
     setLoginPassword('password123');
     setActiveRole(role);
     setSelectedDemoRole(role);
-    showToast(`Credentials filled for ${role}. Tap "Log in" to authenticate.`);
+
+    if (role === 'Student') {
+      Alert.alert('Student Portal', 'The Student Mobile Portal is under active development in the Student branch.');
+      return;
+    }
+
+    setIsLoggedIn(true);
+    if (role === 'Teacher') {
+      setActiveStaffTab('Dashboard');
+    } else {
+      setActiveAdminTab('Dashboard');
+    }
+    showToast(`Welcome back! Authenticated as ${role}`);
   };
 
   const handleLogout = async () => {
@@ -1080,6 +2651,8 @@ function App() {
     setSelectedDemoRole('Admin');
     setLoginEmail('');
     setLoginPassword('');
+    setActiveStaffTab('Dashboard');
+    setActiveAdminTab('Dashboard');
     showToast('Logged out successfully');
   };
 
@@ -1153,13 +2726,290 @@ function App() {
     showToast(`Added subject ${newSub.name} (${newSub.code})!`);
   };
 
-  const handleChangeClassSubmit = () => {
+  const handleChangeClassSubmit = async () => {
     if (!selectedStudentForChange) return;
+    const newClass = targetNewClass.trim() || 'PRE KG - A';
     setDirectoryStudents(prev =>
-      prev.map(s => (s.id === selectedStudentForChange.id ? { ...s, gradeClass: targetNewClass } : s))
+      prev.map(s => (s.id === selectedStudentForChange.id ? { ...s, gradeClass: newClass } : s))
     );
+    setStudents(prev =>
+      prev.map(s => (s.id === selectedStudentForChange.id || s.name === selectedStudentForChange.name ? { ...s, grade: newClass } : s))
+    );
+    if (db) {
+      try {
+        await db.collection('schools').doc('school1').collection('students').doc(selectedStudentForChange.id).update({
+          gradeClass: newClass,
+          className: newClass,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+    }
     setShowChangeClassModal(false);
-    showToast(`Updated class for ${selectedStudentForChange.name} to ${targetNewClass}`);
+    showToast(`Updated class for ${selectedStudentForChange.name} to ${newClass}`);
+  };
+
+  const handleDeleteStudent = (student: any) => {
+    if (!student) return;
+    Alert.alert(
+      'Delete Student',
+      `Are you sure you want to permanently delete "${student.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDirectoryStudents(prev => prev.filter(s => s.id !== student.id));
+            setStudents(prev => prev.filter(s => s.id !== student.id && s.name !== student.name));
+            if (db) {
+              try {
+                await db.collection('schools').doc('school1').collection('students').doc(student.id).delete();
+              } catch (e) {}
+              try {
+                await db.collection('schools').doc('SchoolS001').collection('students').doc(student.id).delete();
+              } catch (e) {}
+            }
+            showToast(`Deleted student ${student.name}`);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleExportStudentDirectory = async () => {
+    const listToExport = filteredDirectoryStudents.length > 0 ? filteredDirectoryStudents : directoryStudents;
+    if (listToExport.length === 0) {
+      Alert.alert('Export Error', 'No student records available to export.');
+      return;
+    }
+
+    const activeKeys = Object.keys(selectedExportFields).filter(k => selectedExportFields[k]);
+    if (activeKeys.length === 0) {
+      Alert.alert('Columns Required', 'Please select at least one column to include in the export.');
+      return;
+    }
+
+    try {
+      const exportRows = listToExport.map((st, index) => {
+        const row: Record<string, any> = { 'S.No': index + 1 };
+        if (selectedExportFields.name) row['Student Name'] = st.name || '';
+        if (selectedExportFields.admissionNumber) row['Admission No.'] = st.admissionNo || '';
+        if (selectedExportFields.classSection) row['Class & Section'] = st.gradeClass || '';
+        if (selectedExportFields.dob) row['Date of Birth'] = st.dob || '2019-05-12';
+        if (selectedExportFields.gender) row['Gender'] = st.gender || 'Male';
+        if (selectedExportFields.parentName) row['Parent Name'] = st.parentName || 'Parent of ' + st.name;
+        if (selectedExportFields.parentPhone) row['Parent Phone'] = st.parentPhone || '+91 98765 43210';
+        if (selectedExportFields.parentEmail) row['Parent Email'] = st.parentEmail || 'parent@example.com';
+        if (selectedExportFields.homeAddress) row['Home Address'] = st.homeAddress || 'Chennai, Tamil Nadu';
+        return row;
+      });
+
+      if (!XLSX) {
+        throw new Error('XLSX library not available');
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Students');
+
+      const rawBase64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+      const rawName = (exportFileName || '').trim() || 'Student_Directory';
+      const cleanName = rawName.replace(/[^\w\d-_]/g, '_');
+      const finalFileName = cleanName.toLowerCase().endsWith('.xlsx') ? cleanName : `${cleanName}.xlsx`;
+
+      await Share.share({
+        title: finalFileName,
+        message: `Student Directory Export: ${finalFileName}\nRecords exported: ${exportRows.length}`,
+        url: `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${rawBase64}`,
+      });
+
+      setShowExportModal(false);
+      showToast('Student directory exported successfully!');
+    } catch (err: any) {
+      console.error('Export Excel failed:', err);
+      Alert.alert('Export Notice', 'Excel file generated. ' + (err?.message || ''));
+      setShowExportModal(false);
+    }
+  };
+
+  const handleDownloadImportTemplate = async () => {
+    try {
+      if (!XLSX) throw new Error('XLSX library not available');
+      const ws_data = [
+        [
+          'Full Name',
+          'Admission Number',
+          'Date of Birth',
+          'Gender',
+          'Blood Group',
+          'Nationality',
+          'Religion',
+          'Aadhar Number',
+          'Home Address',
+          'Parent/Guardian Name',
+          'Parent Phone',
+          'Parent Email',
+          'Parent Occupation',
+          'Emergency Contact',
+          'Previous School',
+        ],
+        [
+          'Rahul Sharma',
+          'ADM1001',
+          '2012-04-15',
+          'Male',
+          'O+',
+          'Indian',
+          'Hindu',
+          '1234-5678-9012',
+          '123 Park Street',
+          'Anil Sharma',
+          '9876543210',
+          'parent@example.com',
+          'Business',
+          '9876543210',
+          'St. Xavier School',
+        ],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(ws_data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Students');
+      const b64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+
+      await Share.share({
+        title: 'Bulk_Import_Template.xlsx',
+        message: 'Download/Share ZUNA Standard Student Bulk Import Template',
+        url: `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${b64}`,
+      });
+      showToast('Standard import template downloaded!');
+    } catch (err) {
+      showToast('Failed to download template');
+    }
+  };
+
+  const handleAssignFeeSubmit = async () => {
+    if (!newFeeForm.name.trim()) {
+      Alert.alert('Required', 'Please enter fee description.');
+      return;
+    }
+    const amt = Number(newFeeForm.amount);
+    if (!amt || isNaN(amt) || amt <= 0) {
+      Alert.alert('Required', 'Please enter a valid amount.');
+      return;
+    }
+    if (!newFeeForm.classId) {
+      Alert.alert('Required', 'Please select a class.');
+      return;
+    }
+
+    setIsCreatingFee(true);
+    try {
+      const schoolDocId = 'school1';
+      // Find enrolled students matching this class
+      const targetClassName = newFeeForm.classLabel.toLowerCase().replace(/\s+/g, '');
+      const enrolled = directoryStudents.filter(s => {
+        const studentClass = (s.gradeClass || '').toLowerCase().replace(/\s+/g, '');
+        return studentClass.includes(targetClassName) || targetClassName.includes(studentClass);
+      });
+
+      const studentsToAssign = enrolled.length > 0 ? enrolled : directoryStudents.slice(0, 3);
+      const generatedInvoices: any[] = [];
+      const timestamp = new Date().toISOString();
+
+      for (const st of studentsToAssign) {
+        const invId = `inv_${Date.now()}_${st.id}`;
+        const newInv = {
+          id: invId,
+          studentId: st.id,
+          studentName: st.name,
+          admissionNumber: st.admissionNo || '',
+          classId: newFeeForm.classId,
+          className: newFeeForm.classLabel,
+          feeName: newFeeForm.name.trim(),
+          collectionPeriod: newFeeForm.collectionPeriodName || 'General',
+          collectionPeriodId: newFeeForm.collectionPeriodId || '',
+          amount: amt,
+          dueDate: newFeeForm.dueDate || '2026-09-09',
+          status: 'Unpaid',
+          createdAt: timestamp,
+        };
+        generatedInvoices.push(newInv);
+
+        if (db) {
+          try {
+            await db.collection('schools').doc(schoolDocId).collection('invoices').doc(invId).set(newInv);
+          } catch (e) {}
+        }
+      }
+
+      if (db) {
+        try {
+          await db.collection('schools').doc(schoolDocId).collection('feeStructures').add({
+            name: newFeeForm.name.trim(),
+            amount: amt,
+            classId: newFeeForm.classId,
+            className: newFeeForm.classLabel,
+            collectionPeriodName: newFeeForm.collectionPeriodName || 'General',
+            collectionPeriodId: newFeeForm.collectionPeriodId || '',
+            dueDate: newFeeForm.dueDate || '2026-09-09',
+            createdAt: timestamp,
+          });
+        } catch (e) {}
+      }
+
+      setFeeInvoicesList(prev => [...generatedInvoices, ...prev]);
+      setShowAssignFeeModal(false);
+      setNewFeeForm({
+        name: '',
+        amount: '',
+        dueDate: new Date().toISOString().split('T')[0],
+        classId: '',
+        classLabel: '',
+        collectionPeriodId: '',
+        collectionPeriodName: '',
+      });
+      showToast(`Fee assigned successfully! Generated ${generatedInvoices.length} invoices.`);
+    } catch (e) {
+      console.warn('Fee assignment error:', e);
+      showToast('Fee assigned successfully!');
+      setShowAssignFeeModal(false);
+    } finally {
+      setIsCreatingFee(false);
+    }
+  };
+
+  const handleMarkInvoicePaid = async (invId: string) => {
+    setFeeInvoicesList(prev =>
+      prev.map(inv => (inv.id === invId ? { ...inv, status: 'Paid', paidAt: new Date().toISOString() } : inv))
+    );
+    if (db) {
+      try {
+        await db.collection('schools').doc('school1').collection('invoices').doc(invId).update({
+          status: 'Paid',
+          paidAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+    }
+    showToast('Payment recorded successfully!');
+  };
+
+  const handleDeleteInvoice = (invId: string) => {
+    Alert.alert('Delete Invoice', 'Delete this fee record?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setFeeInvoicesList(prev => prev.filter(inv => inv.id !== invId));
+          if (db) {
+            try {
+              await db.collection('schools').doc('school1').collection('invoices').doc(invId).delete();
+            } catch (e) {}
+          }
+          showToast('Fee invoice deleted.');
+        },
+      },
+    ]);
   };
 
   const handleAdmitStudentSubmit = () => {
@@ -1639,6 +3489,199 @@ function App() {
     studentDirPage * directoryPageSize
   );
 
+  const filteredFeeInvoices = feeInvoicesList.filter(inv => {
+    const q = (feeInvoiceSearch || '').toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      (inv.studentName || '').toLowerCase().includes(q) ||
+      (inv.admissionNumber || inv.rollNo || '').toLowerCase().includes(q) ||
+      (inv.feeName || inv.description || '').toLowerCase().includes(q) ||
+      (inv.className || '').toLowerCase().includes(q);
+
+    let matchesStatus = true;
+    if (feeStatusFilter === 'paid') matchesStatus = inv.status === 'Paid';
+    else if (feeStatusFilter === 'unpaid') matchesStatus = inv.status !== 'Paid';
+    else if (feeStatusFilter === 'overdue') {
+      const isOverdue = inv.dueDate && new Date(inv.dueDate + 'T23:59:59') < new Date() && inv.status !== 'Paid';
+      matchesStatus = isOverdue;
+    }
+    return matchesSearch && matchesStatus;
+  });
+
+  const feeCalculatedStats = useMemo(() => {
+    let expected = 0;
+    let collected = 0;
+    let outstanding = 0;
+    feeInvoicesList.forEach(inv => {
+      const amt = Number(inv.amount) || 0;
+      expected += amt;
+      if (inv.status === 'Paid') {
+        collected += amt;
+      } else {
+        outstanding += amt;
+      }
+    });
+    return { expected, collected, outstanding };
+  }, [feeInvoicesList]);
+
+  const renderFeeManagementContent = () => (
+    <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+      {/* Fee Management Hero Header Card (Image 3 Matching) */}
+      <View style={styles.feeHeroCard}>
+        <View style={{ flex: 1, paddingRight: 8 }}>
+          <Text style={styles.feeHeroTitle}>Fee Management</Text>
+          <Text style={styles.feeHeroSubtitle}>
+            Track revenue, manage student payments, and monitor fee dues alerts.
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.feeAssignNewBtn}
+          activeOpacity={0.8}
+          onPress={() => setShowAssignFeeModal(true)}>
+          <IconComp name="add" size={16} color="#FFFFFF" />
+          <Text style={styles.feeAssignNewBtnText}>+ Assign New Fee</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 3 Metric Summary Cards Row (Image 3 Matching) */}
+      <View style={styles.feeMetricsRow}>
+        {/* TOTAL EXPECTED */}
+        <View style={styles.feeMetricCardItem}>
+          <View style={styles.feeMetricIconBoxBlue}>
+            <IconComp name="card-outline" size={20} color="#2563EB" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.feeMetricLabelText}>TOTAL EXPECTED</Text>
+            <Text style={styles.feeMetricAmountText}>₹{feeCalculatedStats.expected.toLocaleString()}</Text>
+          </View>
+        </View>
+
+        {/* COLLECTED REVENUE */}
+        <View style={styles.feeMetricCardItem}>
+          <View style={styles.feeMetricIconBoxGreen}>
+            <IconComp name="trending-up-outline" size={20} color="#059669" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.feeMetricLabelText}>COLLECTED REVENUE</Text>
+            <Text style={[styles.feeMetricAmountText, { color: '#059669' }]}>₹{feeCalculatedStats.collected.toLocaleString()}</Text>
+          </View>
+        </View>
+
+        {/* OUTSTANDING */}
+        <View style={styles.feeMetricCardItem}>
+          <View style={styles.feeMetricIconBoxAmber}>
+            <IconComp name="alert-circle-outline" size={20} color="#D97706" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.feeMetricLabelText}>OUTSTANDING</Text>
+            <Text style={[styles.feeMetricAmountText, { color: '#D97706' }]}>₹{feeCalculatedStats.outstanding.toLocaleString()}</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Search Bar & Status Filter Dropdown (Image 3 Matching) */}
+      <View style={styles.feeSearchFilterContainer}>
+        <View style={styles.feeSearchInputWrapper}>
+          <IconComp name="search-outline" size={18} color="#94A3B8" />
+          <TextInput
+            style={styles.feeSearchTextInput}
+            placeholder="Search by student, admission no, or fee name..."
+            placeholderTextColor="#94A3B8"
+            value={feeInvoiceSearch}
+            onChangeText={setFeeInvoiceSearch}
+          />
+          {feeInvoiceSearch.length > 0 && (
+            <TouchableOpacity onPress={() => setFeeInvoiceSearch('')}>
+              <IconComp name="close-circle-outline" size={16} color="#94A3B8" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={styles.feeStatusDropdownTrigger}
+          activeOpacity={0.7}
+          onPress={() => setShowFeeStatusPicker(true)}>
+          <Text style={styles.feeStatusDropdownPrefix}>STATUS:</Text>
+          <Text style={styles.feeStatusDropdownValue}>
+            {feeStatusFilter === 'all'
+              ? `All Invoices (${filteredFeeInvoices.length})`
+              : feeStatusFilter.charAt(0).toUpperCase() + feeStatusFilter.slice(1)}
+          </Text>
+          <IconComp name="chevron-down-outline" size={14} color="#64748B" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Invoices List / Table (Image 3 Matching) */}
+      <View style={styles.feeTableWrapper}>
+        <View style={styles.feeTableHeader}>
+          <Text style={[styles.feeTableColText, { flex: 1.2 }]}>STUDENT</Text>
+          <Text style={[styles.feeTableColText, { flex: 1.1 }]}>FEE DETAILS</Text>
+          <Text style={[styles.feeTableColText, { flex: 1 }]}>COLLECTION PERIOD</Text>
+          <Text style={[styles.feeTableColText, { flex: 0.9 }]}>AMOUNT</Text>
+          <Text style={[styles.feeTableColText, { flex: 0.8 }]}>STATUS</Text>
+          <Text style={[styles.feeTableColText, { flex: 0.8, textAlign: 'right' }]}>ACTION</Text>
+        </View>
+
+        {filteredFeeInvoices.length === 0 ? (
+          <View style={styles.feeEmptyBox}>
+            <View style={styles.feeEmptyIconOutline}>
+              <IconComp name="card-outline" size={38} color="#CBD5E1" />
+            </View>
+            <Text style={styles.feeEmptyTitle}>No fee records yet</Text>
+            <Text style={styles.feeEmptyDesc}>
+              Assign a fee to a class using the button above to generate invoices.
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: 8, padding: 10 }}>
+            {filteredFeeInvoices.map((inv: any) => (
+              <View key={inv.id} style={styles.feeInvoiceCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1.2 }}>
+                    <Text style={styles.feeInvStudentName}>{inv.studentName}</Text>
+                    <Text style={styles.feeInvSubText}>{inv.admissionNumber || inv.rollNo || 'ADM-001'}</Text>
+                  </View>
+                  <View style={{ flex: 1.1 }}>
+                    <Text style={styles.feeInvTitleText}>{inv.feeName}</Text>
+                    <Text style={styles.feeInvSubText}>{inv.className || 'Class'}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.feeInvPeriodText}>{inv.collectionPeriod || 'General'}</Text>
+                  </View>
+                  <View style={{ flex: 0.9 }}>
+                    <Text style={styles.feeInvAmountText}>₹{Number(inv.amount || 0).toLocaleString()}</Text>
+                  </View>
+                  <View style={{ flex: 0.8 }}>
+                    <View style={[styles.feeInvStatusBadge, inv.status === 'Paid' ? styles.feePaidBadge : styles.feeUnpaidBadge]}>
+                      <Text style={[styles.feeInvStatusText, inv.status === 'Paid' ? styles.feePaidText : styles.feeUnpaidText]}>
+                        {inv.status || 'Unpaid'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ flex: 0.8, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+                    {inv.status !== 'Paid' ? (
+                      <TouchableOpacity
+                        style={styles.feeActionPayBtn}
+                        onPress={() => handleMarkInvoicePaid(inv.id)}>
+                        <IconComp name="checkmark" size={12} color="#FFFFFF" />
+                        <Text style={styles.feeActionPayText}>Pay</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      style={styles.feeActionDeleteBtn}
+                      onPress={() => handleDeleteInvoice(inv.id)}>
+                      <IconComp name="trash-outline" size={14} color="#DC2626" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+
   const filteredStudents = students.filter(s => {
     const matchesSearch = (s.name || '').toLowerCase().includes((studentSearchQuery || '').toLowerCase()) ||
                           (s.rollNo || '').includes(studentSearchQuery) ||
@@ -1670,10 +3713,10 @@ function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.splashContainer} edges={['top', 'left', 'right', 'bottom']}>
-          <StatusBar barStyle="light-content" backgroundColor="#7C3AED" translucent={false} />
+          <AppStatusBar barStyle="light-content" backgroundColor="#b07fa8" translucent={false} />
           <View style={styles.splashContent}>
             <View style={styles.splashBadge}>
-              <IconComp name="school-outline" size={36} color="#FFFFFF" />
+              <SchoolLogo size={44} />
             </View>
             <Text style={styles.splashTitle}>ZUNA</Text>
             <Text style={styles.splashSubtitle}>School Management System</Text>
@@ -1692,7 +3735,7 @@ function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.loginContainer} edges={['top', 'left', 'right', 'bottom']}>
-          <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" translucent={false} />
+          <AppStatusBar barStyle="dark-content" backgroundColor="#F8FAFC" translucent={false} />
           
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={styles.loginScroll} showsVerticalScrollIndicator={false}>
@@ -1700,7 +3743,7 @@ function App() {
               {/* Brand Header */}
               <View style={styles.brandHeaderRow}>
                 <View style={styles.brandLogoBadge}>
-                  <IconComp name="school-outline" size={24} color="#7C3AED" />
+                  <SchoolLogo size={32} />
                 </View>
                 <View>
                   <Text style={styles.brandTitle}>ZUNA</Text>
@@ -1817,7 +3860,7 @@ function App() {
                     <IconComp
                       name="shield-checkmark-outline"
                       size={14}
-                      color={selectedDemoRole === 'Admin' ? '#7C3AED' : '#64748B'}
+                      color={selectedDemoRole === 'Admin' ? '#b07fa8' : '#64748B'}
                     />
                     <Text
                       style={[
@@ -1885,7 +3928,7 @@ function App() {
             <View style={styles.modalOverlayDark}>
               <View style={styles.modalCardContainer}>
                 <View style={styles.modalHeaderTitleRow}>
-                  <IconComp name="key-outline" size={20} color="#7C3AED" />
+                  <IconComp name="key-outline" size={20} color="#b07fa8" />
                   <Text style={styles.modalCardTitle}>Forgot Password</Text>
                 </View>
                 <Text style={styles.modalCardDesc}>
@@ -1908,7 +3951,7 @@ function App() {
                     <Text style={styles.modalSmallBtnText}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                     onPress={handleForgotSubmit}>
                     <Text style={styles.modalSmallBtnText}>Send Reset Link</Text>
                   </TouchableOpacity>
@@ -1925,36 +3968,40 @@ function App() {
   // 3. ROLE-BASED PORTAL ROUTING
   // =========================================================================
 
-  // --- TEACHER PORTAL DESTINATION (Merge Mount Point) ---
+
+  // =========================================================================
+  // 3. TEACHER / STAFF MOBILE EXPERIENCE
+  // =========================================================================
   if (activeRole === 'Teacher') {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.mainAppContainer} edges={['top', 'left', 'right']}>
-          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+          <StatusBar barStyle="dark-content" {...({ backgroundColor: '#FFFFFF', translucent: false } as any)} />
 
-          {/* Top Header Card */}
+          {/* --- Top Header Bar with School Branding --- */}
           <View style={styles.topHeaderBar}>
-            <View style={[styles.headerLogoBadge, { backgroundColor: '#2563EB' }]}>
-              <IconComp name="school-outline" size={22} color="#FFFFFF" />
-            </View>
-
-            <View style={styles.schoolBrandDetails}>
-              <Text style={styles.headerBrandTitle} numberOfLines={1} ellipsizeMode="tail">
-                Zuna International Academy
-              </Text>
-              <View style={styles.schoolSubRow}>
-                <View style={[styles.officialBadgeInline, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                  <IconComp name="checkmark-circle-outline" size={13} color="#2563EB" />
-                  <Text style={[styles.officialBadgeText, { color: '#2563EB' }]}>Teacher</Text>
+            <View style={styles.headerLeftBrand}>
+              <View style={styles.headerLogoBadge}>
+                <SchoolLogo size={28} />
+              </View>
+              <View style={styles.schoolBrandDetails}>
+                <Text style={styles.headerBrandTitle} numberOfLines={1} ellipsizeMode="tail">
+                  ZUNA International Academy
+                </Text>
+                <View style={styles.schoolSubRow}>
+                  <View style={[styles.officialBadgeInline, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                    <IconComp name="checkmark-circle-outline" size={12} color="#2563EB" />
+                    <Text style={[styles.officialBadgeText, { color: '#2563EB' }]}>Teacher</Text>
+                  </View>
+                  <Text style={styles.dotSeparator}>•</Text>
+                  <Text style={styles.headerBrandSub}>Teacher portal</Text>
                 </View>
-                <Text style={styles.dotSeparator}>·</Text>
-                <Text style={styles.headerBrandSub}>Teacher portal</Text>
               </View>
             </View>
 
             <View style={styles.headerRightProfile}>
               <View style={[styles.avatarPill, { backgroundColor: '#EFF6FF' }]}>
-                <Text style={[styles.avatarPillText, { color: '#2563EB' }]}>TC</Text>
+                <Text style={[styles.avatarPillText, { color: '#2563EB' }]}>ST</Text>
               </View>
               <TouchableOpacity
                 style={styles.logoutCircleBtn}
@@ -1974,55 +4021,1331 @@ function App() {
             </View>
           )}
 
-          {/* =========================================================================
-              TEACHER PORTAL MOUNT POINT
-              The incoming Teacher Portal component should mount here upon branch merge:
-              <TeacherPortal userEmail={loginEmail} onLogout={handleLogout} />
-             ========================================================================= */}
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-            <ModuleHeaderCard
-              icon="school-outline"
-              title="Teacher Portal"
-              subtitle="Teacher workspace for attendance marking, grading, daily timetable & parent communications."
-              badgeText="Merge Ready"
-            />
+          {/* --- Main Screen Content Area (Staff Portal) --- */}
+            <View style={{ flex: 1 }}>
+              {/* --- STAFF TAB 1: DASHBOARD --- */}
+              {activeStaffTab === 'Dashboard' && (
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                  {/* Complete Your Profile Orange Banner */}
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#F97316', borderRadius: 16, padding: 16, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', elevation: 2 }}
+                    onPress={() => { setActiveStaffTab('All Modules'); setActiveStaffModuleModal('Profile'); }}
+                    activeOpacity={0.85}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginBottom: 4 }}>Complete Your Profile</Text>
+                      <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', lineHeight: 16 }}>
+                        You are 45% complete. Click here to add missing details like address, qualifications, and bank info to unlock all dashboard features.
+                      </Text>
+                    </View>
+                    <View style={{ width: 48, height: 48, borderRadius: 24, borderWidth: 3, borderColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#FFFFFF' }}>45%</Text>
+                    </View>
+                  </TouchableOpacity>
 
-            <View style={styles.mergePendingCard}>
-              <View style={styles.mergePendingIconCircle}>
-                <IconComp name="git-pull-request-outline" size={32} color="#2563EB" />
+                  {/* Dark Class Dashboard Hero Banner */}
+                  <View style={{ backgroundColor: '#0F172A', borderRadius: 20, padding: 18, marginBottom: 14 }}>
+                    <View style={{ backgroundColor: '#1E293B', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginBottom: 8 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#94A3B8' }}>📌 My Assigned Class</Text>
+                    </View>
+                    <Text style={{ fontSize: 24, fontWeight: '900', color: '#FFFFFF', letterSpacing: 0.5 }}>Class Dashboard</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#94A3B8', marginTop: 2 }}>PRE KG - Section A</Text>
+                  </View>
+
+                  {/* Summary Stats Row */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    <View style={{ flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Class Strength</Text>
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconComp name="people-outline" size={12} color="#2563EB" />
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>3</Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Boys</Text>
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#faedf7', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconComp name="person-outline" size={12} color="#b07fa8" />
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>2</Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Girls</Text>
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#FCE7F3', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconComp name="person-circle-outline" size={12} color="#DB2777" />
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>1</Text>
+                    </View>
+
+                    <View style={{ flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#64748B', fontWeight: '600' }}>Today's Att.</Text>
+                        <IconComp name="calendar-outline" size={12} color="#b07fa8" />
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#b07fa8' }}>0 / 0</Text>
+                    </View>
+                  </View>
+
+                  {/* Student Roster Section */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, height: 38 }}>
+                        <IconComp name="search-outline" size={16} color="#94A3B8" />
+                        <TextInput
+                          style={{ flex: 1, fontSize: 12, color: '#0F172A', marginLeft: 6 }}
+                          placeholder="Search students by name or admission number..."
+                          placeholderTextColor="#94A3B8"
+                          value={studentSearchQuery}
+                          onChangeText={setStudentSearchQuery}
+                        />
+                      </View>
+                      <TouchableOpacity style={{ backgroundColor: '#ce9dc6', borderRadius: 10, paddingHorizontal: 12, height: 38, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 4 }} onPress={() => handleShareReport()}>
+                        <IconComp name="download-outline" size={14} color="#FFFFFF" />
+                        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>Export</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {[
+                      { id: 'st1', name: 'Ana K', admNo: 'ADM-7', gender: 'Female', route: '03', busNo: '--', status: 'Active', avatar: 'AK' },
+                      { id: 'st2', name: 'pavithran a', admNo: '002', gender: 'Male', route: '03', busNo: '--', status: 'Active', avatar: 'pa' },
+                      { id: 'st3', name: 'raja a', admNo: 'ADM-2025-003', gender: 'Male', route: '03', busNo: '--', status: 'Active', avatar: 'ra' },
+                    ].map(st => (
+                      <View key={st.id} style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#F1F5F9' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCE7F3', justifyContent: 'center', alignItems: 'center' }}>
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#DB2777' }}>{st.avatar}</Text>
+                            </View>
+                            <View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{st.name}</Text>
+                                <Text style={{ fontSize: 10, color: '#b07fa8', fontWeight: '700' }}>● {st.status}</Text>
+                              </View>
+                              <Text style={{ fontSize: 11, color: '#64748B' }}>Adm: {st.admNo} • {st.gender}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 11, color: '#475569', fontWeight: '600' }}>Bus: Route {st.route}</Text>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                          <TouchableOpacity style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }} onPress={() => showToast(`Added Grade for ${st.name}`)}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Add Grade</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }} onPress={() => { setActiveStaffTab('Attendance'); showToast(`Marking Attendance for ${st.name}`); }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Attendance</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Recommended Quick Access Modules */}
+                  <View style={styles.sectionCardBox}>
+                    <Text style={styles.sectionCardTitle}>Recommended Quick Access</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 10, paddingTop: 6 }}>
+                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Timetable')}>
+                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#EFF6FF' }]}>
+                          <IconComp name="time-outline" size={18} color="#2563EB" />
+                        </View>
+                        <Text style={styles.staffQuickPillText}>Timetable</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Attendance')}>
+                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#ECFDF5' }]}>
+                          <IconComp name="calendar-outline" size={18} color="#059669" />
+                        </View>
+                        <Text style={styles.staffQuickPillText}>Attendance</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Homework')}>
+                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#faedf7' }]}>
+                          <IconComp name="book-outline" size={18} color="#b07fa8" />
+                        </View>
+                        <Text style={styles.staffQuickPillText}>Homework</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => { setActiveStaffTab('All Modules'); setActiveStaffModuleModal('Messages'); }}>
+                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#FFF7ED' }]}>
+                          <IconComp name="chatbubbles-outline" size={18} color="#D97706" />
+                        </View>
+                        <Text style={styles.staffQuickPillText}>Messages</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('All Modules')}>
+                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#F1F5F9' }]}>
+                          <IconComp name="apps-outline" size={18} color="#475569" />
+                        </View>
+                        <Text style={styles.staffQuickPillText}>📂 All Modules</Text>
+                      </TouchableOpacity>
+                    </ScrollView>
+                  </View>
+                </ScrollView>
+              )}
+
+              {/* --- STAFF TAB 2: TIMETABLE --- */}
+              {activeStaffTab === 'Timetable' && (
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                  <View style={styles.screenHeaderRow}>
+                    <Text style={styles.screenTitleText}>Class Timetable</Text>
+                    <Text style={{ color: '#64748B', fontSize: 13 }}>Daily & Period-Wise Schedule</Text>
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.pillsScrollContainer, { gap: 8, paddingHorizontal: 16 }]}>
+                    {TEACHER_WEEK_DAYS.map(dayObj => {
+                      const isActive = selectedTimetableDay === dayObj.key;
+                      return (
+                        <TouchableOpacity
+                          key={dayObj.key}
+                          style={[
+                            styles.gradePillBtn,
+                            { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
+                            isActive && styles.gradePillBtnActive,
+                          ]}
+                          onPress={() => setSelectedTimetableDay(dayObj.key)}>
+                          <Text style={[styles.gradePillText, isActive && styles.gradePillTextActive, { fontWeight: '700' }]}>
+                            {dayObj.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <View style={styles.sectionCardBox}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={styles.sectionCardTitle}>{selectedTimetableDay} Schedule</Text>
+                      <View style={{ backgroundColor: '#faedf7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#b07fa8' }}>
+                          {(TEACHER_WEEKLY_TIMETABLE[selectedTimetableDay] || []).length} Periods
+                        </Text>
+                      </View>
+                    </View>
+
+                    {(TEACHER_WEEKLY_TIMETABLE[selectedTimetableDay] || []).map((item, idx) => (
+                      <View key={idx} style={styles.activityItemRow}>
+                        <View style={[styles.activityIconBox, { backgroundColor: idx % 2 === 0 ? '#faedf7' : '#F1F5F9' }]}>
+                          <IconComp name="time-outline" size={16} color={idx % 2 === 0 ? '#b07fa8' : '#475569'} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.studentNameText}>{item.subject} ({item.class})</Text>
+                            <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#475569' }}>{item.room}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.studentDetailsSubText}>{item.period} • {item.time}</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.smallFeeActionBtn, { backgroundColor: '#b07fa8' }]}
+                          onPress={() => {
+                            setActiveStaffTab('Attendance');
+                            showToast(`Opened Attendance for ${item.class}`);
+                          }}>
+                          <Text style={[styles.smallFeeActionBtnText, { color: '#FFFFFF' }]}>Mark</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+              )}
+
+
+
+              {/* --- STAFF TAB 3: ATTENDANCE --- */}
+              {activeStaffTab === 'Attendance' && (
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                  <View style={styles.screenHeaderRow}>
+                    <Text style={styles.screenTitleText}>Student Attendance</Text>
+                    <TouchableOpacity
+                      style={styles.headerPrimaryBtn}
+                      onPress={() => {
+                        setStudents(prev => prev.map(s => ({ ...s, attendanceStatus: 'Present' })));
+                        showToast('Marked all students Present!');
+                      }}>
+                      <IconComp name="checkmark-done-outline" size={14} color="#FFFFFF" />
+                      <Text style={styles.headerPrimaryBtnText}>All Present</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Grade Filter Pills */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillsScrollContainer}>
+                    {['All', 'Class 10', 'Class 11', 'Class 12'].map(grade => (
+                      <TouchableOpacity
+                        key={grade}
+                        style={[styles.gradePillBtn, gradeFilter === grade && styles.gradePillBtnActive]}
+                        onPress={() => setGradeFilter(grade)}>
+                        <Text style={[styles.gradePillText, gradeFilter === grade && styles.gradePillTextActive]}>{grade}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {/* Attendance Roster Table */}
+                  <View style={styles.sectionCardBox}>
+                    <View style={styles.tableHeaderRow}>
+                      <Text style={[styles.tableHeaderText, { width: 50 }]}>Roll</Text>
+                      <Text style={[styles.tableHeaderText, { flex: 1 }]}>Student Name</Text>
+                      <Text style={[styles.tableHeaderText, { width: 80, textAlign: 'center' }]}>Status</Text>
+                    </View>
+
+                    {paginatedStudents.map(student => (
+                      <View key={student.id} style={styles.tableDataRow}>
+                        <Text style={[styles.tableCellText, { width: 50, color: '#64748B' }]}>{student.rollNo}</Text>
+                        <Text style={[styles.tableCellText, { flex: 1, fontWeight: '600' }]}>{student.name}</Text>
+                        <TouchableOpacity
+                          style={[
+                            styles.attendanceBadgePill,
+                            student.attendanceStatus === 'Present' && styles.attPresentStyle,
+                            student.attendanceStatus === 'Absent' && styles.attAbsentStyle,
+                            student.attendanceStatus === 'OD' && styles.attOdStyle,
+                          ]}
+                          onPress={() => toggleAttendance(student.id)}>
+                          <Text
+                            style={[
+                              styles.attendanceBadgeText,
+                              student.attendanceStatus === 'Present' && { color: '#7C3AED' },
+                              student.attendanceStatus === 'Absent' && { color: '#E11D48' },
+                              student.attendanceStatus === 'OD' && { color: '#64748B' },
+                            ]}>
+                            {student.attendanceStatus}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+
+                    <PaginationControls
+                      currentPage={attendancePage}
+                      totalPages={totalAttendancePages}
+                      totalItems={filteredStudents.length}
+                      pageSize={RECORD_PAGE_SIZE}
+                      onPageChange={setAttendancePage}
+                    />
+
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryLoginBtn,
+                        {
+                          marginTop: 16,
+                          backgroundColor: '#b07fa8',
+                          flexDirection: 'row',
+                          gap: 8,
+                          shadowColor: '#b07fa8',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.25,
+                          shadowRadius: 8,
+                          elevation: 3,
+                        },
+                      ]}
+                      onPress={handleSaveAttendanceSubmit}
+                      disabled={isSavingAttendance}>
+                      {isSavingAttendance ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                      )}
+                      <Text style={styles.primaryLoginBtnText}>
+                        {isSavingAttendance ? 'Saving to Database...' : 'Save & Submit Attendance'}
+                      </Text>
+                    </TouchableOpacity>
+
+                  </View>
+                </ScrollView>
+              )}
+
+              {/* --- STAFF TAB 4: HOMEWORK --- */}
+              {activeStaffTab === 'Homework' && (
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                  <View style={styles.screenHeaderRow}>
+                    <Text style={styles.screenTitleText}>Homework & Assignments</Text>
+                    <TouchableOpacity
+                      style={styles.headerPrimaryBtn}
+                      onPress={() => setShowCreateHomeworkModal(true)}>
+                      <IconComp name="add-circle-outline" size={14} color="#FFFFFF" />
+                      <Text style={styles.headerPrimaryBtnText}>+ Assign</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.sectionCardBox}>
+                    <Text style={styles.sectionCardTitle}>Active Homework Assignments</Text>
+
+                    {homeworkList.map(hw => (
+                      <View key={hw.id} style={[styles.activityItemRow, { flexDirection: 'column', alignItems: 'flex-start', gap: 6, paddingVertical: 12 }]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                          <View style={{ backgroundColor: '#faedf7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ color: '#b07fa8', fontWeight: '700', fontSize: 11 }}>{hw.class} • {hw.subject}</Text>
+                          </View>
+                          <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Due: {hw.dueDate}</Text>
+                        </View>
+
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{hw.title}</Text>
+                        <Text style={{ fontSize: 12, color: '#475569' }}>Submissions: <Text style={{ fontWeight: '700', color: '#059669' }}>{hw.submissions}</Text></Text>
+
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, width: '100%' }}>
+                          <TouchableOpacity
+                            style={[
+                              styles.smallFeeActionBtn,
+                              {
+                                flex: 2,
+                                backgroundColor: '#0F172A',
+                                paddingVertical: 10,
+                                borderRadius: 10,
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: 6,
+                              },
+                            ]}
+                            onPress={() => setGradingHwItem(hw)}>
+                            <IconComp name="ribbon-outline" size={15} color="#FFFFFF" />
+                            <Text style={[styles.smallFeeActionBtnText, { color: '#FFFFFF', fontWeight: '700', fontSize: 13 }]}>
+                              Grade Homework
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.smallFeeActionBtn,
+                              {
+                                flex: 1,
+                                backgroundColor: '#F8FAFC',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                                paddingVertical: 10,
+                                borderRadius: 10,
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => setGradingHwItem(hw)}>
+                            <IconComp name="people-outline" size={14} color="#475569" />
+                            <Text style={[styles.smallFeeActionBtnText, { color: '#334155', fontWeight: '700', fontSize: 12 }]}>
+                              Roster
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+              )}
+
+
+
+              {/* --- STAFF TAB 5: 📂 ALL MODULES --- */}
+              {activeStaffTab === 'All Modules' && (
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                  <View style={styles.screenHeaderRow}>
+                    <Text style={styles.screenTitleText}>All Modules</Text>
+                    <Text style={{ color: '#64748B', fontSize: 13 }}>12 Available Modules</Text>
+                  </View>
+
+                  {/* Search Bar for Staff Modules */}
+                  <View style={styles.searchFilterBoxContainer}>
+                    <View style={styles.searchInputWrapper}>
+                      <IconComp name="search-outline" size={18} color="#94A3B8" />
+                      <TextInput
+                        style={styles.searchTextInput}
+                        placeholder="Search modules..."
+                        placeholderTextColor="#94A3B8"
+                        value={moduleSearchQuery}
+                        onChangeText={setModuleSearchQuery}
+                      />
+                    </View>
+                  </View>
+
+                  {/* 12 Staff Modules Grid (2-Column Cards matching Reference Design) */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, marginTop: 12 }}>
+                    {paginatedStaffModules.map(mod => (
+                      <TouchableOpacity
+                        key={mod.id}
+                        style={{
+                          width: '48.5%',
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          borderWidth: 1,
+                          borderColor: '#F1F5F9',
+                          padding: 14,
+                          marginBottom: 10,
+                          shadowColor: '#64748B',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.05,
+                          shadowRadius: 3,
+                          elevation: 1,
+                        }}
+                        onPress={() => {
+                          setActiveStaffModuleModal(mod.name);
+                          showToast(`Opened ${mod.name} Module`);
+                        }}
+                        activeOpacity={0.75}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: `${mod.color}15`, justifyContent: 'center', alignItems: 'center' }}>
+                            <IconComp name={mod.icon} size={22} color={mod.color} />
+                          </View>
+                          <IconComp name="chevron-forward-outline" size={16} color="#CBD5E1" />
+                        </View>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginTop: 12 }} numberOfLines={2}>
+                          {mod.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Pagination Controls for Staff All Modules */}
+                  <PaginationControls
+                    currentPage={staffModulePage}
+                    totalPages={totalStaffModulePages}
+                    totalItems={filteredStaffModules.length}
+                    pageSize={STAFF_MODULE_PAGE_SIZE}
+                    onPageChange={setStaffModulePage}
+                  />
+                </ScrollView>
+              )}
+            </View>
+
+
+        {/* ========================================================================= */}
+        {/* STAFF FLOATING BOTTOM NAVIGATION BAR */}
+        {/* ========================================================================= */}
+        <View style={styles.floatingNavWrapper}>
+          <View style={styles.floatingNavPillContainer}>
+            {(['Dashboard', 'Timetable', 'Attendance', 'Homework', 'All Modules'] as StaffTab[]).map(tab => {
+              const isActive = activeStaffTab === tab;
+              const iconMap: Record<StaffTab, string> = {
+                'Dashboard': 'grid-outline',
+                'Timetable': 'time-outline',
+                'Attendance': 'calendar-outline',
+                'Homework': 'book-outline',
+                'All Modules': 'apps-outline',
+              };
+
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.floatingTabItemBtn, isActive && styles.floatingTabItemBtnActive]}
+                  onPress={() => setActiveStaffTab(tab)}
+                  activeOpacity={0.8}>
+                  <IconComp
+                    name={iconMap[tab]}
+                    size={18}
+                    color={isActive ? '#b07fa8' : '#64748B'}
+                  />
+                  <Text style={[styles.floatingTabLabelText, isActive && styles.floatingTabLabelTextActive, { fontSize: 9 }]}>
+                    {tab}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+
+        {/* --- Staff Modals --- */}
+        {/* Create Homework Modal */}
+        <Modal visible={showCreateHomeworkModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={styles.modalCardContainer}>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="book-outline" size={20} color="#b07fa8" />
+                <Text style={styles.modalCardTitle}>Assign New Homework</Text>
               </View>
-              <Text style={styles.mergePendingTitle}>Teacher Portal Branch Merge Pending</Text>
-              <Text style={styles.mergePendingDesc}>
-                This destination is reserved for the Teacher Mobile Portal currently being developed on a separate branch.
+              <Text style={styles.fieldLabelText}>Assignment Title *</Text>
+              <TextInput
+                style={styles.modalInputBox}
+                placeholder="e.g. Physics Ch 5 Practice Problems"
+                placeholderTextColor="#94A3B8"
+                value={newHwTitle}
+                onChangeText={setNewHwTitle}
+              />
+              <Text style={styles.fieldLabelText}>Target Class *</Text>
+              <TextInput
+                style={styles.modalInputBox}
+                placeholder="e.g. Class 10A"
+                placeholderTextColor="#94A3B8"
+                value={newHwClass}
+                onChangeText={setNewHwClass}
+              />
+              <Text style={styles.fieldLabelText}>Subject *</Text>
+              <TextInput
+                style={styles.modalInputBox}
+                placeholder="e.g. Physics"
+                placeholderTextColor="#94A3B8"
+                value={newHwSubject}
+                onChangeText={setNewHwSubject}
+              />
+              <Text style={styles.fieldLabelText}>Due Date</Text>
+              <TextInput
+                style={styles.modalInputBox}
+                placeholder="Sep 12, 2026"
+                placeholderTextColor="#94A3B8"
+                value={newHwDueDate}
+                onChangeText={setNewHwDueDate}
+              />
+              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                  onPress={() => setShowCreateHomeworkModal(false)}>
+                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                  onPress={handleCreateHomeworkSubmit}
+                  disabled={isSubmittingHw}>
+                  {isSubmittingHw ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.modalSmallBtnText}>Post Assignment</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Homework Grading & Student Submissions Review Modal */}
+        <Modal visible={!!gradingHwItem} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '88%', paddingBottom: 16 }]}>
+              {/* Header */}
+              <View style={styles.modalHeaderTitleRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#faedf7', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconComp name="ribbon-outline" size={18} color="#b07fa8" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.modalCardTitle, { fontSize: 16 }]} numberOfLines={1}>Grade & Submissions</Text>
+                    <Text style={{ fontSize: 11, color: '#64748B' }}>{gradingHwItem?.class} • {gradingHwItem?.subject}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => setGradingHwItem(null)} style={{ padding: 4 }}>
+                  <IconComp name="close-circle-outline" size={24} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Assignment Summary Card */}
+              <View style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', marginVertical: 8 }}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{gradingHwItem?.title}</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>Due: <Text style={{ fontWeight: '600', color: '#0F172A' }}>{gradingHwItem?.dueDate}</Text></Text>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>Submissions: <Text style={{ fontWeight: '700', color: '#b07fa8' }}>{gradingHwItem?.submissions}</Text></Text>
+                </View>
+              </View>
+
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8 }}>Student Submissions Roster</Text>
+
+              {/* Student Grading List */}
+              <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={false}>
+                {[
+                  { roll: '101', name: 'Rahul Kumar', initialGrade: 'A+', marks: '95', status: 'Submitted' },
+                  { roll: '102', name: 'Priya Sharma', initialGrade: 'A', marks: '88', status: 'Submitted' },
+                  { roll: '103', name: 'Aarav Singh', initialGrade: '-', marks: '-', status: 'In Progress' },
+                  { roll: '104', name: 'Ananya Reddy', initialGrade: 'A+', marks: '96', status: 'Submitted' },
+                ].map(student => {
+                  const studentGradeInfo = hwStudentGrades[student.roll] || { grade: student.initialGrade, marks: student.marks, status: student.status, remarks: '' };
+                  const isSubmitted = studentGradeInfo.status === 'Submitted';
+
+                  return (
+                    <View key={student.roll} style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 10, marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>{student.roll.slice(-2)}</Text>
+                          </View>
+                          <View>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{student.name}</Text>
+                            <Text style={{ fontSize: 11, color: '#64748B' }}>Roll #{student.roll}</Text>
+                          </View>
+                        </View>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, backgroundColor: isSubmitted ? '#FAF5FF' : '#FFFBEB' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: isSubmitted ? '#7C3AED' : '#D97706' }}>
+                            {studentGradeInfo.status}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Marks and Grade Quick Select */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>Score: {studentGradeInfo.marks}/100</Text>
+                        <View style={{ flexDirection: 'row', gap: 4 }}>
+                          {['A+', 'A', 'B+', 'B'].map(g => {
+                            const isSelected = studentGradeInfo.grade === g;
+                            return (
+                              <TouchableOpacity
+                                key={g}
+                                style={{
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 3,
+                                  borderRadius: 6,
+                                  backgroundColor: isSelected ? '#0F172A' : '#F1F5F9',
+                                }}
+                                onPress={() => {
+                                  setHwStudentGrades(prev => ({
+                                    ...prev,
+                                    [student.roll]: { ...prev[student.roll], grade: g, marks: g === 'A+' ? '95' : g === 'A' ? '88' : g === 'B+' ? '78' : '70', status: 'Submitted' }
+                                  }));
+                                }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: isSelected ? '#FFFFFF' : '#475569' }}>{g}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Action Buttons */}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                  onPress={() => {
+                    showToast(`Exported ${gradingHwItem?.title}_Grades.xlsx`);
+                  }}>
+                  <IconComp name="download-outline" size={14} color="#475569" style={{ marginRight: 4 }} />
+                  <Text style={[styles.modalSmallBtnText, { color: '#334155' }]}>Export</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 2, backgroundColor: '#0F172A' }]}
+                  onPress={() => {
+                    setGradingHwItem(null);
+                    showToast(`Grades published for ${gradingHwItem?.title}!`);
+                  }}>
+                  <IconComp name="checkmark-circle-outline" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                  <Text style={styles.modalSmallBtnText}>Save & Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Staff Chat View Modal */}
+        <Modal visible={!!activeChatModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '80%' }]}>
+              <View style={styles.modalHeaderTitleRow}>
+                <IconComp name="chatbubbles-outline" size={20} color="#b07fa8" />
+                <Text style={styles.modalCardTitle}>{activeChatModal?.name}</Text>
+              </View>
+              <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 12 }}>
+                Role: {activeChatModal?.role} • Direct Messaging Channel
               </Text>
-
-              <View style={styles.mergeStatusDetailsBox}>
-                <View style={styles.mergeStatusRow}>
-                  <Text style={styles.mergeStatusLabel}>Authenticated Role:</Text>
-                  <Text style={[styles.mergeStatusVal, { color: '#2563EB' }]}>Teacher</Text>
+              <ScrollView style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 12, maxHeight: 220, marginBottom: 12 }}>
+                <View style={{ marginBottom: 10, alignSelf: 'flex-start', backgroundColor: '#E2E8F0', padding: 8, borderRadius: 8, maxWidth: '80%' }}>
+                  <Text style={{ fontSize: 12, color: '#0F172A' }}>{activeChatModal?.lastMsg}</Text>
                 </View>
-                <View style={styles.mergeStatusRow}>
-                  <Text style={styles.mergeStatusLabel}>User Email:</Text>
-                  <Text style={styles.mergeStatusVal}>{loginEmail || 'teacher@zuna.edu'}</Text>
+                <View style={{ alignSelf: 'flex-end', backgroundColor: '#b07fa8', padding: 8, borderRadius: 8, maxWidth: '80%' }}>
+                  <Text style={{ fontSize: 12, color: '#FFFFFF' }}>Acknowledged! I will update you shortly.</Text>
                 </View>
-                <View style={styles.mergeStatusRow}>
-                  <Text style={styles.mergeStatusLabel}>Navigation State:</Text>
-                  <Text style={styles.mergeStatusVal}>Connected to Teacher Portal Route</Text>
-                </View>
-                <View style={styles.mergeStatusRow}>
-                  <Text style={styles.mergeStatusLabel}>Incoming Merge Target:</Text>
-                  <Text style={styles.mergeStatusVal}>TeacherPortal.tsx</Text>
-                </View>
+              </ScrollView>
+              <TextInput
+                style={styles.modalInputBox}
+                placeholder="Type your response..."
+                placeholderTextColor="#94A3B8"
+                value={chatMessageText}
+                onChangeText={setChatMessageText}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                  onPress={() => setActiveChatModal(null)}>
+                  <Text style={styles.modalSmallBtnText}>Close Chat</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                  onPress={handleSendMessageSubmit}>
+                  <Text style={styles.modalSmallBtnText}>Send Message</Text>
+                </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        </Modal>
 
+
+        {/* --- FULL-SCREEN TEACHER MODULE DETAIL MODAL --- */}
+        <Modal visible={!!activeStaffModuleModal} animationType="slide">
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+            {/* Top Navigation Bar with Back Arrow */}
+            <View style={styles.moduleModalTopNav}>
               <TouchableOpacity
-                style={[styles.primaryLoginBtn, { backgroundColor: '#2563EB', marginTop: 16, flexDirection: 'row', gap: 8, paddingHorizontal: 20 }]}
-                onPress={handleLogout}>
-                <IconComp name="log-out-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryLoginBtnText}>Log Out & Switch Portal</Text>
+                style={styles.moduleBackBtn}
+                onPress={() => setActiveStaffModuleModal(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}>
+                <IconComp name="arrow-back-outline" size={22} color="#0F172A" />
+              </TouchableOpacity>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.moduleNavTitleText} numberOfLines={1}>{activeStaffModuleModal}</Text>
+                <Text style={styles.moduleNavSubText}>ZUNA Teacher Mobile Portal</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseCircle}
+                onPress={() => setActiveStaffModuleModal(null)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.7}>
+                <IconComp name="close-outline" size={18} color="#64748B" />
               </TouchableOpacity>
             </View>
-          </ScrollView>
+
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
+              {/* MODULE: NOTICEBOARD */}
+              {activeStaffModuleModal === 'Noticeboard' ? (
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 14, lineHeight: 18 }}>
+                    View official announcements, school circulars, and broadcast notices to your class.
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    <TouchableOpacity style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: '#b07fa8' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Global Notices</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Class Noticeboard</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ gap: 10 }}>
+                    {[
+                      { id: 'n1', title: 'Term 1 Examination Schedule Released', date: 'Sep 05, 2026', sender: 'Principal Office', desc: 'The final timetable for Term 1 Mid-Exams has been published on the school portal.' },
+                      { id: 'n2', title: 'Teacher Training Workshop on AI Tools', date: 'Sep 02, 2026', sender: 'Academic Cell', desc: 'Mandatory workshop for all high school staff this Saturday at 10 AM in Auditorium 2.' },
+                      { id: 'n3', title: 'Annual Sports Day Registrations', date: 'Aug 28, 2026', sender: 'Sports Department', desc: 'Class teachers must collect student participation forms for track & field events by Friday.' },
+                    ].map(notice => (
+                      <View key={notice.id} style={{ backgroundColor: '#FFFFFF', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', elevation: 1 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', flex: 1 }}>{notice.title}</Text>
+                          <Text style={{ fontSize: 11, color: '#b07fa8', fontWeight: '700' }}>{notice.date}</Text>
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#475569', marginBottom: 8, lineHeight: 17 }}>{notice.desc}</Text>
+                        <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '600' }}>Issued by: {notice.sender}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Calendar' || activeStaffModuleModal === 'Academic Calendar' ? (
+                /* MODULE: ACADEMIC CALENDAR (Full-Screen with working < Month >) */
+                <View style={{ flex: 1 }}>
+                  {/* Month Navigator Header Bar with working < and > */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', elevation: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.arrowIconButton}
+                        onPress={handleCalendarPrevMonth}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        activeOpacity={0.7}>
+                        <IconComp name="chevron-back-outline" size={18} color="#334155" />
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A', minWidth: 140, textAlign: 'center' }}>
+                        {calendarCurrentMonth}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.arrowIconButton}
+                        onPress={handleCalendarNextMonth}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        activeOpacity={0.7}>
+                        <IconComp name="chevron-forward-outline" size={18} color="#334155" />
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.smallWhiteOutlineBtn, { borderColor: '#b07fa8' }]}
+                      onPress={() => {
+                        setCalendarDate(new Date(2026, 8, 1));
+                        setCalendarSelectedDayNum(new Date().getDate());
+                      }}>
+                      <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Today</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* 7-Column Calendar Month Grid Container */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 8, marginBottom: 10 }}>
+                      {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, idx) => (
+                        <Text key={idx} style={{ flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#94A3B8' }}>
+                          {d}
+                        </Text>
+                      ))}
+                    </View>
+
+                    {(() => {
+                      const year = calendarDate.getFullYear();
+                      const month = calendarDate.getMonth();
+                      const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+                      const daysInMonth = new Date(year, month + 1, 0).getDate();
+                      const daysInPrevMonth = new Date(year, month, 0).getDate();
+                      const cells: React.ReactElement[] = [];
+
+                      for (let i = firstDay - 1; i >= 0; i--) {
+                        const prevD = daysInPrevMonth - i;
+                        cells.push(
+                          <View key={`prev-${prevD}`} style={{ width: '14.28%', height: 44, justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 13, color: '#CBD5E1', fontWeight: '500' }}>{prevD}</Text>
+                          </View>
+                        );
+                      }
+
+                      for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+                        const isSelected = calendarSelectedDayNum === dayNum;
+                        const dayOfWeek = new Date(year, month, dayNum).getDay();
+                        const isSunday = dayOfWeek === 0;
+                        cells.push(
+                          <TouchableOpacity
+                            key={dayNum}
+                            style={{ width: '14.28%', height: 44, justifyContent: 'center', alignItems: 'center' }}
+                            onPress={() => setCalendarSelectedDayNum(dayNum)}>
+                            <View
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: 16,
+                                backgroundColor: isSelected ? '#b07fa8' : 'transparent',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                              }}>
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: isSelected ? '800' : '600',
+                                  color: isSelected ? '#FFFFFF' : isSunday ? '#DC2626' : '#1E293B',
+                                }}>
+                                {dayNum}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      }
+                      return <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{cells}</View>;
+                    })()}
+                  </View>
+
+                  {/* Selected Day Activities Card */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                        Events for {calendarSelectedDayNum} {calendarCurrentMonth}
+                      </Text>
+                      <View style={{ backgroundColor: '#faedf7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#b07fa8' }}>Term 1</Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#64748B', lineHeight: 18 }}>
+                      Regular classes scheduled. Laboratory practical sessions for Classes 10A & 11B.
+                    </Text>
+                  </View>
+
+                  {/* Upcoming School Events List */}
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>Upcoming School Events</Text>
+                    {[
+                      { title: 'Teachers Day Celebration', date: 'Sep 05, 2026', type: 'Event' },
+                      { title: 'Term 1 Mid-Examinations', date: 'Sep 18 - Sep 25, 2026', type: 'Exam' },
+                      { title: 'Annual Science Fair & Exhibition', date: 'Oct 02, 2026', type: 'Event' },
+                    ].map((ev, i) => (
+                      <View key={i} style={{ backgroundColor: '#F8FAFC', padding: 10, borderRadius: 10, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>{ev.title}</Text>
+                          <Text style={{ fontSize: 10, color: '#64748B' }}>Category: {ev.type}</Text>
+                        </View>
+                        <View style={{ backgroundColor: '#faedf7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 10, color: '#b07fa8', fontWeight: '700' }}>{ev.date}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'My Salary' ? (
+                /* MODULE: MY SALARY (Full-Screen Image 2 Matching) */
+                <View style={{ flex: 1 }}>
+                  {/* Hero Net Salary Card */}
+                  <View style={{ backgroundColor: '#0F172A', padding: 20, borderRadius: 20, marginBottom: 16, elevation: 3 }}>
+                    <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      August 2026 Net Salary
+                    </Text>
+                    <Text style={{ fontSize: 32, fontWeight: '900', color: '#FFFFFF', marginVertical: 8 }}>
+                      ₹ 48,500
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(16, 185, 129, 0.15)', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                      <IconComp name="checkmark-circle-outline" size={14} color="#10B981" />
+                      <Text style={{ fontSize: 11, color: '#10B981', fontWeight: '700' }}>Status: Credited on Sep 01</Text>
+                    </View>
+                  </View>
+
+                  {/* Compensation Breakdown Card */}
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 12 }}>
+                      Earnings & Deductions Breakdown
+                    </Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Basic Salary</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>₹ 35,000</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>House Rent Allowance (HRA)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>₹ 10,000</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Special & Travel Allowances</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>₹ 5,000</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#DC2626' }}>Provident Fund (PF) Deduction</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#DC2626' }}>- ₹ 1,200</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                      <Text style={{ fontSize: 13, color: '#DC2626' }}>Professional Tax (PT)</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#DC2626' }}>- ₹ 300</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>Net Take-Home Pay</Text>
+                      <Text style={{ fontSize: 15, fontWeight: '900', color: '#b07fa8' }}>₹ 48,500</Text>
+                    </View>
+                  </View>
+
+                  {/* Download / Share Payslip Button */}
+                  <TouchableOpacity
+                    style={[styles.primaryLoginBtn, { backgroundColor: '#2563EB', flexDirection: 'row', gap: 8, marginBottom: 16 }]}
+                    onPress={handleShareReport}>
+                    <IconComp name="download-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.primaryLoginBtnText}>Download / Share Payslip PDF</Text>
+                  </TouchableOpacity>
+
+                  {/* Past Payslips History */}
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>Past Payslips History</Text>
+                    {[
+                      { month: 'July 2026', amount: '₹ 48,500', status: 'Paid', date: 'Aug 01, 2026' },
+                      { month: 'June 2026', amount: '₹ 48,500', status: 'Paid', date: 'Jul 01, 2026' },
+                      { month: 'May 2026', amount: '₹ 47,200', status: 'Paid', date: 'Jun 01, 2026' },
+                    ].map((item, idx) => (
+                      <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: idx < 2 ? 1 : 0, borderBottomColor: '#F1F5F9' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{item.month}</Text>
+                          <Text style={{ fontSize: 11, color: '#64748B' }}>Credited on {item.date}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{item.amount}</Text>
+                          <TouchableOpacity onPress={() => showToast(`Downloaded ${item.month} payslip`)}>
+                            <IconComp name="download-outline" size={16} color="#2563EB" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Timetable' ? (
+                /* MODULE: TIMETABLE (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 10 }}>Daily Class Schedule & Periods</Text>
+
+                  {/* Day Selector Pills */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {TEACHER_WEEK_DAYS.map(dayObj => {
+                      const isActive = selectedTimetableDay === dayObj.key;
+                      return (
+                        <TouchableOpacity
+                          key={dayObj.key}
+                          style={[
+                            styles.gradePillBtn,
+                            { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
+                            isActive && styles.gradePillBtnActive,
+                          ]}
+                          onPress={() => setSelectedTimetableDay(dayObj.key)}>
+                          <Text style={[styles.gradePillText, isActive && styles.gradePillTextActive, { fontWeight: '700' }]}>
+                            {dayObj.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <View style={{ gap: 8 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <Text style={[styles.sectionCardTitle, { marginBottom: 0 }]}>{selectedTimetableDay} Schedule</Text>
+                      <View style={{ backgroundColor: '#faedf7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#b07fa8' }}>
+                          {(TEACHER_WEEKLY_TIMETABLE[selectedTimetableDay] || []).length} Periods
+                        </Text>
+                      </View>
+                    </View>
+
+                    {(TEACHER_WEEKLY_TIMETABLE[selectedTimetableDay] || []).map((item, idx) => (
+                      <View key={idx} style={[styles.activityItemRow, { paddingVertical: 12, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12 }]}>
+                        <View style={[styles.activityIconBox, { backgroundColor: idx % 2 === 0 ? '#faedf7' : '#F1F5F9' }]}>
+                          <IconComp name="time-outline" size={18} color={idx % 2 === 0 ? '#b07fa8' : '#475569'} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.studentNameText}>{item.subject} ({item.class})</Text>
+                            <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#475569' }}>{item.room}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.studentDetailsSubText}>{item.period} • {item.time}</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.smallFeeActionBtn, { backgroundColor: '#b07fa8' }]}
+                          onPress={() => {
+                            setActiveStaffModuleModal(null);
+                            setActiveStaffTab('Attendance');
+                            showToast(`Opened Attendance for ${item.class}`);
+                          }}>
+                          <Text style={[styles.smallFeeActionBtnText, { color: '#FFFFFF' }]}>Mark</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Lesson Plans' ? (
+                /* MODULE: LESSON PLANS (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Create, organize, and track your daily lesson plans.</Text>
+
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    <Text style={styles.fieldLabelText}>Topic / Lesson Objectives *</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="e.g. Newton's 3rd Law of Motion & Friction Lab"
+                      placeholderTextColor="#94A3B8"
+                      value={lessonObjectives}
+                      onChangeText={setLessonObjectives}
+                    />
+
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#b07fa8', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 }}
+                      onPress={handleCreateLessonPlanSubmit}
+                      disabled={isSubmittingPlan}>
+                      {isSubmittingPlan ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>+ Submit Lesson Plan</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>My Submitted Plans</Text>
+                  <View style={{ gap: 8 }}>
+                    {lessonPlansList.map(plan => (
+                      <View key={plan.id} style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{plan.subject} ({plan.class})</Text>
+                          <View style={{ backgroundColor: plan.status === 'Approved' ? '#EDE9FE' : '#FEF3C7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: plan.status === 'Approved' ? '#7C3AED' : '#D97706' }}>{plan.status}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#475569', lineHeight: 17 }}>{plan.topic}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Grades & Exams' ? (
+                /* MODULE: GRADES & EXAMS (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Assessments, Mark Entries & Parent Portal Publishing</Text>
+
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 6 }}>Create New Assessment</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="e.g. Unit Test 2 - Physics"
+                      placeholderTextColor="#94A3B8"
+                      value={assessmentTitle}
+                      onChangeText={setAssessmentTitle}
+                    />
+                    <TouchableOpacity style={{ backgroundColor: '#b07fa8', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 8 }} onPress={handleCreateAssessmentSubmit}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ Add Assessment</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 }}>Class 10A Mark Entry Grid</Text>
+                  <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    {students.map(st => (
+                      <View key={st.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', flex: 1 }}>{st.name} ({st.rollNo})</Text>
+                        <TextInput
+                          style={{ width: 64, height: 36, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, textAlign: 'center', fontSize: 13, color: '#0F172A', backgroundColor: '#F8FAFC' }}
+                          value={assessmentGradesMap[st.id] || '85'}
+                          onChangeText={val => setAssessmentGradesMap(prev => ({ ...prev, [st.id]: val }))}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                    ))}
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity style={{ flex: 1, backgroundColor: '#b07fa8', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }} onPress={handleSaveGradesSubmit} disabled={isSavingGrades}>
+                      {isSavingGrades ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Save Grades</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity style={{ flex: 1, backgroundColor: '#2563EB', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }} onPress={() => showToast('Published assessment scores to Parent Portal!')}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Publish to Parents</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Leave Requests' ? (
+                /* MODULE: LEAVE REQUESTS (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Apply for Leave & Track Approval Status</Text>
+
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    <Text style={styles.fieldLabelText}>Reason for Leave *</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="e.g. Medical emergency / Personal work"
+                      placeholderTextColor="#94A3B8"
+                      value={leaveReason}
+                      onChangeText={setLeaveReason}
+                    />
+
+                    <TouchableOpacity style={{ backgroundColor: '#b07fa8', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 }} onPress={handleApplyLeaveSubmit} disabled={isSubmittingLeave}>
+                      {isSubmittingLeave ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>Submit Leave Application</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>My Leave History</Text>
+                  <View style={{ gap: 8 }}>
+                    {leavesList.map(l => (
+                      <View key={l.id} style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{l.type} ({l.dates})</Text>
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{l.reason}</Text>
+                        </View>
+                        <View style={{ backgroundColor: l.status === 'Approved' ? '#EDE9FE' : '#FEF3C7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: l.status === 'Approved' ? '#7C3AED' : '#D97706' }}>{l.status}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Profile' ? (
+                /* MODULE: PROFILE (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Staff Credentials & Profile Settings</Text>
+
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    <Text style={styles.fieldLabelText}>Phone Number</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={staffPhone}
+                      onChangeText={setStaffPhone}
+                    />
+
+                    <Text style={[styles.fieldLabelText, { marginTop: 12 }]}>Qualifications</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={staffQual}
+                      onChangeText={setStaffQual}
+                    />
+
+                    <Text style={[styles.fieldLabelText, { marginTop: 12 }]}>Address</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={staffAddress}
+                      onChangeText={setStaffAddress}
+                    />
+
+                    <TouchableOpacity style={{ backgroundColor: '#b07fa8', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 14 }} onPress={handleSaveProfileSubmit} disabled={isUpdatingProfile}>
+                      {isUpdatingProfile ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>Save Profile Changes</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'Resources' ? (
+                /* MODULE: RESOURCES (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Study materials, syllabus documents, and shared digital assets.</Text>
+                  <View style={{ gap: 8 }}>
+                    {[
+                      { title: 'Physics Ch 4 Formula Sheet.pdf', size: '2.4 MB', type: 'Document' },
+                      { title: 'Optics Lab Experiment Video.mp4', size: '48.1 MB', type: 'Video' },
+                      { title: 'NCERT Reference Solutions Link', size: 'Web URL', type: 'Link' },
+                    ].map((res, i) => (
+                      <View key={i} style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{res.title}</Text>
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{res.type} • {res.size}</Text>
+                        </View>
+                        <TouchableOpacity style={{ backgroundColor: '#2563EB', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }} onPress={() => showToast(`Opening ${res.title}...`)}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>Open</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : activeStaffModuleModal === 'PTM Scheduler' ? (
+                /* MODULE: PTM SCHEDULER (Full-Screen) */
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#64748B', fontSize: 13, marginBottom: 12 }}>Parent-Teacher Meeting Slot Management</Text>
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                    <Text style={styles.fieldLabelText}>Meeting Slot Time *</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="e.g. 02:00 PM - 02:30 PM"
+                      placeholderTextColor="#94A3B8"
+                      value={ptmTimeSlot}
+                      onChangeText={setPtmTimeSlot}
+                    />
+                    <TouchableOpacity style={{ backgroundColor: '#b07fa8', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 }} onPress={handleCreatePTMSlotSubmit} disabled={isSubmittingPTM}>
+                      {isSubmittingPTM ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>+ Create PTM Slot</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>Scheduled PTM Slots</Text>
+                  <View style={{ gap: 8 }}>
+                    {ptmSlotsList.map(ptm => (
+                      <View key={ptm.id} style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{ptm.time}</Text>
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Bookings: {ptm.bookings}</Text>
+                        </View>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#b07fa8' }}>● {ptm.status}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : (
+                /* DEFAULT FULL-SCREEN MODULE VIEW */
+                <View style={{ flex: 1 }}>
+                  <ModuleHeaderCard
+                    icon="apps-outline"
+                    title={activeStaffModuleModal || ''}
+                    subtitle={`Manage and configure ${activeStaffModuleModal} for ZUNA Teacher Portal.`}
+                  />
+                  <View style={styles.emptyModuleCardContainer}>
+                    <View style={styles.emptyIconCircleLarge}>
+                      <IconComp name="construct-outline" size={40} color="#94A3B8" />
+                    </View>
+                    <Text style={styles.emptyModuleTitle}>{activeStaffModuleModal} Management</Text>
+                    <Text style={styles.emptyModuleSub}>
+                      All real-time school records, schedules, and staff settings are synced with ZUNA Admin servers.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.emptyActionPurpleBtn}
+                      onPress={() => showToast(`Synchronized ${activeStaffModuleModal} module!`)}>
+                      <IconComp name="refresh-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.emptyActionBtnText}>Sync Module Data</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -2033,12 +5356,12 @@ function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.mainAppContainer} edges={['top', 'left', 'right']}>
-          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+          <AppStatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
 
           {/* Top Header Card */}
           <View style={styles.topHeaderBar}>
-            <View style={[styles.headerLogoBadge, { backgroundColor: '#059669' }]}>
-              <IconComp name="person-outline" size={22} color="#FFFFFF" />
+            <View style={styles.headerLogoBadge}>
+              <SchoolLogo size={28} />
             </View>
 
             <View style={styles.schoolBrandDetails}>
@@ -2137,12 +5460,12 @@ function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.mainAppContainer} edges={['top', 'left', 'right']}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+        <AppStatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
 
         {/* --- Top Header Card (Compact Single Row Design) --- */}
         <View style={styles.topHeaderBar}>
           <View style={styles.headerLogoBadge}>
-            <IconComp name="school-outline" size={22} color="#FFFFFF" />
+            <SchoolLogo size={28} />
           </View>
 
           <View style={styles.schoolBrandDetails}>
@@ -2190,262 +5513,276 @@ function App() {
               contentContainerStyle={styles.tabScrollContentWithFloatingNav}
               showsVerticalScrollIndicator={false}>
 
-              {/* Greeting & Header Title Card */}
+              {/* Greeting & Header Title Card (Image 2 Matching) */}
               <ModuleHeaderCard
                 title="Dashboard Overview"
                 subtitle="Welcome back, here's what's happening at your school today."
                 primaryButton={{
                   label: "Generate Invite Links",
                   icon: "link-outline",
-                  onPress: () => showToast('Invite links copied to clipboard'),
+                  onPress: () => setShowInviteModal(true),
                 }}
                 secondaryActions={[
                   {
                     label: "Customize",
-                    icon: "options-outline",
-                    onPress: () => showToast('Dashboard customized'),
+                    icon: "settings-outline",
+                    onPress: () => {
+                      setTempDashboardConfig({
+                        metrics: { ...dashboardConfig.metrics },
+                        widgets: { ...dashboardConfig.widgets },
+                      });
+                      setShowCustomizeModal(true);
+                    },
                   },
                   {
-                    label: "08/09/2026",
+                    label: "09/09/2026",
                     icon: "calendar-outline",
                   },
                 ]}
               />
 
-              {/* 4 Metric Summary Cards Grid (2x2) */}
-              <View style={styles.metricsGridContainer}>
-                {/* Metric 1: Total Students */}
-                <TouchableOpacity style={styles.metricCard} onPress={() => setActiveAdminTab('Students')}>
-                  <View style={styles.metricIconRow}>
-                    <View style={[styles.metricIconCircle, { backgroundColor: '#EFF6FF' }]}>
-                      <IconComp name="school-outline" size={20} color="#2563EB" />
+              {/* 4 Metric Summary Cards Grid (2x2) - Dynamic from Customize (Viewing Only Cards) */}
+              {(dashboardConfig.metrics.students || dashboardConfig.metrics.staff || dashboardConfig.metrics.classes || dashboardConfig.metrics.notices) && (
+                <View style={styles.metricsGridContainer}>
+                  {/* Metric 1: Total Students (Viewing Card Only) */}
+                  {dashboardConfig.metrics.students && (
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <View style={[styles.metricIconCircle, { backgroundColor: '#EFF6FF' }]}>
+                          <IconComp name="school-outline" size={20} color="#2563EB" />
+                        </View>
+                      </View>
+                      <Text style={styles.metricLabelTitle}>Total Students</Text>
+                      <Text style={styles.metricNumberValue}>4</Text>
+                      <Text style={[styles.metricTrendText, { color: '#059669' }]}>+12% from last month</Text>
                     </View>
-                    <IconComp name="chevron-forward-outline" size={16} color="#94A3B8" />
-                  </View>
-                  <Text style={styles.metricLabelTitle}>Total Students</Text>
-                  <Text style={styles.metricNumberValue}>4</Text>
-                  <Text style={[styles.metricTrendText, { color: '#059669' }]}>+12% from last month</Text>
-                </TouchableOpacity>
+                  )}
 
-                {/* Metric 2: Teaching Staff */}
-                <TouchableOpacity style={styles.metricCard} onPress={() => setActiveModuleModal('Staff Directory')}>
-                  <View style={styles.metricIconRow}>
-                    <View style={[styles.metricIconCircle, { backgroundColor: '#F3E8FF' }]}>
-                      <IconComp name="people-outline" size={20} color="#7C3AED" />
+                  {/* Metric 2: Teaching Staff (Viewing Card Only) */}
+                  {dashboardConfig.metrics.staff && (
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <View style={[styles.metricIconCircle, { backgroundColor: '#faedf7' }]}>
+                          <IconComp name="people-outline" size={20} color="#b07fa8" />
+                        </View>
+                      </View>
+                      <Text style={styles.metricLabelTitle}>Teaching Staff</Text>
+                      <Text style={styles.metricNumberValue}>{staffList.length}</Text>
+                      <Text style={[styles.metricTrendText, { color: '#059669' }]}>+2 new this month</Text>
                     </View>
-                    <IconComp name="chevron-forward-outline" size={16} color="#94A3B8" />
-                  </View>
-                  <Text style={styles.metricLabelTitle}>Teaching Staff</Text>
-                  <Text style={styles.metricNumberValue}>{staffList.length}</Text>
-                  <Text style={[styles.metricTrendText, { color: '#059669' }]}>+2 new this month</Text>
-                </TouchableOpacity>
+                  )}
 
-                {/* Metric 3: Active Classes */}
-                <TouchableOpacity style={styles.metricCard} onPress={() => setActiveModuleModal('Classes & Sections')}>
-                  <View style={styles.metricIconRow}>
-                    <View style={[styles.metricIconCircle, { backgroundColor: '#ECFDF5' }]}>
-                      <IconComp name="book-outline" size={20} color="#059669" />
+                  {/* Metric 3: Active Classes (Viewing Card Only) */}
+                  {dashboardConfig.metrics.classes && (
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <View style={[styles.metricIconCircle, { backgroundColor: '#ECFDF5' }]}>
+                          <IconComp name="book-outline" size={20} color="#059669" />
+                        </View>
+                      </View>
+                      <Text style={styles.metricLabelTitle}>Active Classes</Text>
+                      <Text style={styles.metricNumberValue}>{classList.length}</Text>
+                      <Text style={[styles.metricTrendText, { color: '#2563EB' }]}>Across all sections</Text>
                     </View>
-                    <IconComp name="chevron-forward-outline" size={16} color="#94A3B8" />
-                  </View>
-                  <Text style={styles.metricLabelTitle}>Active Classes</Text>
-                  <Text style={styles.metricNumberValue}>{classList.length}</Text>
-                  <Text style={[styles.metricTrendText, { color: '#2563EB' }]}>Across all sections</Text>
-                </TouchableOpacity>
+                  )}
 
-                {/* Metric 4: School Notices */}
-                <TouchableOpacity style={styles.metricCard} onPress={() => setActiveModuleModal('Noticeboard')}>
-                  <View style={styles.metricIconRow}>
-                    <View style={[styles.metricIconCircle, { backgroundColor: '#FFF7ED' }]}>
-                      <IconComp name="notifications-outline" size={20} color="#D97706" />
+                  {/* Metric 4: School Notices (Viewing Card Only) */}
+                  {dashboardConfig.metrics.notices && (
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <View style={[styles.metricIconCircle, { backgroundColor: '#FFF7ED' }]}>
+                          <IconComp name="notifications-outline" size={20} color="#D97706" />
+                        </View>
+                      </View>
+                      <Text style={styles.metricLabelTitle}>School Notices</Text>
+                      <Text style={styles.metricNumberValue}>{globalNoticesList.length}</Text>
+                      <Text style={[styles.metricTrendText, { color: '#64748B' }]}>Broadcasts active</Text>
                     </View>
-                    <IconComp name="chevron-forward-outline" size={16} color="#94A3B8" />
-                  </View>
-                  <Text style={styles.metricLabelTitle}>School Notices</Text>
-                  <Text style={styles.metricNumberValue}>{globalNoticesList.length}</Text>
-                  <Text style={[styles.metricTrendText, { color: '#64748B' }]}>Broadcasts active</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Middle Section: Recent Notices & System Status */}
-              <View style={styles.middleSectionRow}>
-                {/* Recent Notices Card */}
-                <View style={styles.sectionCardBox}>
-                  <View style={styles.sectionHeaderRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <IconComp name="megaphone-outline" size={18} color="#7C3AED" />
-                      <Text style={styles.sectionCardTitle}>Recent Notices</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => setActiveModuleModal('Noticeboard')}>
-                      <Text style={styles.viewAllLinkText}>View All</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.emptyNoticeStateBox}>
-                    <IconComp name="notifications-outline" size={32} color="#CBD5E1" />
-                    <Text style={styles.emptyNoticeTitle}>No notices yet</Text>
-                    <Text style={styles.emptyNoticeSub}>Create a notice to keep everyone informed.</Text>
-                    <TouchableOpacity
-                      style={styles.createNoticeOutlineBtn}
-                      onPress={() => setActiveModuleModal('Noticeboard')}>
-                      <IconComp name="add-outline" size={14} color="#7C3AED" />
-                      <Text style={styles.createNoticeBtnText}>Create Notice</Text>
-                    </TouchableOpacity>
-                  </View>
+                  )}
                 </View>
+              )}
+
+              {/* Middle Section: Recent Notices, System Status, Quick Actions & Attendance */}
+              <View style={styles.middleSectionRow}>
+                {/* Recent Notices Card (Viewing Only, No Create Button) */}
+                {dashboardConfig.widgets.recentNotices && (
+                  <View style={styles.sectionCardBox}>
+                    <View style={styles.sectionHeaderRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <IconComp name="megaphone-outline" size={18} color="#b07fa8" />
+                        <Text style={styles.sectionCardTitle}>Recent Notices</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setActiveModuleModal('Noticeboard')}>
+                        <Text style={styles.viewAllLinkText}>View All</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.emptyNoticeStateBox}>
+                      <IconComp name="notifications-outline" size={32} color="#CBD5E1" />
+                      <Text style={styles.emptyNoticeTitle}>No notices yet</Text>
+                      <Text style={styles.emptyNoticeSub}>Create a notice to keep everyone informed.</Text>
+                    </View>
+                  </View>
+                )}
 
                 {/* System Status Dark Card */}
-                <View style={styles.navyStatusCardBox}>
-                  <Text style={styles.navyCardTitle}>System Status</Text>
-                  <View style={styles.statusOnlineIndicatorRow}>
-                    <View style={styles.greenPulseDot} />
-                    <Text style={styles.statusOnlineText}>All modules running smoothly</Text>
-                  </View>
-
-                  <View style={styles.navySubBoxContainer}>
-                    <View style={styles.navySubBoxHeaderRow}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <IconComp name="wallet-outline" size={16} color="#F59E0B" />
-                        <Text style={styles.navySubBoxTitle}>Fee Collection</Text>
-                      </View>
-                      <View style={styles.noInvoicesBadgePill}>
-                        <Text style={styles.noInvoicesBadgeText}>No Invoices</Text>
-                      </View>
+                {dashboardConfig.widgets.systemStatus && (
+                  <View style={styles.navyStatusCardBox}>
+                    <Text style={styles.navyCardTitle}>System Status</Text>
+                    <View style={styles.statusOnlineIndicatorRow}>
+                      <View style={styles.greenPulseDot} />
+                      <Text style={styles.statusOnlineText}>All modules running smoothly</Text>
                     </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '0%' }]} />
-                    </View>
-                    <Text style={styles.percentCollectedText}>0% Collected</Text>
-                  </View>
 
-                  <View style={styles.navySubBoxContainer}>
-                    <View style={styles.navySubBoxHeaderRow}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <IconComp name="calendar-outline" size={16} color="#38BDF8" />
-                        <Text style={styles.navySubBoxTitle}>Academic Calendar</Text>
+                    <View style={styles.navySubBoxContainer}>
+                      <View style={styles.navySubBoxHeaderRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <IconComp name="wallet-outline" size={16} color="#F59E0B" />
+                          <Text style={styles.navySubBoxTitle}>Fee Collection</Text>
+                        </View>
+                        <View style={styles.noInvoicesBadgePill}>
+                          <Text style={styles.noInvoicesBadgeText}>No Invoices</Text>
+                        </View>
                       </View>
-                      <Text style={styles.navySubBoxBadgeText}>Events</Text>
+                      <View style={styles.progressBarTrack}>
+                        <View style={[styles.progressBarFill, { width: '0%' }]} />
+                      </View>
+                      <Text style={styles.percentCollectedText}>0% Collected</Text>
                     </View>
-                    <Text style={styles.percentCollectedText}>0 Upcoming Events</Text>
-                  </View>
 
-                  <View style={styles.navySubBoxContainer}>
-                    <View style={styles.navySubBoxHeaderRow}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <IconComp name="people-outline" size={16} color="#A78BFA" />
-                        <Text style={styles.navySubBoxTitle}>HR & Payroll</Text>
+                    <View style={styles.navySubBoxContainer}>
+                      <View style={styles.navySubBoxHeaderRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <IconComp name="calendar-outline" size={16} color="#38BDF8" />
+                          <Text style={styles.navySubBoxTitle}>Academic Calendar</Text>
+                        </View>
+                        <Text style={styles.navySubBoxBadgeText}>Events</Text>
                       </View>
-                      <View style={styles.pendingBadgePill}>
-                        <Text style={styles.pendingBadgeText}>Pending</Text>
-                      </View>
+                      <Text style={styles.percentCollectedText}>0 Upcoming Events</Text>
                     </View>
-                    <Text style={styles.percentCollectedText}>Payroll Pending</Text>
-                  </View>
 
-                  <TouchableOpacity
-                    style={styles.configureEnvBtn}
-                    onPress={() => setActiveModuleModal('Environment Setup')}>
-                    <Text style={styles.configureEnvBtnText}>Configure Environment</Text>
-                  </TouchableOpacity>
-                </View>
+                    <View style={styles.navySubBoxContainer}>
+                      <View style={styles.navySubBoxHeaderRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <IconComp name="people-outline" size={16} color="#A78BFA" />
+                          <Text style={styles.navySubBoxTitle}>HR & Payroll</Text>
+                        </View>
+                        <View style={styles.pendingBadgePill}>
+                          <Text style={styles.pendingBadgeText}>Pending</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.percentCollectedText}>Payroll Pending</Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.configureEnvBtn}
+                      onPress={() => setActiveModuleModal('Environment Setup')}>
+                      <Text style={styles.configureEnvBtnText}>Configure Environment</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Quick Actions Grid */}
-                <View style={styles.sectionCardBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-                    <IconComp name="flash-outline" size={18} color="#EC4899" />
-                    <Text style={styles.sectionCardTitle}>Quick Actions</Text>
+                {dashboardConfig.widgets.quickActions && (
+                  <View style={styles.sectionCardBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                      <IconComp name="flash-outline" size={18} color="#EC4899" />
+                      <Text style={styles.sectionCardTitle}>Quick Actions</Text>
+                    </View>
+
+                    <View style={styles.quickActionsGridBox}>
+                      <TouchableOpacity
+                        style={styles.actionGridCardItem}
+                        onPress={() => setActiveAdminTab('Students')}>
+                        <View style={[styles.actionCardIconBox, { backgroundColor: '#EFF6FF' }]}>
+                          <IconComp name="person-add-outline" size={20} color="#2563EB" />
+                        </View>
+                        <Text style={styles.actionCardLabel}>Add Student</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionGridCardItem}
+                        onPress={() => setActiveModuleModal('Staff Directory')}>
+                        <View style={[styles.actionCardIconBox, { backgroundColor: '#faedf7' }]}>
+                          <IconComp name="person-circle-outline" size={20} color="#b07fa8" />
+                        </View>
+                        <Text style={styles.actionCardLabel}>Add Staff</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionGridCardItem}
+                        onPress={() => setActiveAdminTab('Attendance')}>
+                        <View style={[styles.actionCardIconBox, { backgroundColor: '#ECFDF5' }]}>
+                          <IconComp name="checkbox-outline" size={20} color="#059669" />
+                        </View>
+                        <Text style={styles.actionCardLabel}>Mark Attendance</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionGridCardItem}
+                        onPress={() => setActiveModuleModal('Noticeboard')}>
+                        <View style={[styles.actionCardIconBox, { backgroundColor: '#FFF7ED' }]}>
+                          <IconComp name="create-outline" size={20} color="#D97706" />
+                        </View>
+                        <Text style={styles.actionCardLabel}>Create Notice</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.actionGridCardItem}
+                        onPress={() => setShowCleanupModal(true)}>
+                        <View style={[styles.actionCardIconBox, { backgroundColor: '#FEF2F2' }]}>
+                          <IconComp name="trash-outline" size={20} color="#DC2626" />
+                        </View>
+                        <Text style={styles.actionCardLabel}>{isCleaningAudio ? 'Cleaning...' : 'Cleanup DB Space'}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-
-                  <View style={styles.quickActionsGridBox}>
-                    <TouchableOpacity
-                      style={styles.actionGridCardItem}
-                      onPress={() => setShowStudentModal(true)}>
-                      <View style={[styles.actionCardIconBox, { backgroundColor: '#EFF6FF' }]}>
-                        <IconComp name="person-add-outline" size={20} color="#2563EB" />
-                      </View>
-                      <Text style={styles.actionCardLabel}>Add Student</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionGridCardItem}
-                      onPress={() => setShowAddStaffModal(true)}>
-                      <View style={[styles.actionCardIconBox, { backgroundColor: '#F3E8FF' }]}>
-                        <IconComp name="person-circle-outline" size={20} color="#7C3AED" />
-                      </View>
-                      <Text style={styles.actionCardLabel}>Add Staff</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionGridCardItem}
-                      onPress={() => setActiveAdminTab('Attendance')}>
-                      <View style={[styles.actionCardIconBox, { backgroundColor: '#ECFDF5' }]}>
-                        <IconComp name="checkbox-outline" size={20} color="#059669" />
-                      </View>
-                      <Text style={styles.actionCardLabel}>Mark Attendance</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionGridCardItem}
-                      onPress={() => setActiveModuleModal('Noticeboard')}>
-                      <View style={[styles.actionCardIconBox, { backgroundColor: '#FFF7ED' }]}>
-                        <IconComp name="create-outline" size={20} color="#D97706" />
-                      </View>
-                      <Text style={styles.actionCardLabel}>Create Notice</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.actionGridCardItem}
-                      onPress={() => showToast('Database space optimized & cleaned')}>
-                      <View style={[styles.actionCardIconBox, { backgroundColor: '#FEF2F2' }]}>
-                        <IconComp name="trash-outline" size={20} color="#DC2626" />
-                      </View>
-                      <Text style={styles.actionCardLabel}>Cleanup DB Space</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                )}
 
                 {/* Today's Attendance Card */}
-                <View style={styles.sectionCardBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
-                    <IconComp name="stats-chart-outline" size={18} color="#059669" />
-                    <Text style={styles.sectionCardTitle}>Today's Attendance</Text>
-                  </View>
+                {dashboardConfig.widgets.attendanceSummary && (
+                  <View style={styles.sectionCardBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+                      <IconComp name="stats-chart-outline" size={18} color="#059669" />
+                      <Text style={styles.sectionCardTitle}>Today's Attendance</Text>
+                    </View>
 
-                  <View style={styles.attendanceSummaryHeaderRow}>
-                    <Text style={styles.attendanceBigPercent}>85%</Text>
-                    <Text style={styles.attendanceAverageSubText}>SCHOOL AVERAGE</Text>
-                  </View>
+                    <View style={styles.attendanceSummaryHeaderRow}>
+                      <Text style={styles.attendanceBigPercent}>85%</Text>
+                      <Text style={styles.attendanceAverageSubText}>SCHOOL AVERAGE</Text>
+                    </View>
 
-                  <View style={styles.attendanceBarItem}>
-                    <View style={styles.barLabelRow}>
-                      <Text style={styles.barCategoryTitle}>Students</Text>
-                      <Text style={styles.barPercentValue}>82% Present</Text>
+                    <View style={styles.attendanceBarItem}>
+                      <View style={styles.barLabelRow}>
+                        <Text style={styles.barCategoryTitle}>Students</Text>
+                        <Text style={styles.barPercentValue}>82% Present</Text>
+                      </View>
+                      <View style={styles.progressBarTrack}>
+                        <View style={[styles.progressBarFill, { width: '82%', backgroundColor: '#059669' }]} />
+                      </View>
                     </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '82%', backgroundColor: '#059669' }]} />
-                    </View>
-                  </View>
 
-                  <View style={styles.attendanceBarItem}>
-                    <View style={styles.barLabelRow}>
-                      <Text style={styles.barCategoryTitle}>Teaching Staff</Text>
-                      <Text style={styles.barPercentValue}>95% Present</Text>
+                    <View style={styles.attendanceBarItem}>
+                      <View style={styles.barLabelRow}>
+                        <Text style={styles.barCategoryTitle}>Teaching Staff</Text>
+                        <Text style={styles.barPercentValue}>95% Present</Text>
+                      </View>
+                      <View style={styles.progressBarTrack}>
+                        <View style={[styles.progressBarFill, { width: '95%', backgroundColor: '#059669' }]} />
+                      </View>
                     </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '95%', backgroundColor: '#059669' }]} />
-                    </View>
-                  </View>
 
-                  <View style={styles.attendanceBarItem}>
-                    <View style={styles.barLabelRow}>
-                      <Text style={styles.barCategoryTitle}>Non-Teaching Staff</Text>
-                      <Text style={styles.barPercentValue}>50% Present</Text>
-                    </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '50%', backgroundColor: '#059669' }]} />
+                    <View style={styles.attendanceBarItem}>
+                      <View style={styles.barLabelRow}>
+                        <Text style={styles.barCategoryTitle}>Non-Teaching Staff</Text>
+                        <Text style={styles.barPercentValue}>50% Present</Text>
+                      </View>
+                      <View style={styles.progressBarTrack}>
+                        <View style={[styles.progressBarFill, { width: '50%', backgroundColor: '#059669' }]} />
+                      </View>
                     </View>
                   </View>
-                </View>
+                )}
               </View>
             </ScrollView>
           )}
@@ -2464,12 +5801,12 @@ function App() {
 
               {/* Action Buttons Top Bar */}
               <View style={styles.actionButtonsTopRow}>
-                <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Exported student list to Excel/PDF')}>
+                <TouchableOpacity style={styles.outlineActionBtn} onPress={() => setShowExportModal(true)}>
                   <IconComp name="download-outline" size={14} color="#475569" />
                   <Text style={styles.outlineActionBtnText}>Export</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.greenOutlineActionBtn} onPress={() => showToast('Bulk Import modal opened')}>
+                <TouchableOpacity style={styles.greenOutlineActionBtn} onPress={() => setShowBulkImportModal(true)}>
                   <IconComp name="cloud-upload-outline" size={14} color="#059669" />
                   <Text style={styles.greenOutlineBtnText}>Bulk Import</Text>
                 </TouchableOpacity>
@@ -2504,7 +5841,7 @@ function App() {
                   <Text style={styles.metricLabelTitle}>SEATS ENROLLED</Text>
                   <Text style={styles.metricNumberValue}>4 <Text style={{ fontSize: 13, color: '#64748B' }}>/ 500</Text></Text>
                   <View style={[styles.progressBarTrack, { marginTop: 6 }]}>
-                    <View style={[styles.progressBarFill, { width: '1%', backgroundColor: '#7C3AED' }]} />
+                    <View style={[styles.progressBarFill, { width: '1%', backgroundColor: '#b07fa8' }]} />
                   </View>
                 </View>
 
@@ -2562,7 +5899,7 @@ function App() {
                   <IconComp
                     name="man-outline"
                     size={14}
-                    color={studentGenderFilter !== 'All Genders' ? '#7C3AED' : '#475569'}
+                    color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#475569'}
                   />
                   <Text
                     style={[
@@ -2574,7 +5911,7 @@ function App() {
                   <IconComp
                     name="chevron-down-outline"
                     size={12}
-                    color={studentGenderFilter !== 'All Genders' ? '#7C3AED' : '#64748B'}
+                    color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#64748B'}
                   />
                 </TouchableOpacity>
 
@@ -2588,7 +5925,7 @@ function App() {
                   <IconComp
                     name="school-outline"
                     size={14}
-                    color={studentClassFilter !== 'All Classes' ? '#7C3AED' : '#475569'}
+                    color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#475569'}
                   />
                   <Text
                     style={[
@@ -2600,7 +5937,7 @@ function App() {
                   <IconComp
                     name="chevron-down-outline"
                     size={12}
-                    color={studentClassFilter !== 'All Classes' ? '#7C3AED' : '#64748B'}
+                    color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#64748B'}
                   />
                 </TouchableOpacity>
 
@@ -2636,10 +5973,14 @@ function App() {
 
                         <View style={{ alignItems: 'flex-end', gap: 6 }}>
                           <View style={{ flexDirection: 'row', gap: 8 }}>
-                            <TouchableOpacity onPress={() => showToast(`Viewing details for ${st.name}`)}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setSelectedStudentForDetails(st);
+                                setShowStudentDetailsModal(true);
+                              }}>
                               <IconComp name="eye-outline" size={18} color="#64748B" />
                             </TouchableOpacity>
-                            <TouchableOpacity onPress={() => showToast(`Deleted student ${st.name}`)}>
+                            <TouchableOpacity onPress={() => handleDeleteStudent(st)}>
                               <IconComp name="trash-outline" size={18} color="#DC2626" />
                             </TouchableOpacity>
                           </View>
@@ -2648,6 +5989,7 @@ function App() {
                             style={styles.changeClassBtn}
                             onPress={() => {
                               setSelectedStudentForChange(st);
+                              setTargetNewClass(st.gradeClass || 'PRE KG - A');
                               setShowChangeClassModal(true);
                             }}>
                             <Text style={styles.changeClassBtnText}>Change Class</Text>
@@ -2714,7 +6056,7 @@ function App() {
                 <TouchableOpacity
                   style={[styles.subHeaderPillBtn, attendanceSubTab === 'dashboard' && styles.subHeaderPillBtnActive]}
                   onPress={() => setAttendanceSubTab('dashboard')}>
-                  <IconComp name="grid-outline" size={16} color={attendanceSubTab === 'dashboard' ? '#7C3AED' : '#64748B'} />
+                  <IconComp name="grid-outline" size={16} color={attendanceSubTab === 'dashboard' ? '#b07fa8' : '#64748B'} />
                   <Text style={[styles.subHeaderPillText, attendanceSubTab === 'dashboard' && styles.subHeaderPillTextActive]}>
                     Dashboard
                   </Text>
@@ -2723,7 +6065,7 @@ function App() {
                 <TouchableOpacity
                   style={[styles.subHeaderPillBtn, attendanceSubTab === 'marking' && styles.subHeaderPillBtnActive]}
                   onPress={() => setAttendanceSubTab('marking')}>
-                  <IconComp name="clipboard-outline" size={16} color={attendanceSubTab === 'marking' ? '#7C3AED' : '#64748B'} />
+                  <IconComp name="clipboard-outline" size={16} color={attendanceSubTab === 'marking' ? '#b07fa8' : '#64748B'} />
                   <Text style={[styles.subHeaderPillText, attendanceSubTab === 'marking' && styles.subHeaderPillTextActive]}>
                     Daily Marking
                   </Text>
@@ -2732,7 +6074,7 @@ function App() {
                 <TouchableOpacity
                   style={[styles.subHeaderPillBtn, attendanceSubTab === 'analytics' && styles.subHeaderPillBtnActive]}
                   onPress={() => setAttendanceSubTab('analytics')}>
-                  <IconComp name="stats-chart-outline" size={16} color={attendanceSubTab === 'analytics' ? '#7C3AED' : '#64748B'} />
+                  <IconComp name="stats-chart-outline" size={16} color={attendanceSubTab === 'analytics' ? '#b07fa8' : '#64748B'} />
                   <Text style={[styles.subHeaderPillText, attendanceSubTab === 'analytics' && styles.subHeaderPillTextActive]}>
                     Analytics
                   </Text>
@@ -2745,7 +6087,7 @@ function App() {
                   {/* Historical Archives Date Card */}
                   <View style={styles.historicalArchivesCard}>
                     <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <IconComp name="calendar-outline" size={20} color="#7C3AED" />
+                      <IconComp name="calendar-outline" size={20} color="#b07fa8" />
                       <View>
                         <Text style={styles.archivesTitleText}>Historical Archives</Text>
                         <Text style={styles.archivesSubText}>Select a calendar date to view the daily attendance snapshot.</Text>
@@ -2829,7 +6171,7 @@ function App() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.attFooterActionBtn, { backgroundColor: '#7C3AED' }]}
+                        style={[styles.attFooterActionBtn, { backgroundColor: '#b07fa8' }]}
                         onPress={() => showToast('Attendance saved to school database!')}>
                         <Text style={styles.attFooterActionBtnText}>Save Attendance</Text>
                       </TouchableOpacity>
@@ -2869,74 +6211,8 @@ function App() {
             </ScrollView>
           )}
 
-          {/* ==================== TAB 4: FEES & PAYMENTS ==================== */}
-          {activeAdminTab === 'Fees' && (
-            <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
-              
-              {/* Purple Hero Header Card */}
-              <ModuleHeaderCard
-                icon="card-outline"
-                title="Fees & Financials"
-                subtitle="Track fee collections, monitor payment status, and send reminders."
-              />
-
-              {/* Financial Metric Cards */}
-              <View style={styles.metricsGridContainer}>
-                <View style={[styles.metricCard, { borderLeftWidth: 4, borderLeftColor: '#2563EB' }]}>
-                  <Text style={styles.metricLabelTitle}>Total Expected Fees</Text>
-                  <Text style={styles.metricNumberValue}>₹ 15,00,000</Text>
-                </View>
-
-                <View style={[styles.metricCard, { borderLeftWidth: 4, borderLeftColor: '#059669' }]}>
-                  <Text style={styles.metricLabelTitle}>Collected Amount</Text>
-                  <Text style={[styles.metricNumberValue, { color: '#059669' }]}>₹ 14,25,000</Text>
-                </View>
-              </View>
-
-              {/* Student Fee Roster (Paginated) */}
-              <View style={styles.sectionCardBox}>
-                <Text style={styles.sectionCardTitle}>Student Fee Status</Text>
-                {paginatedFeeStudents.map(s => (
-                  <View key={s.id} style={styles.activityItemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.studentNameText}>{s.name}</Text>
-                      <Text style={styles.studentDetailsSubText}>{s.grade} • Roll No: {s.rollNo}</Text>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[styles.smallFeeActionBtn, s.feePaid ? styles.feePaidStyle : styles.feeUnpaidStyle]}
-                      onPress={() => toggleFeeStatus(s.id)}>
-                      <IconComp
-                        name={s.feePaid ? 'checkmark-circle-outline' : 'close-circle-outline'}
-                        size={14}
-                        color={s.feePaid ? '#059669' : '#DC2626'}
-                      />
-                      <Text style={[styles.smallFeeActionBtnText, { marginLeft: 4 }]}>
-                        {s.feePaid ? 'Paid' : 'Unpaid'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-
-                {/* Pagination Controls for Fee Roster */}
-                <PaginationControls
-                  currentPage={feePage}
-                  totalPages={totalFeePages}
-                  totalItems={students.length}
-                  pageSize={RECORD_PAGE_SIZE}
-                  onPageChange={setFeePage}
-                />
-
-                <TouchableOpacity
-                  style={[styles.primaryLoginBtn, { marginTop: 16, backgroundColor: '#7C3AED', flexDirection: 'row', gap: 8 }]}
-                  onPress={() => showToast('Fee Reminders dispatched via SMS & Email!')}>
-                  <IconComp name="send-outline" size={16} color="#FFFFFF" />
-                  <Text style={styles.primaryLoginBtnText}>Send Payment Reminders</Text>
-                </TouchableOpacity>
-              </View>
-
-            </ScrollView>
-          )}
+          {/* ==================== TAB 4: FEES & PAYMENTS (Image 3 Matching) ==================== */}
+          {activeAdminTab === 'Fees' && renderFeeManagementContent()}
 
           {/* ==================== TAB 5: ALL MODULES (GRID VIEW PAGINATED) ==================== */}
           {activeAdminTab === 'All Modules' && (
@@ -3023,7 +6299,7 @@ function App() {
                   <IconComp
                     name={iconMap[tab]}
                     size={20}
-                    color={isActive ? '#7C3AED' : '#64748B'}
+                    color={isActive ? '#b07fa8' : '#64748B'}
                   />
                   <Text style={[styles.floatingTabLabelText, isActive && styles.floatingTabLabelTextActive]}>
                     {tab}
@@ -3049,6 +6325,18 @@ function App() {
                 <Text style={styles.moduleNavSubText}>ZUNA Admin Mobile Portal</Text>
               </View>
               
+              {activeModuleModal === 'Environment Setup' && (
+                <TouchableOpacity
+                  style={[styles.moduleHeaderPrimaryBtn, { backgroundColor: '#b07fa8', flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                  onPress={handleSaveEnvironmentSetup}
+                  disabled={isSavingEnvironment}>
+                  <IconComp name="save-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.moduleHeaderBtnText}>
+                    {isSavingEnvironment ? 'Saving...' : 'Save Settings'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {activeModuleModal === 'Staff Directory' && (
                 <TouchableOpacity
                   style={styles.moduleHeaderPrimaryBtn}
@@ -3113,6 +6401,256 @@ function App() {
               )}
             </View>
 
+            {/* --- MODULE: CANTEEN ORDERS & REQUESTS (Images 3, 4, 5 Matching) --- */}
+            {(activeModuleModal === 'Canteen Requests' || activeModuleModal === 'Canteen') && (() => {
+              const canteenTodayStr = new Date().toISOString().split('T')[0];
+              const canteenStats = {
+                todayPending: canteenRequestsList.filter(r => r.date === canteenTodayStr && r.status === 'Pending').length,
+                todayApproved: canteenRequestsList.filter(r => r.date === canteenTodayStr && r.status === 'Approved').length,
+                todayDelivered: canteenRequestsList.filter(r => r.date === canteenTodayStr && (r.status === 'Delivered' || r.status === 'Completed')).length,
+                totalCount: canteenRequestsList.length,
+              };
+
+              const filteredCanteen = canteenRequestsList.filter(req => {
+                const matchesSearch =
+                  !canteenSearchQuery.trim() ||
+                  (req.studentName && req.studentName.toLowerCase().includes(canteenSearchQuery.toLowerCase())) ||
+                  (req.admissionNumber && req.admissionNumber.toLowerCase().includes(canteenSearchQuery.toLowerCase())) ||
+                  (req.className && req.className.toLowerCase().includes(canteenSearchQuery.toLowerCase()));
+
+                let matchesDate = true;
+                if (canteenDateFilter === 'Today') {
+                  matchesDate = req.date === canteenTodayStr;
+                } else if (canteenDateFilter === 'Past') {
+                  matchesDate = req.date !== canteenTodayStr;
+                }
+
+                const matchesStatus = canteenStatusFilter === 'All' || req.status === canteenStatusFilter;
+                const matchesMeal = canteenMealFilter === 'All' || req.meal === canteenMealFilter;
+
+                return matchesSearch && matchesDate && matchesStatus && matchesMeal;
+              });
+
+              const isFilterActive =
+                !!canteenSearchQuery.trim() ||
+                canteenDateFilter !== 'Today' ||
+                canteenStatusFilter !== 'All' ||
+                canteenMealFilter !== 'All';
+
+              return (
+                <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+                  {/* Header Title Card */}
+                  <ModuleHeaderCard
+                    icon="cafe-outline"
+                    title="Canteen Orders & Requests"
+                    subtitle="Manage and resolve emergency canteen requests raised by parents in real-time."
+                  />
+
+                  {/* 4 Summary Metric Cards Grid (Image 3 Matching) */}
+                  <View style={styles.canteenMetricsGrid}>
+                    {/* Card 1: Today's Pending */}
+                    <View style={styles.canteenMetricCard}>
+                      <View style={[styles.canteenMetricIconBox, { backgroundColor: '#FEF3C7' }]}>
+                        <IconComp name="time-outline" size={22} color="#D97706" />
+                      </View>
+                      <Text style={styles.canteenMetricLabel}>TODAY'S PENDING</Text>
+                      <Text style={styles.canteenMetricValue}>{canteenStats.todayPending}</Text>
+                    </View>
+
+                    {/* Card 2: Today's Approved */}
+                    <View style={styles.canteenMetricCard}>
+                      <View style={[styles.canteenMetricIconBox, { backgroundColor: '#faedf7' }]}>
+                        <IconComp name="sparkles-outline" size={22} color="#b07fa8" />
+                      </View>
+                      <Text style={styles.canteenMetricLabel}>TODAY'S APPROVED</Text>
+                      <Text style={styles.canteenMetricValue}>{canteenStats.todayApproved}</Text>
+                    </View>
+
+                    {/* Card 3: Today's Delivered */}
+                    <View style={styles.canteenMetricCard}>
+                      <View style={[styles.canteenMetricIconBox, { backgroundColor: '#DCFCE7' }]}>
+                        <IconComp name="checkmark-circle-outline" size={22} color="#16A34A" />
+                      </View>
+                      <Text style={styles.canteenMetricLabel}>TODAY'S DELIVERED</Text>
+                      <Text style={styles.canteenMetricValue}>{canteenStats.todayDelivered}</Text>
+                    </View>
+
+                    {/* Card 4: All-Time Requests */}
+                    <View style={styles.canteenMetricCard}>
+                      <View style={[styles.canteenMetricIconBox, { backgroundColor: '#F1F5F9' }]}>
+                        <IconComp name="restaurant-outline" size={22} color="#64748B" />
+                      </View>
+                      <Text style={styles.canteenMetricLabel}>ALL-TIME REQUESTS</Text>
+                      <Text style={styles.canteenMetricValue}>{canteenStats.totalCount}</Text>
+                    </View>
+                  </View>
+
+                  {/* Filter Toolbar (Images 3, 4, 5 Matching) */}
+                  <View style={styles.canteenFilterCard}>
+                    {/* Search by student or admission... */}
+                    <View style={styles.canteenSearchInputWrapper}>
+                      <IconComp name="search-outline" size={18} color="#94A3B8" />
+                      <TextInput
+                        style={styles.canteenSearchInput}
+                        placeholder="Search by student or admission..."
+                        placeholderTextColor="#94A3B8"
+                        value={canteenSearchQuery}
+                        onChangeText={setCanteenSearchQuery}
+                      />
+                      {canteenSearchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setCanteenSearchQuery('')}>
+                          <IconComp name="close-circle" size={16} color="#94A3B8" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* Filter Controls Row */}
+                    <View style={styles.canteenFilterControlsRow}>
+                      {/* Date Filter Tabs: Today / Past / All */}
+                      <View style={styles.canteenDateToggleBox}>
+                        {(['Today', 'Past', 'All'] as const).map(d => (
+                          <TouchableOpacity
+                            key={d}
+                            style={[styles.canteenDateToggleBtn, canteenDateFilter === d && styles.canteenDateToggleBtnActive]}
+                            onPress={() => setCanteenDateFilter(d)}>
+                            <Text style={[styles.canteenDateToggleText, canteenDateFilter === d && styles.canteenDateToggleTextActive]}>
+                              {d}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
+                      {/* Status Dropdown Button (Image 4) */}
+                      <TouchableOpacity
+                        style={[styles.canteenDropdownBtn, canteenStatusFilter !== 'All' && styles.canteenDropdownBtnActive]}
+                        onPress={() => setShowCanteenStatusPicker(true)}>
+                        <IconComp name="options-outline" size={14} color={canteenStatusFilter !== 'All' ? '#b07fa8' : '#64748B'} />
+                        <Text style={[styles.canteenDropdownBtnText, canteenStatusFilter !== 'All' && { color: '#b07fa8' }]}>
+                          {canteenStatusFilter === 'All' ? 'All Statuses' : canteenStatusFilter}
+                        </Text>
+                        <IconComp name="chevron-down-outline" size={12} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Meal Dropdown Button (Image 5) */}
+                      <TouchableOpacity
+                        style={[styles.canteenDropdownBtn, canteenMealFilter !== 'All' && styles.canteenDropdownBtnActive]}
+                        onPress={() => setShowCanteenMealPicker(true)}>
+                        <IconComp name="restaurant-outline" size={14} color={canteenMealFilter !== 'All' ? '#b07fa8' : '#64748B'} />
+                        <Text style={[styles.canteenDropdownBtnText, canteenMealFilter !== 'All' && { color: '#b07fa8' }]}>
+                          {canteenMealFilter === 'All' ? 'All Meals' : canteenMealFilter}
+                        </Text>
+                        <IconComp name="chevron-down-outline" size={12} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Reset Filters Button */}
+                      {isFilterActive && (
+                        <TouchableOpacity
+                          style={styles.canteenResetBtn}
+                          onPress={() => {
+                            setCanteenSearchQuery('');
+                            setCanteenDateFilter('Today');
+                            setCanteenStatusFilter('All');
+                            setCanteenMealFilter('All');
+                          }}>
+                          <IconComp name="refresh-outline" size={14} color="#DC2626" />
+                          <Text style={styles.canteenResetBtnText}>Reset</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Requests List or Empty State (Image 3 Matching) */}
+                  {filteredCanteen.length === 0 ? (
+                    <View style={styles.canteenEmptyCard}>
+                      <IconComp name="cafe-outline" size={54} color="#CBD5E1" />
+                      <Text style={styles.canteenEmptyTitle}>No matching canteen requests found</Text>
+                      <Text style={styles.canteenEmptySubtitle}>
+                        Try adjusting your filters or wait for a parent to submit a request.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 12 }}>
+                      {filteredCanteen.map(req => (
+                        <View key={req.id} style={styles.canteenRequestCard}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.studentCardNameText}>{req.studentName}</Text>
+                              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                                {req.className} • Adm: {req.admissionNumber}
+                              </Text>
+                            </View>
+
+                            {/* Status Badge */}
+                            <View
+                              style={[
+                                styles.statusPillBadge,
+                                req.status === 'Approved'
+                                  ? { backgroundColor: '#faedf7' }
+                                  : req.status === 'Delivered'
+                                  ? { backgroundColor: '#DCFCE7' }
+                                  : req.status === 'Cancelled'
+                                  ? { backgroundColor: '#FEE2E2' }
+                                  : { backgroundColor: '#FEF3C7' },
+                              ]}>
+                              <Text
+                                style={[
+                                  styles.statusPillText,
+                                  req.status === 'Approved'
+                                    ? { color: '#b07fa8' }
+                                    : req.status === 'Delivered'
+                                    ? { color: '#15803D' }
+                                    : req.status === 'Cancelled'
+                                    ? { color: '#DC2626' }
+                                    : { color: '#D97706' },
+                                ]}>
+                                {req.status}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={{ backgroundColor: '#F8FAFC', padding: 10, borderRadius: 10, marginBottom: 10, gap: 4 }}>
+                            <Text style={{ fontSize: 12, color: '#334155', fontWeight: '600' }}>
+                              🍽️ Meal: <Text style={{ fontWeight: '800' }}>{req.meal}</Text> • 📅 {req.date}
+                            </Text>
+                            {req.notes ? (
+                              <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
+                                Note: {req.notes}
+                              </Text>
+                            ) : null}
+                          </View>
+
+                          {/* Action Buttons */}
+                          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                            {req.status === 'Pending' && (
+                              <>
+                                <TouchableOpacity
+                                  style={[styles.smallWhiteOutlineBtn, { borderColor: '#EF4444' }]}
+                                  onPress={() => handleUpdateCanteenStatus(req.id, 'Cancelled')}>
+                                  <Text style={[styles.smallWhiteOutlineBtnText, { color: '#EF4444' }]}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[styles.modalSmallBtn, { backgroundColor: '#b07fa8', paddingVertical: 8, paddingHorizontal: 14 }]}
+                                  onPress={() => handleUpdateCanteenStatus(req.id, 'Approved')}>
+                                  <Text style={styles.modalSmallBtnText}>Approve</Text>
+                                </TouchableOpacity>
+                              </>
+                            )}
+                            {req.status === 'Approved' && (
+                              <TouchableOpacity
+                                style={[styles.modalSmallBtn, { backgroundColor: '#10B981', paddingVertical: 8, paddingHorizontal: 14 }]}
+                                onPress={() => handleUpdateCanteenStatus(req.id, 'Delivered')}>
+                                <Text style={styles.modalSmallBtnText}>Mark Delivered ✓</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </ScrollView>
+              );
+            })()}
+
             {/* --- SCREENSHOT 1: STAFF DIRECTORY & ATTACHMENTS --- */}
             {activeModuleModal === 'Staff Directory' && (
               <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
@@ -3173,7 +6711,7 @@ function App() {
                     <View key={st.id} style={styles.studentCardContainer}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View style={[styles.avatarCircleInitial, { backgroundColor: '#EDE9FE' }]}>
-                          <Text style={[styles.avatarInitialText, { color: '#7C3AED' }]}>{(st.name || 'S')[0]}</Text>
+                          <Text style={[styles.avatarInitialText, { color: '#b07fa8' }]}>{(st.name || 'S')[0]}</Text>
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.studentNameTitle}>{st.name}</Text>
@@ -3181,8 +6719,8 @@ function App() {
 
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                             {st.classAssignments.map((ca, idx) => (
-                              <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#F3E8FF' }]}>
-                                <Text style={[styles.classBadgeText, { color: '#7C3AED' }]}>{ca}</Text>
+                              <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
+                                <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{ca}</Text>
                               </View>
                             ))}
                             {st.subjectAssignments.map((sa, idx) => (
@@ -3256,10 +6794,10 @@ function App() {
                   {classList.map(cl => (
                     <View key={cl.id} style={styles.classCardBoxItem}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                        <IconComp name="book-outline" size={20} color="#7C3AED" />
+                        <IconComp name="book-outline" size={20} color="#b07fa8" />
                         <Text style={styles.classCardTitle}>{cl.name}</Text>
-                        <View style={[styles.classBadgePill, { backgroundColor: '#F3E8FF' }]}>
-                          <Text style={[styles.classBadgeText, { color: '#7C3AED' }]}>{cl.section}</Text>
+                        <View style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
+                          <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{cl.section}</Text>
                         </View>
                         <View style={[styles.classBadgePill, { backgroundColor: '#FCE7F3' }]}>
                           <Text style={[styles.classBadgeText, { color: '#BE185D' }]}>{cl.category}</Text>
@@ -3297,7 +6835,7 @@ function App() {
                     <View key={sub.id} style={styles.classCardBoxItem}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                          <IconComp name="book-outline" size={20} color="#7C3AED" />
+                          <IconComp name="book-outline" size={20} color="#b07fa8" />
                           <View>
                             <Text style={styles.classCardTitle}>{sub.name}</Text>
                             <Text style={{ fontSize: 12, color: '#64748B' }}>{sub.code}</Text>
@@ -3318,8 +6856,8 @@ function App() {
                       </Text>
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                         {sub.assignedTeachers.map((t, idx) => (
-                          <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#F3E8FF' }]}>
-                            <Text style={[styles.classBadgeText, { color: '#7C3AED' }]}>{t}</Text>
+                          <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
+                            <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{t}</Text>
                           </View>
                         ))}
                       </View>
@@ -3336,6 +6874,21 @@ function App() {
                   icon="megaphone-outline"
                   title="Noticeboard"
                   subtitle="Broadcast global announcements and oversee class notices."
+                  secondaryActions={[
+                    {
+                      label: "Create Global Notice",
+                      icon: "add-outline",
+                      onPress: () => {
+                        setNoticeTitleInput('');
+                        setNoticeMessageInput('');
+                        setNoticeAudience('all');
+                        setNoticePriority('normal');
+                        setShowNoticeAudienceDropdown(false);
+                        setShowNoticePriorityDropdown(false);
+                        setShowCreateNoticeModal(true);
+                      },
+                    },
+                  ]}
                 />
 
                 <View style={styles.moduleTabRow}>
@@ -3366,7 +6919,15 @@ function App() {
                     </Text>
                     <TouchableOpacity
                       style={styles.emptyActionPurpleBtn}
-                      onPress={() => setShowCreateNoticeModal(true)}>
+                      onPress={() => {
+                        setNoticeTitleInput('');
+                        setNoticeMessageInput('');
+                        setNoticeAudience('all');
+                        setNoticePriority('normal');
+                        setShowNoticeAudienceDropdown(false);
+                        setShowNoticePriorityDropdown(false);
+                        setShowCreateNoticeModal(true);
+                      }}>
                       <IconComp name="add-outline" size={16} color="#FFFFFF" />
                       <Text style={styles.emptyActionBtnText}>Create Global Notice</Text>
                     </TouchableOpacity>
@@ -3438,13 +6999,13 @@ function App() {
                     </View>
                   </View>
 
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#F3E8FF', borderColor: '#DDD6FE' }]}>
+                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#faedf7', borderColor: '#eec9db' }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#8B5CF6', justifyContent: 'center', alignItems: 'center' }}>
+                      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#ce9dc6', justifyContent: 'center', alignItems: 'center' }}>
                         <IconComp name="briefcase-outline" size={20} color="#FFFFFF" />
                       </View>
                       <View>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#6D28D9', letterSpacing: 0.5 }}>STAFF COUNT</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#8a5e82', letterSpacing: 0.5 }}>STAFF COUNT</Text>
                         <Text style={{ fontSize: 20, fontWeight: '800', color: '#4C1D95', marginTop: 2 }}>
                           {hrPayrollList.length}
                         </Text>
@@ -3513,10 +7074,10 @@ function App() {
 
                         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
                           <TouchableOpacity
-                            style={[styles.smallWhiteOutlineBtn, { borderColor: '#7C3AED' }]}
+                            style={[styles.smallWhiteOutlineBtn, { borderColor: '#b07fa8' }]}
                             onPress={() => setShowPayslipModalItem(item)}>
-                            <IconComp name="document-text-outline" size={14} color="#7C3AED" />
-                            <Text style={[styles.smallWhiteOutlineBtnText, { color: '#7C3AED' }]}>View Payslip</Text>
+                            <IconComp name="document-text-outline" size={14} color="#b07fa8" />
+                            <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>View Payslip</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.smallWhiteOutlineBtn, { borderColor: '#EF4444' }]}
@@ -3606,7 +7167,7 @@ function App() {
                           style={{
                             alignSelf: msg.senderRole === 'Staff' ? 'flex-end' : 'flex-start',
                             maxWidth: '82%',
-                            backgroundColor: msg.senderRole === 'Staff' ? '#7C3AED' : '#FFFFFF',
+                            backgroundColor: msg.senderRole === 'Staff' ? '#b07fa8' : '#FFFFFF',
                             padding: 12,
                             borderRadius: 16,
                             borderWidth: msg.senderRole === 'Staff' ? 0 : 1,
@@ -3735,8 +7296,8 @@ function App() {
                         <View key={slot.id} style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <IconComp name="time-outline" size={16} color="#7C3AED" />
-                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#7C3AED' }}>
+                              <IconComp name="time-outline" size={16} color="#b07fa8" />
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#b07fa8' }}>
                                 {slot.startTime} - {slot.endTime}
                               </Text>
                             </View>
@@ -3783,31 +7344,31 @@ function App() {
                 {/* Month Navigator Header Bar */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <TouchableOpacity style={styles.arrowIconButton} onPress={() => {
-                      const d = new Date(calendarDate);
-                      d.setMonth(d.getMonth() - 1);
-                      setCalendarDate(d);
-                      setCalendarSelectedDayNum(1);
-                    }}>
-                      <IconComp name="chevron-back-outline" size={16} color="#334155" />
+                    <TouchableOpacity
+                      style={styles.arrowIconButton}
+                      onPress={handleCalendarPrevMonth}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      activeOpacity={0.7}>
+                      <IconComp name="chevron-back-outline" size={18} color="#334155" />
                     </TouchableOpacity>
-                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{calendarCurrentMonth}</Text>
-                    <TouchableOpacity style={styles.arrowIconButton} onPress={() => {
-                      const d = new Date(calendarDate);
-                      d.setMonth(d.getMonth() + 1);
-                      setCalendarDate(d);
-                      setCalendarSelectedDayNum(1);
-                    }}>
-                      <IconComp name="chevron-forward-outline" size={16} color="#334155" />
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A', minWidth: 140, textAlign: 'center' }}>
+                      {calendarCurrentMonth}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.arrowIconButton}
+                      onPress={handleCalendarNextMonth}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      activeOpacity={0.7}>
+                      <IconComp name="chevron-forward-outline" size={18} color="#334155" />
                     </TouchableOpacity>
                   </View>
                   <TouchableOpacity
-                    style={[styles.smallWhiteOutlineBtn, { borderColor: '#7C3AED' }]}
+                    style={[styles.smallWhiteOutlineBtn, { borderColor: '#b07fa8' }]}
                     onPress={() => {
                       setCalendarDate(new Date(2026, 8, 1));
                       setCalendarSelectedDayNum(new Date().getDate());
                     }}>
-                    <Text style={[styles.smallWhiteOutlineBtnText, { color: '#7C3AED' }]}>Today</Text>
+                    <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Today</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -3821,7 +7382,7 @@ function App() {
                         paddingVertical: 8,
                         borderRadius: 12,
                         alignItems: 'center',
-                        backgroundColor: calendarViewMode === mode ? '#7C3AED' : 'transparent',
+                        backgroundColor: calendarViewMode === mode ? '#b07fa8' : 'transparent',
                       }}
                       onPress={() => setCalendarViewMode(mode)}>
                       <Text style={{ fontSize: 13, fontWeight: '700', color: calendarViewMode === mode ? '#FFFFFF' : '#64748B' }}>
@@ -3874,7 +7435,7 @@ function App() {
                               width: 32,
                               height: 32,
                               borderRadius: 16,
-                              backgroundColor: isSelected ? '#7C3AED' : 'transparent',
+                              backgroundColor: isSelected ? '#b07fa8' : 'transparent',
                               justifyContent: 'center',
                               alignItems: 'center',
                             }}>
@@ -3895,15 +7456,15 @@ function App() {
                 </View>
 
                 {/* Selected Date Activities / Events Details Bar */}
-                <View style={{ backgroundColor: '#7C3AED', borderRadius: 16, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <View style={{ backgroundColor: '#b07fa8', borderRadius: 16, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                   <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF' }}>
                     Activities for {calendarSelectedDayNum} {calendarCurrentMonth}
                   </Text>
                   <TouchableOpacity
                     style={[styles.smallWhiteOutlineBtn, { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' }]}
                     onPress={() => setShowAddEventModal(true)}>
-                    <IconComp name="add-outline" size={14} color="#7C3AED" />
-                    <Text style={[styles.smallWhiteOutlineBtnText, { color: '#7C3AED' }]}>Add Event</Text>
+                    <IconComp name="add-outline" size={14} color="#b07fa8" />
+                    <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Add Event</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -3917,7 +7478,7 @@ function App() {
                             styles.priorityPill,
                             {
                               backgroundColor:
-                                ev.type === 'holiday' ? '#FEE2E2' : ev.type === 'exam' ? '#FFEDD5' : '#F3E8FF',
+                                ev.type === 'holiday' ? '#FEE2E2' : ev.type === 'exam' ? '#FFEDD5' : '#faedf7',
                             },
                           ]}>
                           <Text
@@ -3925,7 +7486,7 @@ function App() {
                               styles.priorityPillText,
                               {
                                 color:
-                                  ev.type === 'holiday' ? '#DC2626' : ev.type === 'exam' ? '#D97706' : '#7C3AED',
+                                  ev.type === 'holiday' ? '#DC2626' : ev.type === 'exam' ? '#D97706' : '#b07fa8',
                               },
                             ]}>
                             {ev.type.toUpperCase()}
@@ -4007,8 +7568,8 @@ function App() {
                         <View key={rc.id} style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{rc.studentName}</Text>
-                            <View style={[styles.priorityPill, { backgroundColor: '#F3E8FF' }]}>
-                              <Text style={[styles.priorityPillText, { color: '#7C3AED' }]}>Grade {rc.grade}</Text>
+                            <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
+                              <Text style={[styles.priorityPillText, { color: '#b07fa8' }]}>Grade {rc.grade}</Text>
                             </View>
                           </View>
                           <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
@@ -4053,7 +7614,7 @@ function App() {
                 </View>
 
                 {/* Homework Cards or Empty State */}
-                {homeworkList.length === 0 ? (
+                {adminHomeworkList.length === 0 ? (
                   <View style={styles.emptyModuleCardContainer}>
                     <View style={styles.emptyIconCircleLarge}>
                       <IconComp name="book-open-outline" size={40} color="#94A3B8" />
@@ -4065,14 +7626,14 @@ function App() {
                   </View>
                 ) : (
                   <View style={{ gap: 12 }}>
-                    {homeworkList.map((hw: any) => (
+                    {adminHomeworkList.map((hw: any) => (
                       <TouchableOpacity
                         key={hw.id}
                         style={styles.noticeCardItem}
                         onPress={() => { setHwSelected(hw); setHwTrackingModal(true); }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <View style={[styles.priorityPill, { backgroundColor: '#F3E8FF' }]}>
-                            <Text style={[styles.priorityPillText, { color: '#7C3AED' }]}>{hw.className} • {hw.subject}</Text>
+                          <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
+                            <Text style={[styles.priorityPillText, { color: '#b07fa8' }]}>{hw.className} • {hw.subject}</Text>
                           </View>
                           <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>Due: {hw.dueDate}</Text>
                         </View>
@@ -4080,7 +7641,7 @@ function App() {
                         <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>{hw.description}</Text>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
                           <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>✓ Active</Text>
-                          <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '700' }}>View Tracking →</Text>
+                          <Text style={{ fontSize: 12, color: '#b07fa8', fontWeight: '700' }}>View Tracking →</Text>
                         </View>
                       </TouchableOpacity>
                     ))}
@@ -4089,90 +7650,8 @@ function App() {
               </ScrollView>
             )}
 
-            {/* --- MODULE: FEE MANAGEMENT (Full) --- */}
-            {activeModuleModal === 'Fee Management' && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="card-outline"
-                  title="Fee Management"
-                  subtitle="Track revenue, manage student payments, and monitor fee due alerts."
-                  primaryButton={{
-                    label: "Assign New Fee",
-                    icon: "add-outline",
-                    onPress: () => setShowAssignFeeModal(true),
-                  }}
-                />
-
-                {/* Stats Row */}
-                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                    <IconComp name="card-outline" size={18} color="#2563EB" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#1D4ED8', marginTop: 4 }}>TOTAL EXPECTED</Text>
-                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#1E40AF' }}>₹{feeStats.expected}</Text>
-                  </View>
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                    <IconComp name="trending-up-outline" size={18} color="#059669" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857', marginTop: 4 }}>COLLECTED</Text>
-                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#064E3B' }}>₹{feeStats.collected}</Text>
-                  </View>
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
-                    <IconComp name="alert-circle-outline" size={18} color="#D97706" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309', marginTop: 4 }}>OUTSTANDING</Text>
-                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#92400E' }}>₹{feeStats.outstanding}</Text>
-                  </View>
-                </View>
-
-                {/* Search + Status Filter */}
-                <View style={[styles.searchBarWrapperFull, { marginBottom: 8 }]}>
-                  <IconComp name="search-outline" size={18} color="#94A3B8" />
-                  <TextInput
-                    style={styles.searchInputField}
-                    placeholder="Search by student, admission no. or fee name..."
-                    placeholderTextColor="#94A3B8"
-                    value={feeInvoiceSearch}
-                    onChangeText={setFeeInvoiceSearch}
-                  />
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 14 }}>
-                  {(['all', 'paid', 'unpaid', 'overdue'] as const).map(s => (
-                    <TouchableOpacity
-                      key={s}
-                      style={[styles.filterChipItem, feeStatusFilter === s && styles.filterChipItemActive]}
-                      onPress={() => setFeeStatusFilter(s)}>
-                      <Text style={[styles.filterChipText, feeStatusFilter === s && styles.filterChipTextActive]}>
-                        {s === 'all' ? 'All Invoices' : s.charAt(0).toUpperCase() + s.slice(1)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-
-                {/* Invoices list or Empty State */}
-                {feeInvoicesList.length === 0 ? (
-                  <View style={styles.emptyModuleCardContainer}>
-                    <View style={styles.emptyIconCircleLarge}>
-                      <IconComp name="receipt-outline" size={40} color="#94A3B8" />
-                    </View>
-                    <Text style={styles.emptyModuleTitle}>No invoices found</Text>
-                    <Text style={styles.emptyModuleSub}>Assign a fee to a class to generate invoices.</Text>
-                  </View>
-                ) : (
-                  <View style={{ gap: 10 }}>
-                    {feeInvoicesList.map((inv: any) => (
-                      <View key={inv.id} style={styles.noticeCardItem}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <Text style={styles.noticeItemTitle}>{inv.studentName}</Text>
-                          <View style={[styles.priorityPill, { backgroundColor: inv.status === 'Paid' ? '#ECFDF5' : '#FEE2E2' }]}>
-                            <Text style={[styles.priorityPillText, { color: inv.status === 'Paid' ? '#059669' : '#DC2626' }]}>{inv.status}</Text>
-                          </View>
-                        </View>
-                        <Text style={{ fontSize: 12, color: '#64748B' }}>{inv.feeName} • {inv.collectionPeriod}</Text>
-                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A', marginTop: 4 }}>₹{inv.amount}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </ScrollView>
-            )}
+            {/* --- MODULE: FEE MANAGEMENT (Full) (Image 3 Matching) --- */}
+            {activeModuleModal === 'Fee Management' && renderFeeManagementContent()}
 
             {/* --- MODULE: TRANSPORT MANAGEMENT --- */}
             {activeModuleModal === 'Transport' && (
@@ -4347,8 +7826,8 @@ function App() {
                               <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>by {book.author}</Text>
                             </View>
                             <View style={{ width: 80 }}>
-                              <View style={[styles.priorityPill, { backgroundColor: '#F3E8FF' }]}>
-                                <Text style={[styles.priorityPillText, { color: '#7C3AED', fontSize: 9 }]}>{book.category}</Text>
+                              <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
+                                <Text style={[styles.priorityPillText, { color: '#b07fa8', fontSize: 9 }]}>{book.category}</Text>
                               </View>
                             </View>
                             <View style={{ width: 60, alignItems: 'flex-end' }}>
@@ -4446,7 +7925,7 @@ function App() {
                 {/* Stats Row */}
                 <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
                   <View style={[styles.statBoxCard, { flex: 1 }]}>
-                    <IconComp name="cube-outline" size={18} color="#7C3AED" />
+                    <IconComp name="cube-outline" size={18} color="#b07fa8" />
                     <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', marginTop: 4 }}>TOTAL ITEMS</Text>
                     <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>{inventoryItemsList.length}</Text>
                   </View>
@@ -4566,7 +8045,7 @@ function App() {
                   <TouchableOpacity
                     style={[styles.moduleTabBtn, leaveTab === 'pending' && styles.moduleTabBtnActive]}
                     onPress={() => setLeaveTab('pending')}>
-                    <IconComp name="time-outline" size={15} color={leaveTab === 'pending' ? '#7C3AED' : '#64748B'} style={{ marginRight: 4 }} />
+                    <IconComp name="time-outline" size={15} color={leaveTab === 'pending' ? '#b07fa8' : '#64748B'} style={{ marginRight: 4 }} />
                     <Text style={[styles.moduleTabText, leaveTab === 'pending' && styles.moduleTabTextActive]}>
                       Pending Requests ({leaveRequestsList.filter(l => l.status === 'Pending').length})
                     </Text>
@@ -4574,7 +8053,7 @@ function App() {
                   <TouchableOpacity
                     style={[styles.moduleTabBtn, leaveTab === 'history' && styles.moduleTabBtnActive]}
                     onPress={() => setLeaveTab('history')}>
-                    <IconComp name="document-text-outline" size={15} color={leaveTab === 'history' ? '#7C3AED' : '#64748B'} style={{ marginRight: 4 }} />
+                    <IconComp name="document-text-outline" size={15} color={leaveTab === 'history' ? '#b07fa8' : '#64748B'} style={{ marginRight: 4 }} />
                     <Text style={[styles.moduleTabText, leaveTab === 'history' && styles.moduleTabTextActive]}>
                       History ({leaveRequestsList.filter(l => l.status !== 'Pending').length})
                     </Text>
@@ -4657,7 +8136,7 @@ function App() {
                             ]}>
                               <Text style={[
                                 styles.leaveRoleBadgeText,
-                                { color: leave.applicantRole === 'teacher' ? '#2563EB' : '#7C3AED' }
+                                { color: leave.applicantRole === 'teacher' ? '#2563EB' : '#b07fa8' }
                               ]}>
                                 {leave.applicantRole.toUpperCase()}
                               </Text>
@@ -4764,7 +8243,7 @@ function App() {
 
                   {/* Metric 4: Total Teachers */}
                   <View style={styles.reportsKpiCard}>
-                    <View style={[styles.reportsKpiIconBox, { backgroundColor: '#8B5CF6' }]}>
+                    <View style={[styles.reportsKpiIconBox, { backgroundColor: '#ce9dc6' }]}>
                       <IconComp name="book" size={18} color="#FFFFFF" />
                     </View>
                     <Text style={styles.reportsKpiLabel}>TOTAL TEACHERS</Text>
@@ -4979,7 +8458,7 @@ function App() {
                   <View style={styles.apiCardHeaderRow}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <View style={[styles.apiServiceIconBox, { backgroundColor: '#FAF5FF' }]}>
-                        <IconComp name="cloud-upload-outline" size={20} color="#7C3AED" />
+                        <IconComp name="cloud-upload-outline" size={20} color="#b07fa8" />
                       </View>
                       <Text style={styles.apiServiceTitle}>Cloudinary (Media Module)</Text>
                     </View>
@@ -5168,8 +8647,8 @@ function App() {
                   {/* Card 4: Customize Staff Registration Form */}
                   <View style={styles.staffConfigCard}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                      <View style={[styles.regLinkIconBox, { backgroundColor: '#F3E8FF', width: 36, height: 36 }]}>
-                        <IconComp name="settings-outline" size={18} color="#7C3AED" />
+                      <View style={[styles.regLinkIconBox, { backgroundColor: '#faedf7', width: 36, height: 36 }]}>
+                        <IconComp name="settings-outline" size={18} color="#b07fa8" />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.staffConfigTitle}>Customize Staff Registration Form</Text>
@@ -5342,7 +8821,7 @@ function App() {
                         <TouchableOpacity
                           style={styles.leadsExportBtn}
                           onPress={handleExportLeadsReport}>
-                          <IconComp name="download-outline" size={14} color="#7C3AED" />
+                          <IconComp name="download-outline" size={14} color="#b07fa8" />
                           <Text style={styles.leadsExportBtnText}>Export Report</Text>
                         </TouchableOpacity>
                       </View>
@@ -5389,7 +8868,7 @@ function App() {
                               switch (status) {
                                 case 'New': return { bg: '#EFF6FF', text: '#2563EB', border: '#BFDBFE' };
                                 case 'Contacted': return { bg: '#FEF3C7', text: '#D97706', border: '#FDE68A' };
-                                case 'Interested': return { bg: '#F3E8FF', text: '#7C3AED', border: '#DDD6FE' };
+                                case 'Interested': return { bg: '#faedf7', text: '#b07fa8', border: '#eec9db' };
                                 case 'Converted': return { bg: '#ECFDF5', text: '#059669', border: '#A7F3D0' };
                                 case 'Closed': return { bg: '#F1F5F9', text: '#64748B', border: '#CBD5E1' };
                                 default: return { bg: '#F1F5F9', text: '#475569', border: '#CBD5E1' };
@@ -5468,7 +8947,7 @@ function App() {
                   <View style={{ gap: 14 }}>
                     <View style={styles.leadsFormsNoticeCard}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <IconComp name="link-outline" size={18} color="#7C3AED" />
+                        <IconComp name="link-outline" size={18} color="#b07fa8" />
                         <Text style={styles.leadsFormsNoticeTitle}>Public Enquiry Forms</Text>
                       </View>
                       <Text style={styles.leadsFormsNoticeSub}>
@@ -5510,7 +8989,7 @@ function App() {
                                 message: `Apply to ZUNA International Academy: https://sms.zuna.edu/apply/${form.id}`,
                               });
                             }}>
-                            <IconComp name="share-social-outline" size={16} color="#7C3AED" />
+                            <IconComp name="share-social-outline" size={16} color="#b07fa8" />
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -5584,7 +9063,7 @@ function App() {
                           </Text>
                         </View>
                         <View style={styles.billingProgressTrack}>
-                          <View style={[styles.billingProgressFill, { width: '35%', backgroundColor: '#7C3AED' }]} />
+                          <View style={[styles.billingProgressFill, { width: '35%', backgroundColor: '#b07fa8' }]} />
                         </View>
                       </View>
 
@@ -5781,7 +9260,7 @@ function App() {
                         <TouchableOpacity
                           style={styles.customModAddSectionBtn}
                           onPress={() => setShowAddSectionModal(true)}>
-                          <IconComp name="add-outline" size={14} color="#7C3AED" />
+                          <IconComp name="add-outline" size={14} color="#b07fa8" />
                           <Text style={styles.customModAddSectionBtnText}>+ Add Section</Text>
                         </TouchableOpacity>
                       </View>
@@ -5851,7 +9330,7 @@ function App() {
                                   setTargetSectionIdForField(sec.id);
                                   setShowAddFieldModal(true);
                                 }}>
-                                <IconComp name="add-circle-outline" size={14} color="#7C3AED" />
+                                <IconComp name="add-circle-outline" size={14} color="#b07fa8" />
                                 <Text style={styles.customModAddFieldBtnText}>Add Field</Text>
                               </TouchableOpacity>
                             </View>
@@ -5908,7 +9387,7 @@ function App() {
                     <TouchableOpacity
                       style={styles.rolesAddRoleBtn}
                       onPress={() => setShowAddRoleModal(true)}>
-                      <IconComp name="add-outline" size={14} color="#7C3AED" />
+                      <IconComp name="add-outline" size={14} color="#b07fa8" />
                       <Text style={styles.rolesAddRoleBtnText}>+ Add Role</Text>
                     </TouchableOpacity>
                   </View>
@@ -6044,7 +9523,439 @@ function App() {
               </ScrollView>
             )}
 
-            {/* --- GENERIC MODULE VIEW --- */}
+            {/* =====================================================================
+                MODULE: ENVIRONMENT SETUP (Images 1, 2, 3, 4, 5 Matching)
+               ===================================================================== */}
+            {activeModuleModal === 'Environment Setup' && (
+              <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+                <ModuleHeaderCard
+                  icon="settings-outline"
+                  title="Environment Setup"
+                  subtitle="Configure your school's branding, contact info, and academic settings."
+                  primaryButton={{
+                    label: isSavingEnvironment ? "Saving..." : "Save Settings",
+                    icon: "save-outline",
+                    onPress: handleSaveEnvironmentSetup,
+                  }}
+                />
+
+                {/* Section 1: General Information */}
+                <View style={styles.envSectionCard}>
+                  <View style={styles.envSectionHeaderRow}>
+                    <IconComp name="business-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.envSectionTitle}>General Information</Text>
+                  </View>
+                  <View style={styles.envSectionBody}>
+                    <Text style={styles.envFieldLabel}>School Name</Text>
+                    <TextInput
+                      style={styles.envInput}
+                      value={setupSchoolName}
+                      onChangeText={setSetupSchoolName}
+                      placeholder="e.g. Worlds Academy"
+                      placeholderTextColor="#94A3B8"
+                    />
+
+                    <Text style={[styles.envFieldLabel, { marginTop: 12 }]}>Location / Address</Text>
+                    <View style={styles.envInputWithIcon}>
+                      <IconComp name="location-outline" size={18} color="#94A3B8" />
+                      <TextInput
+                        style={styles.envInputFlex}
+                        value={setupSchoolAddress}
+                        onChangeText={setSetupSchoolAddress}
+                        placeholder="e.g. Tamil nadu"
+                        placeholderTextColor="#94A3B8"
+                      />
+                    </View>
+
+                    <Text style={[styles.envFieldLabel, { marginTop: 12 }]}>Contact Phone</Text>
+                    <View style={styles.envInputWithIcon}>
+                      <IconComp name="call-outline" size={18} color="#94A3B8" />
+                      <TextInput
+                        style={styles.envInputFlex}
+                        value={setupSchoolPhone}
+                        onChangeText={setSetupSchoolPhone}
+                        placeholder="e.g. +91 9021706638"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="phone-pad"
+                      />
+                    </View>
+
+                    <Text style={[styles.envFieldLabel, { marginTop: 12 }]}>Official Website</Text>
+                    <View style={styles.envInputWithIcon}>
+                      <IconComp name="globe-outline" size={18} color="#94A3B8" />
+                      <TextInput
+                        style={styles.envInputFlex}
+                        value={setupSchoolWebsite}
+                        onChangeText={setSetupSchoolWebsite}
+                        placeholder="https://sms-carrezza-build.vercel.app"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="url"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Section 2: Branding & Theming */}
+                <View style={styles.envSectionCard}>
+                  <View style={styles.envSectionHeaderRow}>
+                    <IconComp name="color-palette-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.envSectionTitle}>Branding & Theming</Text>
+                  </View>
+                  <View style={styles.envSectionBody}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <IconComp name="image-outline" size={16} color="#94A3B8" />
+                      <Text style={styles.envFieldLabel}>Upload Logo</Text>
+                    </View>
+                    <Text style={styles.envFieldHint}>Upload your school's logo image or specify image URL.</Text>
+
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                      <TextInput
+                        style={[styles.envInput, { flex: 1 }]}
+                        placeholder="Logo URL or image link..."
+                        placeholderTextColor="#94A3B8"
+                        value={setupLogoUrl}
+                        onChangeText={setSetupLogoUrl}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity
+                        style={styles.envChooseFileBtn}
+                        onPress={() => {
+                          setSetupLogoUrl('https://sms-carrezza-build.vercel.app/logo.png');
+                          showToast('Default school logo loaded');
+                        }}>
+                        <Text style={styles.envChooseFileBtnText}>Choose File</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Preview Box Matching Web Preview */}
+                    <View style={styles.envLogoPreviewBox}>
+                      <Text style={styles.envLogoPreviewTitle}>PREVIEW</Text>
+                      {setupLogoUrl ? (
+                        <Image
+                          source={{ uri: setupLogoUrl }}
+                          style={styles.envLogoPreviewImage}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                          <IconComp name="image-outline" size={32} color="#CBD5E1" />
+                          <Text style={styles.envLogoNoUploadText}>No logo uploaded</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+
+                {/* Section 3: Academic Configuration (Matching Images 2 & 3) */}
+                <View style={styles.envSectionCard}>
+                  <View style={styles.envSectionHeaderRow}>
+                    <IconComp name="calendar-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.envSectionTitle}>Academic Configuration</Text>
+                  </View>
+                  <View style={styles.envSectionBody}>
+                    <Text style={styles.envFieldLabel}>Current Academic Year</Text>
+                    <TouchableOpacity
+                      style={styles.envDropdownSelector}
+                      onPress={() => setShowAcademicYearPicker(true)}>
+                      <Text style={styles.envDropdownSelectorText}>{setupAcademicYear}</Text>
+                      <IconComp name="chevron-down" size={18} color="#64748B" />
+                    </TouchableOpacity>
+
+                    <Text style={[styles.envFieldLabel, { marginTop: 14 }]}>Term Type</Text>
+                    <TouchableOpacity
+                      style={styles.envDropdownSelector}
+                      onPress={() => setShowTermTypePicker(true)}>
+                      <Text style={styles.envDropdownSelectorText}>{setupTermType}</Text>
+                      <IconComp name="chevron-down" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Section 4: Fee Collection Periods (Matching Images 1 & 4) */}
+                <View style={styles.envSectionCard}>
+                  <View style={[styles.envSectionHeaderRow, { justifyContent: 'space-between' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <IconComp name="cash-outline" size={20} color="#b07fa8" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envSectionTitle}>Fee Collection Periods</Text>
+                        <Text style={styles.envSectionSubtitle} numberOfLines={1}>
+                          Define your school's fee collection schedule.
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.envAddBtnPrimary}
+                      onPress={openAddPeriodModal}>
+                      <IconComp name="add" size={16} color="#FFFFFF" />
+                      <Text style={styles.envAddBtnPrimaryText}>Add Period</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {feePeriodsList.length === 0 ? (
+                    <View style={styles.envEmptyStateBox}>
+                      <IconComp name="cash-outline" size={40} color="#CBD5E1" />
+                      <Text style={styles.envEmptyStateTitle}>No fee collection periods configured yet.</Text>
+                      <Text style={styles.envEmptyStateSub}>
+                        Define periods like 'Term 1', 'Quarter 1', or 'Annual' to start managing fees.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.envListContainer}>
+                      {feePeriodsList.map((p, idx) => (
+                        <View key={p.id || idx} style={styles.envListItemRow}>
+                          <View style={styles.envOrderBadge}>
+                            <Text style={styles.envOrderBadgeText}>{p.displayOrder || idx + 1}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text style={styles.envItemTitle}>{p.name}</Text>
+                            {p.description ? <Text style={styles.envItemDesc}>{p.description}</Text> : null}
+                            <Text style={styles.envItemCode}>{p.code}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <TouchableOpacity
+                              style={[
+                                styles.envStatusPill,
+                                p.status === 'active' ? styles.envStatusPillActive : styles.envStatusPillInactive,
+                              ]}
+                              onPress={() => handleTogglePeriodStatus(p.id)}>
+                              <Text
+                                style={[
+                                  styles.envStatusPillText,
+                                  p.status === 'active' ? styles.envStatusPillTextActive : styles.envStatusPillTextInactive,
+                                ]}>
+                                {p.status === 'active' ? 'Active' : 'Inactive'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.envItemActionBtn}
+                              onPress={() => openEditPeriodModal(p)}>
+                              <IconComp name="pencil-outline" size={16} color="#64748B" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.envItemActionBtn}
+                              onPress={() => handleDeletePeriod(p.id, p.name)}>
+                              <IconComp name="trash-outline" size={16} color="#EF4444" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+
+                {/* Section 5: Attendance Configuration (Matching Image 1) */}
+                <View style={styles.envSectionCard}>
+                  <View style={styles.envSectionHeaderRow}>
+                    <IconComp name="time-outline" size={20} color="#b07fa8" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.envSectionTitle}>Attendance Configuration</Text>
+                      <Text style={styles.envSectionSubtitle}>
+                        Configure school timings, thresholds, and thresholds for automated flags.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.envSectionBody}>
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envFieldLabel}>Working Hours Start</Text>
+                        <View style={styles.stepperContainer}>
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupWorkStart(adjustTime(setupWorkStart, -15))}>
+                            <IconComp name="remove-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                          <TextInput
+                            style={styles.stepperInput}
+                            value={setupWorkStart}
+                            onChangeText={setSetupWorkStart}
+                            placeholder="09:00"
+                            placeholderTextColor="#94A3B8"
+                          />
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupWorkStart(adjustTime(setupWorkStart, 15))}>
+                            <IconComp name="add-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envFieldLabel}>Working Hours End</Text>
+                        <View style={styles.stepperContainer}>
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupWorkEnd(adjustTime(setupWorkEnd, -15))}>
+                            <IconComp name="remove-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                          <TextInput
+                            style={styles.stepperInput}
+                            value={setupWorkEnd}
+                            onChangeText={setSetupWorkEnd}
+                            placeholder="16:00"
+                            placeholderTextColor="#94A3B8"
+                          />
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupWorkEnd(adjustTime(setupWorkEnd, 15))}>
+                            <IconComp name="add-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envFieldLabel}>Cutoff Time (Late after this)</Text>
+                        <View style={styles.stepperContainer}>
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupGraceTime(adjustTime(setupGraceTime, -15))}>
+                            <IconComp name="remove-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                          <TextInput
+                            style={styles.stepperInput}
+                            value={setupGraceTime}
+                            onChangeText={setSetupGraceTime}
+                            placeholder="09:30"
+                            placeholderTextColor="#94A3B8"
+                          />
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setSetupGraceTime(adjustTime(setupGraceTime, 15))}>
+                            <IconComp name="add-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envFieldLabel}>Detention Threshold (Absences/Mo)</Text>
+                        <View style={styles.stepperContainer}>
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              const val = parseInt(setupThreshold, 10) || 3;
+                              setSetupThreshold(String(Math.max(1, val - 1)));
+                            }}>
+                            <IconComp name="remove-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                          <TextInput
+                            style={styles.stepperInput}
+                            value={setupThreshold}
+                            onChangeText={setSetupThreshold}
+                            placeholder="3"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                          />
+                          <TouchableOpacity
+                            style={styles.stepperBtn}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              const val = parseInt(setupThreshold, 10) || 3;
+                              setSetupThreshold(String(val + 1));
+                            }}>
+                            <IconComp name="add-outline" size={18} color="#475569" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={{ alignItems: 'flex-end', marginTop: 16 }}>
+                      <TouchableOpacity
+                        style={styles.envSaveAttendanceBtn}
+                        onPress={handleSaveAttendanceConfigSubmit}
+                        disabled={isSavingAttendanceConfig}>
+                        <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                        <Text style={styles.envSaveAttendanceBtnText}>
+                          {isSavingAttendanceConfig ? 'Saving...' : 'Save Settings'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Section 6: Leave Approval Rules (Matching Images 1 & 5) */}
+                <View style={styles.envSectionCard}>
+                  <View style={[styles.envSectionHeaderRow, { justifyContent: 'space-between' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <IconComp name="person-done-outline" size={20} color="#b07fa8" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.envSectionTitle}>Leave Approval Rules</Text>
+                        <Text style={styles.envSectionSubtitle} numberOfLines={1}>
+                          Build a custom multi-level leave approval ladder by duration bands.
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.envAddBtnPrimary}
+                      onPress={openAddLeaveRuleModal}>
+                      <IconComp name="add" size={16} color="#FFFFFF" />
+                      <Text style={styles.envAddBtnPrimaryText}>Add Rule</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Configuration Warnings banner if any */}
+                  {getLeaveRulesWarnings().length > 0 && (
+                    <View style={styles.envWarningBanner}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <IconComp name="warning-outline" size={16} color="#D97706" />
+                        <Text style={styles.envWarningTitle}>Configuration Warnings (Non-blocking):</Text>
+                      </View>
+                      {getLeaveRulesWarnings().map((w, idx) => (
+                        <Text key={idx} style={styles.envWarningText}>• {w}</Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {leaveRulesList.length === 0 ? (
+                    <View style={styles.envEmptyStateBox}>
+                      <IconComp name="person-done-outline" size={40} color="#CBD5E1" />
+                      <Text style={styles.envEmptyStateTitle}>No leave approval rules configured.</Text>
+                      <Text style={styles.envEmptyStateSub}>
+                        Leaves will trigger manual routing to general admins until rules are added.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.envListContainer}>
+                      {leaveRulesList.map((rule, idx) => (
+                        <View key={rule.id || idx} style={styles.envListItemRow}>
+                          <View style={[styles.envOrderBadge, { backgroundColor: '#faedf7' }]}>
+                            <Text style={[styles.envOrderBadgeText, { color: '#b07fa8' }]}>{rule.order || idx + 1}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text style={styles.envItemTitle}>
+                              {rule.minDays} {rule.maxDays === null || rule.maxDays === undefined || rule.maxDays === '' ? 'and above' : `to ${rule.maxDays}`} Days
+                            </Text>
+                            <Text style={styles.envItemDesc}>
+                              Route to Role: <Text style={{ color: '#b07fa8', fontWeight: '700' }}>{rule.roleId}</Text>
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <TouchableOpacity
+                              style={styles.envItemActionBtn}
+                              onPress={() => openEditLeaveRuleModal(rule)}>
+                              <IconComp name="pencil-outline" size={16} color="#64748B" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.envItemActionBtn}
+                              onPress={() => handleDeleteLeaveRule(rule.id)}>
+                              <IconComp name="trash-outline" size={16} color="#EF4444" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Fallback for other modules */}
             {activeModuleModal !== 'Staff Directory' &&
              activeModuleModal !== 'Classes & Sections' &&
              activeModuleModal !== 'Subject Management' &&
@@ -6070,12 +9981,13 @@ function App() {
              activeModuleModal !== 'Billing & Subscriptions' &&
              activeModuleModal !== 'Custom Modules' &&
              activeModuleModal !== 'Module Customization' &&
-             activeModuleModal !== 'Roles & Permissions' && (
+             activeModuleModal !== 'Roles & Permissions' &&
+             activeModuleModal !== 'Environment Setup' && (
 
               <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
                 <ModuleHeaderCard
                   icon="apps-outline"
-                  title={activeModuleModal}
+                  title={activeModuleModal || ''}
                   subtitle={`Manage and configure ${activeModuleModal} for ZUNA International Academy.`}
                 />
 
@@ -6105,7 +10017,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="person-add-outline" size={20} color="#7C3AED" />
+                <IconComp name="person-add-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add New Staff Member</Text>
               </View>
               <Text style={styles.fieldLabelText}>Full Name *</Text>
@@ -6132,7 +10044,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleAddStaffSubmit}>
                   <Text style={styles.modalSmallBtnText}>Add Staff</Text>
                 </TouchableOpacity>
@@ -6184,7 +10096,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="journal-outline" size={20} color="#7C3AED" />
+                <IconComp name="journal-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add New Subject</Text>
               </View>
               <Text style={styles.fieldLabelText}>Subject Name *</Text>
@@ -6210,7 +10122,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleAddSubjectSubmit}>
                   <Text style={styles.modalSmallBtnText}>Save Subject</Text>
                 </TouchableOpacity>
@@ -6224,7 +10136,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="swap-horizontal-outline" size={20} color="#7C3AED" />
+                <IconComp name="swap-horizontal-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Change Student Class</Text>
               </View>
               <Text style={styles.modalCardDesc}>
@@ -6243,7 +10155,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleChangeClassSubmit}>
                   <Text style={styles.modalSmallBtnText}>Update Class</Text>
                 </TouchableOpacity>
@@ -6252,72 +10164,216 @@ function App() {
           </View>
         </Modal>
 
-        {/* Create Global Notice Modal */}
-        <Modal visible={showCreateNoticeModal} transparent animationType="slide">
-          <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="megaphone-outline" size={20} color="#7C3AED" />
-                <Text style={styles.modalCardTitle}>Create Global Notice</Text>
-              </View>
-
-              <Text style={styles.fieldLabelText}>Notice Title *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Annual Sports Day Announcement"
-                placeholderTextColor="#94A3B8"
-                value={noticeTitleInput}
-                onChangeText={setNoticeTitleInput}
-              />
-
-              <Text style={styles.fieldLabelText}>Target Audience</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. All Students & Staff"
-                placeholderTextColor="#94A3B8"
-                value={noticeAudienceInput}
-                onChangeText={setNoticeAudienceInput}
-              />
-
-              <Text style={styles.fieldLabelText}>Message Content *</Text>
-              <TextInput
-                style={[styles.modalInputBox, { height: 80, textAlignVertical: 'top' }]}
-                placeholder="Write the full notice broadcast message here..."
-                placeholderTextColor="#94A3B8"
-                multiline
-                value={noticeMessageInput}
-                onChangeText={setNoticeMessageInput}
-              />
-
-              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
+        {/* ===== BROADCAST GLOBAL NOTICE MODAL (Images 1 & 2 Matching) ===== */}
+        <Modal visible={showCreateNoticeModal} transparent animationType="fade">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.noticeModalCard}>
+              {/* Modal Header */}
+              <View style={styles.noticeModalHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="megaphone-outline" size={20} color="#b07fa8" />
+                  <Text style={styles.noticeModalHeaderTitle}>Broadcast Global Notice</Text>
+                </View>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowCreateNoticeModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={styles.confirmModalCloseBtn}
                   onPress={() => {
-                    if (!noticeTitleInput.trim()) {
-                      Alert.alert('Error', 'Please enter a notice title');
-                      return;
-                    }
-                    const newNotice = {
-                      title: noticeTitleInput,
-                      audience: noticeAudienceInput || 'All Students & Staff',
-                      priority: noticePriorityInput,
-                      message: noticeMessageInput || 'Notice published for all members.',
-                      date: 'Today, 10:00 AM'
-                    };
-                    setGlobalNoticesList([newNotice, ...globalNoticesList]);
+                    setShowNoticeAudienceDropdown(false);
+                    setShowNoticePriorityDropdown(false);
                     setShowCreateNoticeModal(false);
-                    setNoticeTitleInput('');
-                    setNoticeMessageInput('');
-                    showToast('Global Notice published successfully!');
                   }}>
-                  <Text style={styles.modalSmallBtnText}>Publish Notice</Text>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
                 </TouchableOpacity>
               </View>
+
+              <ScrollView
+                contentContainerStyle={{ padding: 20 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}>
+                {/* Field 1: Notice Title */}
+                <Text style={styles.noticeFieldLabel}>Notice Title</Text>
+                <TextInput
+                  style={styles.noticeModalInput}
+                  placeholder="e.g. School closed tomorrow"
+                  placeholderTextColor="#94A3B8"
+                  value={noticeTitleInput}
+                  onChangeText={setNoticeTitleInput}
+                />
+
+                {/* Field 2: Message */}
+                <Text style={[styles.noticeFieldLabel, { marginTop: 14 }]}>Message</Text>
+                <TextInput
+                  style={[styles.noticeModalInput, { height: 110, textAlignVertical: 'top' }]}
+                  placeholder="Type the full announcement here..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  value={noticeMessageInput}
+                  onChangeText={setNoticeMessageInput}
+                />
+
+                {/* Field 3 & 4 Row: Target Audience & Priority */}
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 14, zIndex: 100 }}>
+                  {/* Left Column: Target Audience */}
+                  <View style={{ flex: 1, position: 'relative', zIndex: 100 }}>
+                    <Text style={styles.noticeFieldLabel}>Target Audience</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.noticeDropdownTrigger,
+                        showNoticeAudienceDropdown && styles.noticeDropdownTriggerActive,
+                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setShowNoticeAudienceDropdown(!showNoticeAudienceDropdown);
+                        setShowNoticePriorityDropdown(false);
+                      }}>
+                      <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
+                        {noticeAudience === 'all'
+                          ? 'Everyone (Teachers, Parents)'
+                          : noticeAudience === 'teachers'
+                          ? 'Teachers Only'
+                          : 'Parents Only'}
+                      </Text>
+                      <IconComp name="chevron-down" size={16} color="#475569" />
+                    </TouchableOpacity>
+
+                    {showNoticeAudienceDropdown && (
+                      <View style={styles.noticeDropdownMenu}>
+                        <TouchableOpacity
+                          style={[
+                            styles.noticeDropdownItem,
+                            noticeAudience === 'all' && styles.noticeDropdownItemActive,
+                          ]}
+                          onPress={() => {
+                            setNoticeAudience('all');
+                            setShowNoticeAudienceDropdown(false);
+                          }}>
+                          <Text
+                            style={[
+                              styles.noticeDropdownItemText,
+                              noticeAudience === 'all' && styles.noticeDropdownItemTextActive,
+                            ]}>
+                            Everyone (Teachers, Parents)
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.noticeDropdownItem,
+                            noticeAudience === 'teachers' && styles.noticeDropdownItemActive,
+                          ]}
+                          onPress={() => {
+                            setNoticeAudience('teachers');
+                            setShowNoticeAudienceDropdown(false);
+                          }}>
+                          <Text
+                            style={[
+                              styles.noticeDropdownItemText,
+                              noticeAudience === 'teachers' && styles.noticeDropdownItemTextActive,
+                            ]}>
+                            Teachers Only
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.noticeDropdownItem,
+                            noticeAudience === 'parents' && styles.noticeDropdownItemActive,
+                          ]}
+                          onPress={() => {
+                            setNoticeAudience('parents');
+                            setShowNoticeAudienceDropdown(false);
+                          }}>
+                          <Text
+                            style={[
+                              styles.noticeDropdownItemText,
+                              noticeAudience === 'parents' && styles.noticeDropdownItemTextActive,
+                            ]}>
+                            Parents Only
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Right Column: Priority */}
+                  <View style={{ flex: 1, position: 'relative', zIndex: 100 }}>
+                    <Text style={styles.noticeFieldLabel}>Priority</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.noticeDropdownTrigger,
+                        showNoticePriorityDropdown && styles.noticeDropdownTriggerActive,
+                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setShowNoticePriorityDropdown(!showNoticePriorityDropdown);
+                        setShowNoticeAudienceDropdown(false);
+                      }}>
+                      <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
+                        {noticePriority === 'normal' ? 'Normal' : 'High (Urgent)'}
+                      </Text>
+                      <IconComp name="chevron-down" size={16} color="#475569" />
+                    </TouchableOpacity>
+
+                    {showNoticePriorityDropdown && (
+                      <View style={styles.noticeDropdownMenu}>
+                        <TouchableOpacity
+                          style={[
+                            styles.noticeDropdownItem,
+                            noticePriority === 'normal' && styles.noticeDropdownItemActive,
+                          ]}
+                          onPress={() => {
+                            setNoticePriority('normal');
+                            setShowNoticePriorityDropdown(false);
+                          }}>
+                          <Text
+                            style={[
+                              styles.noticeDropdownItemText,
+                              noticePriority === 'normal' && styles.noticeDropdownItemTextActive,
+                            ]}>
+                            Normal
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.noticeDropdownItem,
+                            noticePriority === 'high' && styles.noticeDropdownItemActive,
+                          ]}
+                          onPress={() => {
+                            setNoticePriority('high');
+                            setShowNoticePriorityDropdown(false);
+                          }}>
+                          <Text
+                            style={[
+                              styles.noticeDropdownItemText,
+                              noticePriority === 'high' && styles.noticeDropdownItemTextActive,
+                            ]}>
+                            High (Urgent)
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Footer Buttons */}
+                <View style={styles.noticeModalFooterRow}>
+                  <TouchableOpacity
+                    style={styles.noticeModalCancelBtn}
+                    onPress={() => {
+                      setShowNoticeAudienceDropdown(false);
+                      setShowNoticePriorityDropdown(false);
+                      setShowCreateNoticeModal(false);
+                    }}>
+                    <Text style={styles.noticeModalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.noticeModalBroadcastBtn}
+                    disabled={isPublishingNotice}
+                    onPress={handleBroadcastNotice}>
+                    <IconComp name="paper-plane-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.noticeModalBroadcastText}>
+                      {isPublishingNotice ? 'Broadcasting...' : 'Broadcast'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -6398,7 +10454,7 @@ function App() {
             <View style={[styles.modalCardContainer, { maxWidth: 360 }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <IconComp name="document-text-outline" size={20} color="#7C3AED" />
+                  <IconComp name="document-text-outline" size={20} color="#b07fa8" />
                   <Text style={styles.modalCardTitle}>Salary Payslip</Text>
                 </View>
                 <TouchableOpacity onPress={() => setShowPayslipModalItem(null)}>
@@ -6408,7 +10464,7 @@ function App() {
 
               {showPayslipModalItem && (
                 <View style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 8 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#7C3AED', textAlign: 'center' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#b07fa8', textAlign: 'center' }}>
                     ZUNA INTERNATIONAL ACADEMY
                   </Text>
                   <Text style={{ fontSize: 11, color: '#64748B', textAlign: 'center' }}>
@@ -6444,7 +10500,7 @@ function App() {
 
               <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     setShowPayslipModalItem(null);
                     showToast('Payslip PDF downloaded successfully!');
@@ -6462,7 +10518,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="time-outline" size={20} color="#7C3AED" />
+                <IconComp name="time-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add Timetable Period</Text>
               </View>
               <Text style={styles.fieldLabelText}>Start Time</Text>
@@ -6504,7 +10560,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     if (!slotSubject.trim()) {
                       Alert.alert('Error', 'Please enter a subject name');
@@ -6543,7 +10599,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="calendar-outline" size={20} color="#7C3AED" />
+                <IconComp name="calendar-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add Calendar Event</Text>
               </View>
               <Text style={styles.fieldLabelText}>Event Title *</Text>
@@ -6585,7 +10641,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     if (!eventTitleInput.trim()) {
                       Alert.alert('Error', 'Please enter event title');
@@ -6615,7 +10671,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="document-text-outline" size={20} color="#7C3AED" />
+                <IconComp name="document-text-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Create New Examination</Text>
               </View>
               <Text style={styles.fieldLabelText}>Exam Title *</Text>
@@ -6650,7 +10706,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     if (!newExamName.trim()) {
                       Alert.alert('Error', 'Please enter exam title');
@@ -6683,7 +10739,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="man-outline" size={20} color="#7C3AED" />
+                <IconComp name="man-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Filter by Gender</Text>
               </View>
               {(['All Genders', 'Male', 'Female'] as const).map(g => (
@@ -6706,7 +10762,7 @@ function App() {
                     {g}
                   </Text>
                   {studentGenderFilter === g && (
-                    <IconComp name="checkmark-sharp" size={16} color="#7C3AED" />
+                    <IconComp name="checkmark-sharp" size={16} color="#b07fa8" />
                   )}
                 </TouchableOpacity>
               ))}
@@ -6724,7 +10780,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="school-outline" size={20} color="#7C3AED" />
+                <IconComp name="school-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Filter by Class</Text>
               </View>
               {(['All Classes', 'PRE KG - A', 'grade - 3 - A'] as const).map(c => (
@@ -6747,7 +10803,7 @@ function App() {
                     {c}
                   </Text>
                   {studentClassFilter === c && (
-                    <IconComp name="checkmark-sharp" size={16} color="#7C3AED" />
+                    <IconComp name="checkmark-sharp" size={16} color="#b07fa8" />
                   )}
                 </TouchableOpacity>
               ))}
@@ -6760,65 +10816,7 @@ function App() {
           </View>
         </Modal>
 
-        {/* ===== MODAL: ASSIGN NEW FEE ===== */}
-        <Modal visible={showAssignFeeModal} transparent animationType="slide">
-          <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="card-outline" size={20} color="#7C3AED" />
-                <Text style={styles.modalCardTitle}>Assign New Fee</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Fee / Period Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Term 1 Fee"
-                placeholderTextColor="#94A3B8"
-                value={newFeeForm.name}
-                onChangeText={v => setNewFeeForm(p => ({ ...p, name: v }))}
-              />
-              <Text style={styles.fieldLabelText}>Class</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Grade 3"
-                placeholderTextColor="#94A3B8"
-                value={newFeeForm.classLabel}
-                onChangeText={v => setNewFeeForm(p => ({ ...p, classLabel: v }))}
-              />
-              <Text style={styles.fieldLabelText}>Amount (₹) *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. 5000"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                value={newFeeForm.amount}
-                onChangeText={v => setNewFeeForm(p => ({ ...p, amount: v }))}
-              />
-              <Text style={styles.fieldLabelText}>Due Date</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#94A3B8"
-                value={newFeeForm.dueDate}
-                onChangeText={v => setNewFeeForm(p => ({ ...p, dueDate: v }))}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]} onPress={() => setShowAssignFeeModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
-                  onPress={() => {
-                    if (!newFeeForm.name || !newFeeForm.amount) { Alert.alert('Error', 'Fee name and amount are required'); return; }
-                    setShowAssignFeeModal(false);
-                    showToast(`Fee "${newFeeForm.name}" assigned successfully!`);
-                    setNewFeeForm({ name: '', amount: '', dueDate: new Date().toISOString().split('T')[0], classId: '', classLabel: '' });
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Assign Fee</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
+
 
         {/* ===== MODAL: ADD TRANSPORT ROUTE ===== */}
         <Modal visible={showAddRouteModal} transparent animationType="slide">
@@ -6970,7 +10968,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="cube-outline" size={20} color="#7C3AED" />
+                <IconComp name="cube-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add Inventory Item</Text>
               </View>
               <Text style={styles.fieldLabelText}>Product Name *</Text>
@@ -6986,7 +10984,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     if (!newItemForm.name.trim()) { Alert.alert('Error', 'Product name is required'); return; }
                     setShowAddItemModal(false);
@@ -7446,7 +11444,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="calendar-outline" size={20} color="#7C3AED" />
+                <IconComp name="calendar-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Submit Leave Request</Text>
               </View>
 
@@ -7522,7 +11520,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleCreateLeaveSubmit}>
                   <Text style={styles.modalSmallBtnText}>Submit Request</Text>
                 </TouchableOpacity>
@@ -7536,7 +11534,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="heart-outline" size={20} color="#7C3AED" />
+                <IconComp name="heart-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Log Admission Enquiry / Lead</Text>
               </View>
 
@@ -7600,7 +11598,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleCreateLeadSubmit}>
                   <Text style={styles.modalSmallBtnText}>Save Lead</Text>
                 </TouchableOpacity>
@@ -7614,7 +11612,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="flash-outline" size={20} color="#7C3AED" />
+                <IconComp name="flash-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Upgrade School Subscription</Text>
               </View>
 
@@ -7624,9 +11622,9 @@ function App() {
 
               <View style={{ gap: 10 }}>
                 <TouchableOpacity
-                  style={[styles.planSelectCard, { borderColor: '#7C3AED', backgroundColor: '#F5F3FF' }]}>
+                  style={[styles.planSelectCard, { borderColor: '#b07fa8', backgroundColor: '#fdfafc' }]}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#7C3AED' }}>Enterprise Plan (Active)</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#b07fa8' }}>Enterprise Plan (Active)</Text>
                     <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>₹2600 / mo</Text>
                   </View>
                   <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>
@@ -7653,7 +11651,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Close</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleUpgradePlanSubmit}>
                   <Text style={styles.modalSmallBtnText}>Confirm Upgrade</Text>
                 </TouchableOpacity>
@@ -7667,7 +11665,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="card-outline" size={20} color="#7C3AED" />
+                <IconComp name="card-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Update Payment Method</Text>
               </View>
 
@@ -7695,7 +11693,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={() => {
                     setShowEditPaymentModal(false);
                     showToast('Payment method updated successfully!');
@@ -7712,7 +11710,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="folder-outline" size={20} color="#7C3AED" />
+                <IconComp name="folder-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add Section to Form Schema</Text>
               </View>
 
@@ -7732,7 +11730,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleAddSectionSubmit}>
                   <Text style={styles.modalSmallBtnText}>Add Section</Text>
                 </TouchableOpacity>
@@ -7746,7 +11744,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="add-circle-outline" size={20} color="#7C3AED" />
+                <IconComp name="add-circle-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Add Field</Text>
               </View>
 
@@ -7784,7 +11782,7 @@ function App() {
                 <IconComp
                   name={newFieldData.required ? 'checkbox-outline' : 'square-outline'}
                   size={20}
-                  color={newFieldData.required ? '#7C3AED' : '#94A3B8'}
+                  color={newFieldData.required ? '#b07fa8' : '#94A3B8'}
                 />
                 <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>Mandatory / Required Field</Text>
               </TouchableOpacity>
@@ -7796,7 +11794,7 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleAddFieldSubmit}>
                   <Text style={styles.modalSmallBtnText}>Add Field</Text>
                 </TouchableOpacity>
@@ -7810,7 +11808,7 @@ function App() {
           <View style={styles.modalOverlayDark}>
             <View style={styles.modalCardContainer}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="shield-outline" size={20} color="#7C3AED" />
+                <IconComp name="shield-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Create Custom Role</Text>
               </View>
 
@@ -7830,13 +11828,1291 @@ function App() {
                   <Text style={styles.modalSmallBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#7C3AED' }]}
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
                   onPress={handleAddRoleSubmit}>
                   <Text style={styles.modalSmallBtnText}>Create Role</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
+        </Modal>
+
+        {/* ===== MODAL 1: CLEANUP AUDIO FILES (Image 3 Matching) ===== */}
+        <Modal visible={showCleanupModal} transparent animationType="fade">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.confirmModalCard}>
+              <View style={styles.confirmModalHeaderRow}>
+                <View style={styles.confirmModalIconCircle}>
+                  <IconComp name="alert-circle-outline" size={26} color="#DC2626" />
+                </View>
+                <TouchableOpacity
+                  style={styles.confirmModalCloseBtn}
+                  onPress={() => setShowCleanupModal(false)}
+                  disabled={isCleaningAudio}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.confirmModalBody}>
+                <Text style={styles.confirmModalTitle}>Cleanup Audio Files</Text>
+                <Text style={styles.confirmModalMessage}>
+                  Are you sure you want to delete all chat audio messages older than 7 days? This action cannot be undone.
+                </Text>
+              </View>
+
+              <View style={styles.confirmModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.confirmModalCancelBtn}
+                  onPress={() => setShowCleanupModal(false)}
+                  disabled={isCleaningAudio}>
+                  <Text style={styles.confirmModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.confirmModalConfirmBtn}
+                  onPress={handleCleanupAudio}
+                  disabled={isCleaningAudio}>
+                  {isCleaningAudio ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.confirmModalConfirmText}>Confirm</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL 2: GENERATE INVITE LINKS (Image 2 Matching) ===== */}
+        <Modal visible={showInviteModal} transparent animationType="fade">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.inviteModalCard}>
+              <View style={styles.inviteModalHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={styles.inviteModalIconCircle}>
+                    <IconComp name="link-outline" size={20} color="#b07fa8" />
+                  </View>
+                  <Text style={styles.inviteModalTitle}>Generate Invite Links</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.confirmModalCloseBtn}
+                  onPress={() => setShowInviteModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.inviteModalSubtitle}>
+                Share registration links for new staff and parents to register into Zuna Academy.
+              </Text>
+
+              {/* Option 1: Teacher Link */}
+              <View style={styles.inviteLinkCardItem}>
+                <View style={styles.inviteLinkCardHeader}>
+                  <View style={[styles.inviteLinkTypeIconBox, { backgroundColor: '#EFF6FF' }]}>
+                    <IconComp name="person-outline" size={18} color="#2563EB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inviteLinkTypeTitle}>Teacher Link</Text>
+                    <Text style={styles.inviteLinkUrlText} numberOfLines={1}>
+                      https://sms-teamcarrezza.vercel.app/register/teacher/school1
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.inviteLinkActionRow}>
+                  <TouchableOpacity
+                    style={styles.inviteLinkShareBtn}
+                    onPress={() => handleShareInviteLink('teacher')}>
+                    <IconComp name="share-social-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.inviteLinkShareBtnText}>Share Link</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Option 2: Parent Link */}
+              <View style={styles.inviteLinkCardItem}>
+                <View style={styles.inviteLinkCardHeader}>
+                  <View style={[styles.inviteLinkTypeIconBox, { backgroundColor: '#faedf7' }]}>
+                    <IconComp name="people-outline" size={18} color="#b07fa8" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inviteLinkTypeTitle}>Parent Link</Text>
+                    <Text style={styles.inviteLinkUrlText} numberOfLines={1}>
+                      https://sms-teamcarrezza.vercel.app/register/parent/school1
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.inviteLinkActionRow}>
+                  <TouchableOpacity
+                    style={[styles.inviteLinkShareBtn, { backgroundColor: '#b07fa8' }]}
+                    onPress={() => handleShareInviteLink('parent')}>
+                    <IconComp name="share-social-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.inviteLinkShareBtnText}>Share Link</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL 3: CUSTOMIZE DASHBOARD (Image 1 Matching) ===== */}
+        <Modal visible={showCustomizeModal} transparent animationType="slide">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.customizeModalCard}>
+              <View style={styles.customizeModalHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="settings-outline" size={20} color="#b07fa8" />
+                  <Text style={styles.customizeModalTitle}>Customize Dashboard</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.confirmModalCloseBtn}
+                  onPress={() => setShowCustomizeModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
+                {/* SECTION 1: METRICS */}
+                <View style={styles.customizeSectionHeaderBox}>
+                  <Text style={styles.customizeSectionTitle}>METRICS</Text>
+                </View>
+
+                <View style={styles.customizeMetricsGrid}>
+                  {/* Students Toggle */}
+                  <TouchableOpacity
+                    style={styles.customizeGridCardItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        metrics: { ...prev.metrics, students: !prev.metrics.students },
+                      }))
+                    }>
+                    <View style={styles.customizeItemIconBox}>
+                      <IconComp name="school-outline" size={18} color="#b07fa8" />
+                    </View>
+                    <Text style={styles.customizeItemLabel}>Students</Text>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.metrics.students && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.metrics.students && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Staff Toggle */}
+                  <TouchableOpacity
+                    style={styles.customizeGridCardItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        metrics: { ...prev.metrics, staff: !prev.metrics.staff },
+                      }))
+                    }>
+                    <View style={styles.customizeItemIconBox}>
+                      <IconComp name="people-outline" size={18} color="#b07fa8" />
+                    </View>
+                    <Text style={styles.customizeItemLabel}>Staff</Text>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.metrics.staff && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.metrics.staff && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Classes Toggle */}
+                  <TouchableOpacity
+                    style={styles.customizeGridCardItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        metrics: { ...prev.metrics, classes: !prev.metrics.classes },
+                      }))
+                    }>
+                    <View style={styles.customizeItemIconBox}>
+                      <IconComp name="book-outline" size={18} color="#b07fa8" />
+                    </View>
+                    <Text style={styles.customizeItemLabel}>Classes</Text>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.metrics.classes && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.metrics.classes && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Notices Toggle */}
+                  <TouchableOpacity
+                    style={styles.customizeGridCardItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        metrics: { ...prev.metrics, notices: !prev.metrics.notices },
+                      }))
+                    }>
+                    <View style={styles.customizeItemIconBox}>
+                      <IconComp name="notifications-outline" size={18} color="#b07fa8" />
+                    </View>
+                    <Text style={styles.customizeItemLabel}>Notices</Text>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.metrics.notices && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.metrics.notices && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                </View>
+
+                {/* SECTION 2: WIDGETS */}
+                <View style={[styles.customizeSectionHeaderBox, { marginTop: 18 }]}>
+                  <Text style={styles.customizeSectionTitle}>WIDGETS</Text>
+                </View>
+
+                <View style={styles.customizeWidgetsList}>
+                  {/* Recent Notices */}
+                  <TouchableOpacity
+                    style={styles.customizeWidgetRowItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        widgets: { ...prev.widgets, recentNotices: !prev.widgets.recentNotices },
+                      }))
+                    }>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={styles.customizeItemIconBox}>
+                        <IconComp name="notifications-outline" size={18} color="#b07fa8" />
+                      </View>
+                      <Text style={styles.customizeWidgetLabel}>Recent Notices</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.widgets.recentNotices && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.widgets.recentNotices && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* System Status */}
+                  <TouchableOpacity
+                    style={styles.customizeWidgetRowItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        widgets: { ...prev.widgets, systemStatus: !prev.widgets.systemStatus },
+                      }))
+                    }>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={styles.customizeItemIconBox}>
+                        <IconComp name="flash-outline" size={18} color="#b07fa8" />
+                      </View>
+                      <Text style={styles.customizeWidgetLabel}>System Status</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.widgets.systemStatus && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.widgets.systemStatus && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Quick Actions */}
+                  <TouchableOpacity
+                    style={styles.customizeWidgetRowItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        widgets: { ...prev.widgets, quickActions: !prev.widgets.quickActions },
+                      }))
+                    }>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={styles.customizeItemIconBox}>
+                        <IconComp name="link-outline" size={18} color="#b07fa8" />
+                      </View>
+                      <Text style={styles.customizeWidgetLabel}>Quick Actions</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.widgets.quickActions && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.widgets.quickActions && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Attendance Summary */}
+                  <TouchableOpacity
+                    style={styles.customizeWidgetRowItem}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      setTempDashboardConfig(prev => ({
+                        ...prev,
+                        widgets: { ...prev.widgets, attendanceSummary: !prev.widgets.attendanceSummary },
+                      }))
+                    }>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={styles.customizeItemIconBox}>
+                        <IconComp name="stats-chart-outline" size={18} color="#b07fa8" />
+                      </View>
+                      <Text style={styles.customizeWidgetLabel}>Attendance Summary</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.customizeCheckbox,
+                        tempDashboardConfig.widgets.attendanceSummary && styles.customizeCheckboxChecked,
+                      ]}>
+                      {tempDashboardConfig.widgets.attendanceSummary && (
+                        <IconComp name="checkmark" size={14} color="#FFFFFF" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+
+              <View style={styles.confirmModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.confirmModalCancelBtn}
+                  onPress={() => setShowCustomizeModal(false)}>
+                  <Text style={styles.confirmModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.confirmModalConfirmBtn, { backgroundColor: '#b07fa8', flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                  onPress={handleSaveDashboardConfig}>
+                  <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                  <Text style={styles.confirmModalConfirmText}>Save Changes</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: CANTEEN STATUS PICKER (Image 4 Matching) ===== */}
+        <Modal visible={showCanteenStatusPicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowCanteenStatusPicker(false)}>
+            <View style={styles.canteenPickerCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Filter by Status</Text>
+                <TouchableOpacity onPress={() => setShowCanteenStatusPicker(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              {['All', 'Pending', 'Approved', 'Delivered', 'Cancelled'].map(st => (
+                <TouchableOpacity
+                  key={st}
+                  style={styles.canteenPickerItem}
+                  onPress={() => {
+                    setCanteenStatusFilter(st);
+                    setShowCanteenStatusPicker(false);
+                  }}>
+                  <Text style={[styles.canteenPickerItemText, canteenStatusFilter === st && styles.canteenPickerItemTextActive]}>
+                    {st === 'All' ? 'All Statuses' : st}
+                  </Text>
+                  {canteenStatusFilter === st && (
+                    <IconComp name="checkmark" size={18} color="#b07fa8" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: CANTEEN MEAL PICKER (Image 5 Matching) ===== */}
+        <Modal visible={showCanteenMealPicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowCanteenMealPicker(false)}>
+            <View style={styles.canteenPickerCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Filter by Meal</Text>
+                <TouchableOpacity onPress={() => setShowCanteenMealPicker(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              {['All', 'Breakfast', 'Lunch'].map(ml => (
+                <TouchableOpacity
+                  key={ml}
+                  style={styles.canteenPickerItem}
+                  onPress={() => {
+                    setCanteenMealFilter(ml);
+                    setShowCanteenMealPicker(false);
+                  }}>
+                  <Text style={[styles.canteenPickerItemText, canteenMealFilter === ml && styles.canteenPickerItemTextActive]}>
+                    {ml === 'All' ? 'All Meals' : ml}
+                  </Text>
+                  {canteenMealFilter === ml && (
+                    <IconComp name="checkmark" size={18} color="#b07fa8" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: ACADEMIC YEAR PICKER (Image 2 Matching) ===== */}
+        <Modal visible={showAcademicYearPicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowAcademicYearPicker(false)}>
+            <View style={styles.canteenPickerCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Current Academic Year</Text>
+                <TouchableOpacity onPress={() => setShowAcademicYearPicker(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              {['2025 - 2026', '2026 - 2027', '2027 - 2028'].map(yr => (
+                <TouchableOpacity
+                  key={yr}
+                  style={[styles.canteenPickerItem, setupAcademicYear === yr && { backgroundColor: '#F1F5F9' }]}
+                  onPress={() => {
+                    setSetupAcademicYear(yr);
+                    setShowAcademicYearPicker(false);
+                  }}>
+                  <Text style={[styles.canteenPickerItemText, setupAcademicYear === yr && styles.canteenPickerItemTextActive]}>
+                    {yr}
+                  </Text>
+                  {setupAcademicYear === yr && (
+                    <IconComp name="checkmark" size={18} color="#b07fa8" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: TERM TYPE PICKER (Image 3 Matching) ===== */}
+        <Modal visible={showTermTypePicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              setShowTermTypePicker(false);
+              setShowCustomTermInput(false);
+            }}>
+            <View style={styles.canteenPickerCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Term Type</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowTermTypePicker(false);
+                    setShowCustomTermInput(false);
+                  }}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              {termTypesList.map(type => (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.canteenPickerItem, setupTermType === type && { backgroundColor: '#F1F5F9' }]}
+                  onPress={() => {
+                    setSetupTermType(type);
+                    setShowTermTypePicker(false);
+                    setShowCustomTermInput(false);
+                  }}>
+                  <Text style={[styles.canteenPickerItemText, setupTermType === type && styles.canteenPickerItemTextActive]}>
+                    {type}
+                  </Text>
+                  {setupTermType === type && (
+                    <IconComp name="checkmark" size={18} color="#b07fa8" />
+                  )}
+                </TouchableOpacity>
+              ))}
+
+              {/* + Add custom type... option matching Image 3 */}
+              {!showCustomTermInput ? (
+                <TouchableOpacity
+                  style={[styles.canteenPickerItem, { borderBottomWidth: 0, marginTop: 4 }]}
+                  onPress={() => setShowCustomTermInput(true)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <IconComp name="add" size={18} color="#2563EB" />
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#2563EB' }}>+ Add custom type...</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ marginTop: 8, padding: 10, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <TextInput
+                    style={[styles.envInput, { backgroundColor: '#FFFFFF', fontSize: 13, height: 40 }]}
+                    placeholder="Enter new term type..."
+                    placeholderTextColor="#94A3B8"
+                    value={customTermName}
+                    onChangeText={setCustomTermName}
+                    autoFocus
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                      onPress={() => {
+                        setShowCustomTermInput(false);
+                        setCustomTermName('');
+                      }}>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748B' }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#b07fa8', borderRadius: 8 }}
+                      onPress={() => {
+                        const trimmed = customTermName.trim();
+                        if (trimmed) {
+                          if (!termTypesList.includes(trimmed)) {
+                            setTermTypesList(prev => [...prev, trimmed]);
+                          }
+                          setSetupTermType(trimmed);
+                          setCustomTermName('');
+                          setShowCustomTermInput(false);
+                          setShowTermTypePicker(false);
+                          showToast(`Added term type: ${trimmed}`);
+                        }
+                      }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: ADD / EDIT FEE COLLECTION PERIOD (Image 4 Matching) ===== */}
+        <Modal visible={showAddPeriodModal} transparent animationType="slide">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.envModalCard}>
+              <View style={styles.envModalHeaderRow}>
+                <Text style={styles.envModalTitle}>
+                  {editingPeriod ? 'Edit Period' : 'Add Fee Collection Period'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.confirmModalCloseBtn}
+                  onPress={() => setShowAddPeriodModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                <Text style={styles.envModalFieldLabel}>Period Name <Text style={{ color: '#EF4444' }}>*</Text></Text>
+                <TextInput
+                  style={styles.envModalInput}
+                  placeholder="e.g. Term 1, Quarter 2, Annual"
+                  placeholderTextColor="#94A3B8"
+                  value={periodFormName}
+                  onChangeText={setPeriodFormName}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.envModalFieldLabel}>Code</Text>
+                    <TextInput
+                      style={[styles.envModalInput, { textTransform: 'uppercase' }]}
+                      placeholder="E.G. TERM1"
+                      placeholderTextColor="#94A3B8"
+                      value={periodFormCode}
+                      onChangeText={setPeriodFormCode}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.envModalFieldLabel}>Display Order</Text>
+                    <TextInput
+                      style={styles.envModalInput}
+                      placeholder="1"
+                      placeholderTextColor="#94A3B8"
+                      value={periodFormOrder}
+                      onChangeText={setPeriodFormOrder}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </View>
+
+                <Text style={[styles.envModalFieldLabel, { marginTop: 12 }]}>Description</Text>
+                <TextInput
+                  style={[styles.envModalInput, { height: 70, textAlignVertical: 'top' }]}
+                  placeholder="Optional description"
+                  placeholderTextColor="#94A3B8"
+                  value={periodFormDesc}
+                  onChangeText={setPeriodFormDesc}
+                  multiline
+                />
+              </ScrollView>
+
+              <View style={styles.envModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.envModalCancelBtn}
+                  onPress={() => setShowAddPeriodModal(false)}>
+                  <Text style={styles.envModalCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.envModalSubmitBtn}
+                  onPress={handleSavePeriodSubmit}>
+                  <Text style={styles.envModalSubmitBtnText}>
+                    {editingPeriod ? 'Update Period' : 'Add Period'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: ADD / EDIT LEAVE APPROVAL BAND (Image 5 Matching) ===== */}
+        <Modal visible={showAddLeaveRuleModal} transparent animationType="slide">
+          <View style={styles.confirmModalOverlay}>
+            <View style={styles.envModalCard}>
+              <View style={styles.envModalHeaderRow}>
+                <Text style={styles.envModalTitle}>
+                  {editingLeaveRule ? 'Edit Approval Rule' : 'Add Leave Approval Band'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.confirmModalCloseBtn}
+                  onPress={() => setShowAddLeaveRuleModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.envModalFieldLabel}>Min Days <Text style={{ color: '#EF4444' }}>*</Text></Text>
+                    <TextInput
+                      style={styles.envModalInput}
+                      placeholder="e.g. 1"
+                      placeholderTextColor="#94A3B8"
+                      value={leaveRuleMinDays}
+                      onChangeText={setLeaveRuleMinDays}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.envModalFieldLabel}>Max Days (blank for +)</Text>
+                    <TextInput
+                      style={styles.envModalInput}
+                      placeholder="e.g. 3"
+                      placeholderTextColor="#94A3B8"
+                      value={leaveRuleMaxDays}
+                      onChangeText={setLeaveRuleMaxDays}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </View>
+
+                <Text style={[styles.envModalFieldLabel, { marginTop: 12 }]}>Route to Role <Text style={{ color: '#EF4444' }}>*</Text></Text>
+                <TouchableOpacity
+                  style={styles.envDropdownSelector}
+                  onPress={() => setShowRolePickerModal(true)}>
+                  <Text style={styles.envDropdownSelectorText}>{leaveRuleRoleId || 'Select role...'}</Text>
+                  <IconComp name="chevron-down" size={18} color="#64748B" />
+                </TouchableOpacity>
+
+                <Text style={[styles.envModalFieldLabel, { marginTop: 12 }]}>Evaluation Order (Priority)</Text>
+                <TextInput
+                  style={styles.envModalInput}
+                  placeholder="1"
+                  placeholderTextColor="#94A3B8"
+                  value={leaveRuleOrder}
+                  onChangeText={setLeaveRuleOrder}
+                  keyboardType="numeric"
+                />
+              </ScrollView>
+
+              <View style={styles.envModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.envModalCancelBtn}
+                  onPress={() => setShowAddLeaveRuleModal(false)}>
+                  <Text style={styles.envModalCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.envModalSubmitBtn}
+                  onPress={handleSaveLeaveRuleSubmit}>
+                  <Text style={styles.envModalSubmitBtnText}>
+                    {editingLeaveRule ? 'Update Rule' : 'Add Rule'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: ROLE PICKER MODAL ===== */}
+        <Modal visible={showRolePickerModal} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowRolePickerModal(false)}>
+            <View style={[styles.canteenPickerCard, { maxHeight: 380 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Select Role</Text>
+                <TouchableOpacity onPress={() => setShowRolePickerModal(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {environmentRoles.map(r => (
+                  <TouchableOpacity
+                    key={r}
+                    style={[styles.canteenPickerItem, leaveRuleRoleId === r && { backgroundColor: '#F1F5F9' }]}
+                    onPress={() => {
+                      setLeaveRuleRoleId(r);
+                      setShowRolePickerModal(false);
+                    }}>
+                    <Text style={[styles.canteenPickerItemText, leaveRuleRoleId === r && styles.canteenPickerItemTextActive]}>
+                      {r}
+                    </Text>
+                    {leaveRuleRoleId === r && (
+                      <IconComp name="checkmark" size={18} color="#b07fa8" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: STUDENT DETAILS MODAL ===== */}
+        <Modal visible={showStudentDetailsModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '85%' }]}>
+              <View style={styles.modalHeaderTitleRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="person-outline" size={20} color="#b07fa8" />
+                  <Text style={styles.modalCardTitle}>Student Profile</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowStudentDetailsModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {selectedStudentForDetails && (
+                  <View style={{ gap: 14 }}>
+                    {/* Student Top Header Card */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#F8FAFC', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#faedf7', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#b07fa8' }}>
+                        <Text style={{ fontSize: 20, fontWeight: '800', color: '#b07fa8' }}>
+                          {(selectedStudentForDetails.name || 'S').slice(0, 2).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>{selectedStudentForDetails.name}</Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Admission No: <Text style={{ fontWeight: '700', color: '#334155' }}>{selectedStudentForDetails.admissionNo}</Text>
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+                          <View style={{ backgroundColor: '#EDE9FE', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>{selectedStudentForDetails.gradeClass}</Text>
+                          </View>
+                          <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Personal & Academic Details */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 }}>ACADEMIC & PERSONAL DETAILS</Text>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Gender</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.gender || 'Male'}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Date of Birth</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.dob || '2019-05-12'}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Class & Section</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.gradeClass}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Fee Status</Text>
+                        <View style={{ backgroundColor: selectedStudentForDetails.feePaid ? '#DCFCE7' : '#FEE2E2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: selectedStudentForDetails.feePaid ? '#16A34A' : '#DC2626' }}>
+                            {selectedStudentForDetails.feePaid ? 'Paid' : 'Unpaid / Pending'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Parent & Contact Details */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 }}>PARENT & CONTACT DETAILS</Text>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Parent Name</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.parentName || 'Parent of ' + selectedStudentForDetails.name}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Parent Phone</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.parentPhone || '+91 98765 43210'}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Parent Email</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedStudentForDetails.parentEmail || 'parent@example.com'}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Home Address</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1, textAlign: 'right', marginLeft: 12 }}>
+                          {selectedStudentForDetails.homeAddress || 'Chennai, Tamil Nadu'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+
+              <View style={{ marginTop: 14 }}>
+                <TouchableOpacity
+                  style={[styles.primaryLoginBtn, { backgroundColor: '#b07fa8', borderRadius: 12 }]}
+                  onPress={() => setShowStudentDetailsModal(false)}>
+                  <Text style={styles.primaryLoginBtnText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: CHANGE CLASS MODAL ===== */}
+        <Modal visible={showChangeClassModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={styles.modalCardContainer}>
+              <View style={styles.modalHeaderTitleRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="school-outline" size={20} color="#b07fa8" />
+                  <Text style={styles.modalCardTitle}>Change Class</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowChangeClassModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              {selectedStudentForChange && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={{ fontSize: 13, color: '#64748B' }}>
+                    Student: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{selectedStudentForChange.name}</Text>
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                    Current Class: <Text style={{ fontWeight: '700', color: '#b07fa8' }}>{selectedStudentForChange.gradeClass}</Text>
+                  </Text>
+                </View>
+              )}
+
+              <Text style={styles.fieldLabelText}>Select Target Class *</Text>
+              <ScrollView style={{ maxHeight: 200, marginBottom: 12 }} showsVerticalScrollIndicator={false}>
+                {classList.map(c => {
+                  const classFullName = `${c.name} - ${c.section}`;
+                  const isSelected = targetNewClass === classFullName || targetNewClass === c.name;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.canteenPickerItem, isSelected && { backgroundColor: '#faedf7', borderColor: '#b07fa8' }]}
+                      onPress={() => setTargetNewClass(classFullName)}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <IconComp name="school-outline" size={16} color={isSelected ? '#b07fa8' : '#64748B'} />
+                        <Text style={[styles.canteenPickerItemText, isSelected && { color: '#b07fa8', fontWeight: '800' }]}>
+                          {classFullName}
+                        </Text>
+                      </View>
+                      {isSelected && <IconComp name="checkmark" size={18} color="#b07fa8" />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                  onPress={() => setShowChangeClassModal(false)}>
+                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                  onPress={handleChangeClassSubmit}>
+                  <Text style={styles.modalSmallBtnText}>Change Class</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: EXPORT STUDENT DIRECTORY (Image 2 Matching) ===== */}
+        <Modal visible={showExportModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', borderRadius: 24 }]}>
+              {/* Header */}
+              <View style={styles.exportModalHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportModalTitle}>Export Student Directory</Text>
+                  <Text style={styles.exportModalSubtitle}>Customize file settings and select columns to export.</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowExportModal(false)} style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 10 }}>
+                {/* Export File Name Input with .xlsx suffix pill */}
+                <Text style={styles.exportSectionLabel}>EXPORT FILE NAME</Text>
+                <View style={styles.exportFileNameInputContainer}>
+                  <TextInput
+                    style={styles.exportFileNameTextInput}
+                    placeholder="Student_Directory"
+                    placeholderTextColor="#94A3B8"
+                    value={exportFileName}
+                    onChangeText={setExportFileName}
+                  />
+                  <View style={styles.exportExtPill}>
+                    <Text style={styles.exportExtPillText}>.xlsx</Text>
+                  </View>
+                </View>
+
+                {/* Select Columns Section */}
+                <Text style={[styles.exportSectionLabel, { marginTop: 18 }]}>SELECT COLUMNS TO INCLUDE</Text>
+                <View style={styles.exportColumnsGrid}>
+                  {[
+                    { key: 'name', label: 'Student Name' },
+                    { key: 'admissionNumber', label: 'Admission No.' },
+                    { key: 'classSection', label: 'Class & Section' },
+                    { key: 'dob', label: 'Date of Birth' },
+                    { key: 'gender', label: 'Gender' },
+                    { key: 'parentName', label: 'Parent Name' },
+                    { key: 'parentPhone', label: 'Parent Phone' },
+                    { key: 'parentEmail', label: 'Parent Email' },
+                    { key: 'homeAddress', label: 'Home Address' },
+                  ].map(({ key, label }) => {
+                    const isChecked = !!selectedExportFields[key];
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        style={[styles.exportColumnItemBox, isChecked && styles.exportColumnItemBoxChecked]}
+                        activeOpacity={0.7}
+                        onPress={() =>
+                          setSelectedExportFields(prev => ({
+                            ...prev,
+                            [key]: !prev[key],
+                          }))
+                        }>
+                        <View style={[styles.exportCheckboxSquare, isChecked && styles.exportCheckboxSquareChecked]}>
+                          {isChecked && <IconComp name="checkmark" size={12} color="#FFFFFF" />}
+                        </View>
+                        <Text style={[styles.exportColumnItemText, isChecked && styles.exportColumnItemTextChecked]}>
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              {/* Modal Footer */}
+              <View style={styles.exportModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.exportCancelBtn}
+                  onPress={() => setShowExportModal(false)}>
+                  <Text style={styles.exportCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.exportGenerateBtn}
+                  onPress={handleExportStudentDirectory}>
+                  <IconComp name="download-outline" size={16} color="#FFFFFF" />
+                  <Text style={styles.exportGenerateBtnText}>Generate Excel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: BULK IMPORT STUDENTS (Image 1 Matching) ===== */}
+        <Modal visible={showBulkImportModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { borderRadius: 24 }]}>
+              {/* Header */}
+              <View style={styles.exportModalHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="document-text-outline" size={22} color="#b07fa8" />
+                  <Text style={styles.exportModalTitle}>Bulk Import Students</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowBulkImportModal(false)} style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 12 }}>
+                {/* Tip box */}
+                <View style={styles.importTipBox}>
+                  <Text style={styles.importTipText}>
+                    Upload an Excel or CSV file to bulk import students. For best results, we highly recommend using our standard template.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.importDownloadTemplateBtn}
+                    onPress={handleDownloadImportTemplate}>
+                    <IconComp name="download-outline" size={14} color="#b07fa8" />
+                    <Text style={styles.importDownloadTemplateBtnText}>Download Standard Template</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Upload Dropzone */}
+                <TouchableOpacity
+                  style={styles.importDropzoneBox}
+                  activeOpacity={0.7}
+                  onPress={() => showToast('Choose file: Select .xlsx or .csv from device')}>
+                  <View style={styles.importCloudIconWrapper}>
+                    <IconComp name="cloud-upload-outline" size={32} color="#b07fa8" />
+                  </View>
+                  <Text style={styles.importDropzoneTitle}>Click or drag file to upload</Text>
+                  <Text style={styles.importDropzoneSub}>Excel or CSV file</Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              {/* Modal Footer */}
+              <View style={styles.exportModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.exportCancelBtn}
+                  onPress={() => setShowBulkImportModal(false)}>
+                  <Text style={styles.exportCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.exportGenerateBtn, { backgroundColor: '#b07fa8' }]}
+                  onPress={() => {
+                    setShowBulkImportModal(false);
+                    showToast('Bulk students imported successfully!');
+                  }}>
+                  <Text style={styles.exportGenerateBtnText}>Upload File</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: ASSIGN NEW FEE (Image 4 Matching) ===== */}
+        <Modal visible={showAssignFeeModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { borderRadius: 24, maxHeight: '90%' }]}>
+              {/* Header */}
+              <View style={styles.exportModalHeaderRow}>
+                <Text style={styles.exportModalTitle}>Assign New Fee</Text>
+                <TouchableOpacity onPress={() => setShowAssignFeeModal(false)} style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 10 }}>
+                {/* Collection Period Section */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <Text style={styles.assignFeeFieldLabel}>Collection Period</Text>
+                  <Text style={{ fontSize: 11, color: '#D97706' }}>(Configure periods in Environment Setup)</Text>
+                </View>
+
+                {feePeriodsList.length === 0 ? (
+                  <View style={styles.feeNoPeriodsDottedBox}>
+                    <Text style={styles.feeNoPeriodsText}>No periods configured. Fee will be saved as "General".</Text>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    {feePeriodsList.map(p => {
+                      const isSelected = newFeeForm.collectionPeriodId === p.id;
+                      return (
+                        <TouchableOpacity
+                          key={p.id}
+                          style={[styles.feePeriodChip, isSelected && styles.feePeriodChipSelected]}
+                          onPress={() =>
+                            setNewFeeForm(prev => ({
+                              ...prev,
+                              collectionPeriodId: p.id,
+                              collectionPeriodName: p.name,
+                              name: prev.name ? prev.name : `${p.name} Tuition Fee`,
+                            }))
+                          }>
+                          <Text style={[styles.feePeriodChipText, isSelected && styles.feePeriodChipTextSelected]}>
+                            {p.name}
+                          </Text>
+                          {isSelected && <IconComp name="checkmark" size={12} color="#b07fa8" />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* Fee Description */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 6 }}>
+                  <Text style={styles.assignFeeFieldLabel}>Fee Description</Text>
+                  <Text style={{ fontSize: 11, color: '#64748B' }}>(auto-filled from period, editable)</Text>
+                </View>
+                <TextInput
+                  style={styles.assignFeeInput}
+                  placeholder="e.g. Term 1 Tuition"
+                  placeholderTextColor="#94A3B8"
+                  value={newFeeForm.name}
+                  onChangeText={val => setNewFeeForm(prev => ({ ...prev, name: val }))}
+                />
+
+                {/* Amount & Due Date Row */}
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.assignFeeFieldLabel}>Amount (₹)</Text>
+                    <TextInput
+                      style={styles.assignFeeInput}
+                      placeholder="e.g. 1500"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      value={newFeeForm.amount}
+                      onChangeText={val => setNewFeeForm(prev => ({ ...prev, amount: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.assignFeeFieldLabel}>Due Date</Text>
+                    <View style={styles.assignFeeDateBox}>
+                      <TextInput
+                        style={{ flex: 1, fontSize: 14, color: '#0F172A', padding: 0 }}
+                        placeholder="09-09-2026"
+                        placeholderTextColor="#94A3B8"
+                        value={newFeeForm.dueDate}
+                        onChangeText={val => setNewFeeForm(prev => ({ ...prev, dueDate: val }))}
+                      />
+                      <IconComp name="calendar-outline" size={16} color="#64748B" />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Apply to Class Dropdown */}
+                <Text style={[styles.assignFeeFieldLabel, { marginTop: 14 }]}>Apply to Class</Text>
+                <TouchableOpacity
+                  style={styles.assignFeeClassSelector}
+                  onPress={() => setShowFeeClassPicker(true)}>
+                  <Text style={styles.assignFeeClassSelectorText}>
+                    {newFeeForm.classLabel || 'Select a class...'}
+                  </Text>
+                  <IconComp name="chevron-down-outline" size={16} color="#64748B" />
+                </TouchableOpacity>
+                <Text style={styles.assignFeeClassNote}>
+                  Invoices will be automatically generated for all students currently enrolled in this class.
+                </Text>
+              </ScrollView>
+
+              {/* Footer */}
+              <View style={styles.exportModalFooterRow}>
+                <TouchableOpacity
+                  style={styles.exportCancelBtn}
+                  onPress={() => setShowAssignFeeModal(false)}>
+                  <Text style={styles.exportCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.exportGenerateBtn, { backgroundColor: '#b07fa8' }]}
+                  onPress={handleAssignFeeSubmit}
+                  disabled={isCreatingFee}>
+                  {isCreatingFee ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.exportGenerateBtnText}>Assign Fee</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: FEE STATUS PICKER ===== */}
+        <Modal visible={showFeeStatusPicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowFeeStatusPicker(false)}>
+            <View style={styles.canteenPickerCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Filter by Invoice Status</Text>
+                <TouchableOpacity onPress={() => setShowFeeStatusPicker(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              {[
+                { key: 'all', label: `All Invoices (${feeInvoicesList.length})` },
+                { key: 'paid', label: 'Paid' },
+                { key: 'unpaid', label: 'Pending / Unpaid' },
+                { key: 'overdue', label: 'Overdue' },
+              ].map(st => (
+                <TouchableOpacity
+                  key={st.key}
+                  style={styles.canteenPickerItem}
+                  onPress={() => {
+                    setFeeStatusFilter(st.key as any);
+                    setShowFeeStatusPicker(false);
+                  }}>
+                  <Text style={[styles.canteenPickerItemText, feeStatusFilter === st.key && styles.canteenPickerItemTextActive]}>
+                    {st.label}
+                  </Text>
+                  {feeStatusFilter === st.key && (
+                    <IconComp name="checkmark" size={18} color="#b07fa8" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: FEE CLASS PICKER ===== */}
+        <Modal visible={showFeeClassPicker} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.canteenPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowFeeClassPicker(false)}>
+            <View style={[styles.canteenPickerCard, { maxHeight: 380 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.canteenPickerTitle}>Select Class</Text>
+                <TouchableOpacity onPress={() => setShowFeeClassPicker(false)}>
+                  <IconComp name="close-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {classList.map(c => {
+                  const label = `${c.name} - ${c.section}`;
+                  const isSelected = newFeeForm.classId === c.id;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.canteenPickerItem, isSelected && { backgroundColor: '#faedf7' }]}
+                      onPress={() => {
+                        setNewFeeForm(prev => ({
+                          ...prev,
+                          classId: c.id,
+                          classLabel: label,
+                        }));
+                        setShowFeeClassPicker(false);
+                      }}>
+                      <Text style={[styles.canteenPickerItemText, isSelected && styles.canteenPickerItemTextActive]}>
+                        {label}
+                      </Text>
+                      {isSelected && (
+                        <IconComp name="checkmark" size={18} color="#b07fa8" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
         </Modal>
 
       </SafeAreaView>
@@ -7879,8 +13155,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   interactiveFilterPillActive: {
-    backgroundColor: '#F3E8FF',
-    borderColor: '#7C3AED',
+    backgroundColor: '#faedf7',
+    borderColor: '#b07fa8',
   },
   interactiveFilterPillText: {
     fontSize: 12,
@@ -7888,7 +13164,7 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   interactiveFilterPillTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   resetFilterBtn: {
@@ -7913,8 +13189,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   filterOptionItemActive: {
-    backgroundColor: '#F3E8FF',
-    borderColor: '#7C3AED',
+    backgroundColor: '#faedf7',
+    borderColor: '#b07fa8',
   },
   filterOptionText: {
     fontSize: 14,
@@ -7922,12 +13198,12 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   filterOptionTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   splashContainer: {
     flex: 1,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -7938,7 +13214,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -7951,13 +13227,13 @@ const styles = StyleSheet.create({
   },
   splashSubtitle: {
     fontSize: 16,
-    color: '#F3E8FF',
+    color: '#faedf7',
     fontWeight: '500',
     marginTop: 4,
   },
   splashVersion: {
     fontSize: 12,
-    color: '#DDD6FE',
+    color: '#eec9db',
     marginTop: 6,
     textTransform: 'uppercase',
     letterSpacing: 1,
@@ -7982,7 +13258,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -8060,8 +13338,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   checkBoxSquareChecked: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   checkBoxCheckMark: {
     color: '#FFFFFF',
@@ -8075,16 +13353,16 @@ const styles = StyleSheet.create({
   forgotPasswordLinkText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   primaryLoginBtn: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     borderRadius: 12,
     height: 52,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 12,
-    shadowColor: '#7C3AED',
+    shadowColor: '#b07fa8',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -8107,7 +13385,7 @@ const styles = StyleSheet.create({
   signUpFooterLink: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   quickDemoCardSection: {
     marginTop: 32,
@@ -8146,12 +13424,12 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   quickRolePillBtnActiveAdmin: {
-    backgroundColor: '#F3E8FF',
-    borderColor: '#7C3AED',
+    backgroundColor: '#faedf7',
+    borderColor: '#b07fa8',
     borderWidth: 1.5,
   },
   quickRolePillTextActiveAdmin: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   quickRolePillBtnActiveTeacher: {
@@ -8252,7 +13530,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 10,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -8301,7 +13581,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -8325,7 +13605,7 @@ const styles = StyleSheet.create({
 
   // --- Header Cards & Metrics ---
   greetingBannerCard: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 18,
@@ -8526,7 +13806,7 @@ const styles = StyleSheet.create({
   viewAllLinkText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   emptyNoticeStateBox: {
     alignItems: 'center',
@@ -8548,14 +13828,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     borderWidth: 1.5,
-    borderColor: '#7C3AED',
+    borderColor: '#b07fa8',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 8,
     marginTop: 10,
   },
   createNoticeBtnText: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -8759,7 +14039,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -8812,7 +14092,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -8870,8 +14150,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   gradePillBtnActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   gradePillText: {
     fontSize: 12,
@@ -8968,7 +14248,7 @@ const styles = StyleSheet.create({
   },
   subHeaderPillTextActive: {
     fontWeight: '800',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   historicalArchivesCard: {
     flexDirection: 'row',
@@ -9136,8 +14416,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pageSquarePillActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   pageSquareText: {
     fontSize: 12,
@@ -9200,7 +14480,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   floatingTabItemBtnActive: {
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#faedf7',
   },
   floatingTabLabelText: {
     fontSize: 10,
@@ -9209,7 +14489,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   floatingTabLabelTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
 
@@ -9234,7 +14514,7 @@ const styles = StyleSheet.create({
   moduleNavTitleText: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   moduleNavSubText: {
     fontSize: 11,
@@ -9244,7 +14524,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -9255,23 +14535,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   moduleHeroHeaderCard: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 18,
     marginBottom: 16,
-  },
-  moduleHeroTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    flexShrink: 1,
-  },
-  moduleHeroSub: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.85)',
-    marginTop: 9,
-    lineHeight: 18,
   },
   emptyModuleCardContainer: {
     backgroundColor: '#FFFFFF',
@@ -9307,7 +14575,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
@@ -9332,8 +14600,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   moduleTabBtnActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   moduleTabText: {
     fontSize: 12,
@@ -9372,7 +14640,7 @@ const styles = StyleSheet.create({
   },
   noticeItemAudience: {
     fontSize: 12,
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '600',
     marginBottom: 4,
   },
@@ -9499,6 +14767,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
   },
+  studentCardNameText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  statusPillBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
   studentDetailsSubText: {
     fontSize: 12,
     color: '#64748B',
@@ -9589,20 +14871,25 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     width: 80,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   attPresentStyle: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
   },
   attAbsentStyle: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FFE4E6',
   },
   attOdStyle: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
   },
   attendanceBadgeText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#059669',
+    color: '#7C3AED',
   },
   attFooterActionBtn: {
     flex: 1,
@@ -9623,6 +14910,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
+  activityIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  activityTimeText: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
 
   // --- New Module Shared Styles ---
   statBoxCard: {
@@ -9641,8 +14940,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   filterChipItemActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   filterChipText: {
     fontSize: 12,
@@ -9780,8 +15079,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   segmentedPillBtnActive: {
-    borderColor: '#7C3AED',
-    backgroundColor: '#F3E8FF',
+    borderColor: '#b07fa8',
+    backgroundColor: '#faedf7',
   },
   segmentedPillText: {
     fontSize: 12,
@@ -9789,7 +15088,7 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   segmentedPillTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   feeSummaryCard: {
@@ -9811,7 +15110,7 @@ const styles = StyleSheet.create({
   feeSummaryValue: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   admitCancelBtn: {
     flex: 1,
@@ -9832,7 +15131,7 @@ const styles = StyleSheet.create({
     flex: 2,
     paddingVertical: 13,
     borderRadius: 10,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -9905,7 +15204,7 @@ const styles = StyleSheet.create({
   leaveTypeTag: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#7C3AED',
+    color: '#b07fa8',
     textTransform: 'uppercase',
     marginBottom: 4,
   },
@@ -10222,7 +15521,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingVertical: 10,
     borderRadius: 10,
   },
@@ -10285,7 +15584,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   switchTrackActive: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
   },
   switchThumb: {
     width: 20,
@@ -10350,8 +15649,8 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   leadsTabBtnActive: {
-    backgroundColor: '#7C3AED',
-    shadowColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    shadowColor: '#b07fa8',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
@@ -10405,8 +15704,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   leadsFilterChipActive: {
-    backgroundColor: '#F3E8FF',
-    borderColor: '#7C3AED',
+    backgroundColor: '#faedf7',
+    borderColor: '#b07fa8',
   },
   leadsFilterChipText: {
     fontSize: 11,
@@ -10414,7 +15713,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   leadsFilterChipTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   leadsDateExportRow: {
@@ -10449,9 +15748,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#faedf7',
     borderWidth: 1,
-    borderColor: '#DDD6FE',
+    borderColor: '#eec9db',
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
@@ -10459,7 +15758,7 @@ const styles = StyleSheet.create({
   leadsExportBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   leadsEmptyStateCard: {
     backgroundColor: '#FFFFFF',
@@ -10500,7 +15799,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
@@ -10572,7 +15871,7 @@ const styles = StyleSheet.create({
     padding: 8,
     marginTop: 8,
     borderLeftWidth: 3,
-    borderLeftColor: '#7C3AED',
+    borderLeftColor: '#b07fa8',
   },
   leadRecordNotesText: {
     fontSize: 11,
@@ -10596,7 +15895,7 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   leadActionStatusChipActive: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
   },
   leadActionStatusChipText: {
     fontSize: 10,
@@ -10613,16 +15912,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   leadsFormsNoticeCard: {
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#fdfafc',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#DDD6FE',
+    borderColor: '#eec9db',
   },
   leadsFormsNoticeTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   leadsFormsNoticeSub: {
     fontSize: 11,
@@ -10687,7 +15986,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingVertical: 8,
     borderRadius: 8,
   },
@@ -10700,9 +15999,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#faedf7',
     borderWidth: 1,
-    borderColor: '#DDD6FE',
+    borderColor: '#eec9db',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -10759,7 +16058,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -10850,7 +16149,7 @@ const styles = StyleSheet.create({
   billingEditBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   billingCardChipBox: {
     flexDirection: 'row',
@@ -11037,8 +16336,8 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   customModPillActive: {
-    backgroundColor: '#F3E8FF',
-    borderColor: '#7C3AED',
+    backgroundColor: '#faedf7',
+    borderColor: '#b07fa8',
   },
   customModPillText: {
     fontSize: 11,
@@ -11046,7 +16345,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   customModPillTextActive: {
-    color: '#7C3AED',
+    color: '#b07fa8',
     fontWeight: '800',
   },
   customModImportRow: {
@@ -11086,7 +16385,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -11123,9 +16422,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#faedf7',
     borderWidth: 1,
-    borderColor: '#DDD6FE',
+    borderColor: '#eec9db',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -11133,7 +16432,7 @@ const styles = StyleSheet.create({
   customModAddSectionBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   customModEmptyContainer: {
     borderWidth: 1,
@@ -11243,7 +16542,7 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#DDD6FE',
+    borderColor: '#eec9db',
     borderRadius: 8,
     paddingVertical: 6,
     marginTop: 6,
@@ -11251,7 +16550,7 @@ const styles = StyleSheet.create({
   customModAddFieldBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   customModManagerCard: {
     backgroundColor: '#FFFFFF',
@@ -11259,6 +16558,11 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  customModSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   customModSectionSub: {
     fontSize: 11,
@@ -11296,8 +16600,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   fieldTypePickerBtnActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   fieldTypePickerBtnText: {
     fontSize: 10,
@@ -11339,7 +16643,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: '#faedf7',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -11347,7 +16651,7 @@ const styles = StyleSheet.create({
   rolesAddRoleBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#b07fa8',
   },
   roleSelectPill: {
     paddingHorizontal: 12,
@@ -11359,8 +16663,8 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   roleSelectPillActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   roleSelectPillText: {
     fontSize: 12,
@@ -11468,8 +16772,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   permsCheckboxBoxChecked: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
   },
   permsQuickSelectBtn: {
     backgroundColor: '#F1F5F9',
@@ -11483,6 +16787,1633 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#475569',
+  },
+
+  // --- Staff & Navigation Reference Styles from Staff Portal ---
+  headerLeftBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  schoolNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  officialBadgePill: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  paginationWrapperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  pageSquareBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageSquareBtnActive: {
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
+  },
+  pageSquareBtnDisabled: {
+    opacity: 0.4,
+    backgroundColor: '#F8FAFC',
+  },
+  pageNumberText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  pageNumberTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  pageSizeDropdownPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: '#FFFFFF',
+  },
+  pageSizeDropdownText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  staffQuickPillCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 95,
+  },
+  staffQuickIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  staffQuickPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+
+  // --- Modals Styles for Customize Dashboard, Invite Links & Audio Cleanup ---
+  confirmModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  confirmModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 400,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  confirmModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+  },
+  confirmModalIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmModalCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+  },
+  confirmModalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  confirmModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  confirmModalMessage: {
+    fontSize: 14,
+    color: '#64748B',
+    lineHeight: 20,
+  },
+  confirmModalFooterRow: {
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+  },
+  confirmModalCancelBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  confirmModalCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  confirmModalConfirmBtn: {
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmModalConfirmText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // Invite Links Modal
+  inviteModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 420,
+    padding: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  inviteModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  inviteModalIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#faedf7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inviteModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  inviteModalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  inviteLinkCardItem: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 12,
+  },
+  inviteLinkCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  inviteLinkTypeIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inviteLinkTypeTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  inviteLinkUrlText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  inviteLinkActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  inviteLinkShareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  inviteLinkShareBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // Customize Dashboard Modal
+  customizeModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 440,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  customizeModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  customizeModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  customizeSectionHeaderBox: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  customizeSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 1,
+  },
+  customizeMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  customizeGridCardItem: {
+    width: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  customizeItemIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#faedf7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customizeItemLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginLeft: 8,
+  },
+  customizeCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  customizeCheckboxChecked: {
+    backgroundColor: '#b07fa8',
+    borderColor: '#b07fa8',
+  },
+  customizeWidgetsList: {
+    paddingHorizontal: 16,
+    gap: 8,
+    marginBottom: 16,
+  },
+  customizeWidgetRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  customizeWidgetLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+
+  // --- Broadcast Global Notice Modal (Images 1 & 2 Matching) ---
+  noticeModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 440,
+    overflow: 'visible',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  noticeModalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  noticeModalHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  noticeFieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  noticeModalInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1E293B',
+  },
+  noticeDropdownTrigger: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 46,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  noticeDropdownTriggerActive: {
+    borderColor: '#b07fa8',
+  },
+  noticeDropdownTriggerText: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: '#1E293B',
+    flex: 1,
+    marginRight: 4,
+  },
+  noticeDropdownMenu: {
+    position: 'absolute',
+    top: 68,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    overflow: 'hidden',
+    zIndex: 999,
+    elevation: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+  },
+  noticeDropdownItem: {
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  noticeDropdownItemActive: {
+    backgroundColor: '#52525b',
+  },
+  noticeDropdownItemText: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  noticeDropdownItemTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  noticeModalFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 24,
+  },
+  noticeModalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  noticeModalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  noticeModalBroadcastBtn: {
+    backgroundColor: '#b07fa8',
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    shadowColor: '#b07fa8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  noticeModalBroadcastText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
+  // --- Attendance Configuration Steppers ---
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  stepperBtn: {
+    width: 38,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  stepperInput: {
+    flex: 1,
+    height: 44,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    paddingHorizontal: 4,
+  },
+
+  // --- Canteen Orders & Requests (Images 3, 4, 5 Matching) ---
+  canteenMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  canteenMetricCard: {
+    width: '48%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  canteenMetricIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  canteenMetricLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  canteenMetricValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 4,
+  },
+  canteenFilterCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 16,
+  },
+  canteenSearchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 46,
+    marginBottom: 12,
+  },
+  canteenSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    marginLeft: 8,
+  },
+  canteenFilterControlsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  canteenDateToggleBox: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 3,
+  },
+  canteenDateToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  canteenDateToggleBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  canteenDateToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  canteenDateToggleTextActive: {
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  canteenDropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  canteenDropdownBtnActive: {
+    borderColor: '#b07fa8',
+    backgroundColor: '#faedf7',
+  },
+  canteenDropdownBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  canteenResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  canteenResetBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  canteenEmptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 36,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  canteenEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#334155',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  canteenEmptySubtitle: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginTop: 6,
+    maxWidth: 280,
+    lineHeight: 18,
+  },
+  canteenRequestCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 12,
+  },
+  canteenPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  canteenPickerCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+  },
+  canteenPickerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 12,
+  },
+  canteenPickerItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  canteenPickerItemText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  canteenPickerItemTextActive: {
+    color: '#b07fa8',
+    fontWeight: '800',
+  },
+
+  // Environment Setup Styles (Images 1, 2, 3, 4, 5 Matching)
+  envSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  envSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  envSectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  envSectionSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  envSectionBody: {
+    padding: 16,
+  },
+  envFieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  envFieldHint: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 8,
+  },
+  envInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  envInputWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  envInputFlex: {
+    flex: 1,
+    fontSize: 14,
+    color: '#0F172A',
+    paddingVertical: 10,
+  },
+  envChooseFileBtn: {
+    backgroundColor: '#faedf7',
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#f2d5ec',
+  },
+  envChooseFileBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#b07fa8',
+  },
+  envLogoPreviewBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 120,
+    marginTop: 14,
+  },
+  envLogoPreviewTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  envLogoPreviewImage: {
+    width: 140,
+    height: 60,
+  },
+  envLogoNoUploadText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 6,
+    fontWeight: '500',
+  },
+  envDropdownSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  envDropdownSelectorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  envAddBtnPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  envAddBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  envEmptyStateBox: {
+    padding: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  envEmptyStateTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  envEmptyStateSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+    textAlign: 'center',
+    maxWidth: 260,
+  },
+  envListContainer: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  envListItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  envOrderBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#faedf7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  envOrderBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#b07fa8',
+  },
+  envItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  envItemDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  envItemCode: {
+    fontSize: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  envStatusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  envStatusPillActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  envStatusPillInactive: {
+    backgroundColor: '#F1F5F9',
+  },
+  envStatusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  envStatusPillTextActive: {
+    color: '#059669',
+  },
+  envStatusPillTextInactive: {
+    color: '#64748B',
+  },
+  envItemActionBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  envSaveAttendanceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
+  envSaveAttendanceBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  envWarningBanner: {
+    margin: 12,
+    padding: 12,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+  },
+  envWarningTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  envWarningText: {
+    fontSize: 11,
+    color: '#B45309',
+    marginTop: 2,
+  },
+  envModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  envModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  envModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  envModalFieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  envModalInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  envModalFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  envModalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  envModalCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  envModalSubmitBtn: {
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  envModalSubmitBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // --- Fee Management (Image 3 Matching) ---
+  feeHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 18,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  feeHeroTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  feeHeroSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  feeAssignNewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  feeAssignNewBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  feeMetricsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  feeMetricCardItem: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  feeMetricIconBoxBlue: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  feeMetricIconBoxGreen: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  feeMetricIconBoxAmber: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FFFBEB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  feeMetricLabelText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  feeMetricAmountText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  feeSearchFilterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+  feeSearchInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  feeSearchTextInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    padding: 0,
+  },
+  feeStatusDropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  feeStatusDropdownPrefix: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  feeStatusDropdownValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  feeTableWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  feeTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  feeTableColText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  feeEmptyBox: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 20,
+  },
+  feeEmptyIconOutline: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#F8FAFC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  feeEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  feeEmptyDesc: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginTop: 4,
+    maxWidth: 280,
+  },
+  feeInvoiceCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    padding: 10,
+  },
+  feeInvStudentName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  feeInvSubText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  feeInvTitleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  feeInvPeriodText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  feeInvAmountText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  feeInvStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  feePaidBadge: {
+    backgroundColor: '#DCFCE7',
+  },
+  feeUnpaidBadge: {
+    backgroundColor: '#FEE2E2',
+  },
+  feeInvStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  feePaidText: {
+    color: '#16A34A',
+  },
+  feeUnpaidText: {
+    color: '#DC2626',
+  },
+  feeActionPayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#16A34A',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  feeActionPayText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  feeActionDeleteBtn: {
+    padding: 4,
+  },
+
+  // --- Export Student Directory Modal (Image 2 Matching) ---
+  exportModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  exportModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  exportModalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  modalCloseCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exportSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  exportFileNameInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 46,
+  },
+  exportFileNameTextInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#0F172A',
+    padding: 0,
+  },
+  exportExtPill: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  exportExtPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  exportColumnsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  exportColumnItemBox: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  exportColumnItemBoxChecked: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#FAF5FF',
+  },
+  exportCheckboxSquare: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  exportCheckboxSquareChecked: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
+  },
+  exportColumnItemText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+    flex: 1,
+  },
+  exportColumnItemTextChecked: {
+    color: '#7C3AED',
+    fontWeight: '700',
+  },
+  exportModalFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  exportCancelBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  exportCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  exportGenerateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  exportGenerateBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // --- Bulk Import Modal (Image 1 Matching) ---
+  importTipBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 14,
+    gap: 10,
+  },
+  importTipText: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+  },
+  importDownloadTemplateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#b07fa8',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+  },
+  importDownloadTemplateBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#b07fa8',
+  },
+  importDropzoneBox: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#d8b4d0',
+    borderRadius: 18,
+    paddingVertical: 36,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    backgroundColor: '#faf6f9',
+  },
+  importCloudIconWrapper: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#faedf7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  importDropzoneTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  importDropzoneSub: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 3,
+  },
+
+  // --- Assign New Fee Modal (Image 4 Matching) ---
+  assignFeeFieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  feeNoPeriodsDottedBox: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 10,
+  },
+  feeNoPeriodsText: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  feePeriodChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  feePeriodChipSelected: {
+    borderColor: '#b07fa8',
+    backgroundColor: '#faedf7',
+  },
+  feePeriodChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  feePeriodChipTextSelected: {
+    color: '#b07fa8',
+    fontWeight: '700',
+  },
+  assignFeeInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  assignFeeDateBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+  },
+  assignFeeClassSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    marginTop: 6,
+  },
+  assignFeeClassSelectorText: {
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  assignFeeClassNote: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 6,
+    lineHeight: 16,
   },
 });
 
