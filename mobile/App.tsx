@@ -4421,20 +4421,11 @@ function App() {
     setLoginEmail(demoEmail);
     setActiveRole(role);
     setSelectedDemoRole(role);
-
-    // Requirement 1: Selecting "Student" must NOT directly open the dashboard or bypass authentication.
-    // It must keep the user on the authentication flow, requiring valid credentials submission.
-    if (role === 'Student') {
-      setLoginPassword('');
-      showToast('Student/Parent selected. Please enter password to authenticate.');
-      return;
-    }
-
     setLoginPassword('password123');
     setIsLoggedIn(true);
     if (role === 'Teacher') {
       setActiveStaffTab('Dashboard');
-    } else {
+    } else if (role === 'Admin') {
       setActiveAdminTab('Dashboard');
     }
     showToast(`Welcome back! Authenticated as ${role}`);
