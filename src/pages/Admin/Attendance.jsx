@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { subscribeToSubCollection, subscribeToStudentsByClass, subscribeToAttendance, saveAttendance, getAttendanceForClass, getAttendanceSettings, updateStudentRunningStatsAndFlags } from '../../firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
-import { doc, onSnapshot, updateDoc, setDoc, collection, query, where, orderBy } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, setDoc, collection, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { LuCalendar as CalendarIcon, LuCircleCheck as CheckCircle2, LuSave as Save, LuUsers as Users, LuCircleAlert as AlertCircle, LuLayoutDashboard as DashboardIcon, LuClipboardCheck as ClipboardIcon, LuChevronDown as ChevronDown, LuChevronUp as ChevronUp, LuTrendingUp as TrendIcon, LuDownload as DownloadIcon, LuFileSpreadsheet as ExcelIcon } from 'react-icons/lu';
 import toast from 'react-hot-toast';
@@ -302,13 +302,32 @@ export default function Attendance() {
     return () => unsub();
   }, [schoolId, selectedDate, activeTab]);
 
+  // Helper to map classId to display name
+  const classMap = useMemo(() => {
+    const map = {};
+    classes.forEach(c => {
+      map[c.id] = c;
+      if (c.name) map[c.name] = c;
+    });
+    return map;
+  }, [classes]);
+
+  const getClassName = (classId) => {
+    if (!classId) return '-';
+    const found = classMap[classId];
+    if (found) {
+      return `${found.name || found.className || 'Class'}${found.section ? ` - ${found.section}` : ''}`.trim();
+    }
+    return classId;
+  };
+
   // Export to Excel trigger
   const handleExportExcel = () => {
     try {
       const dataToExport = absenteeFlags.map(f => ({
         "Roll No": f.rollNumber,
         "Student Name": f.studentName,
-        "Class ID": f.classId,
+        "Class": getClassName(f.classId),
         "Month": f.month,
         "Absence Count": f.absentCount,
         "Flagged At": f.flaggedAt ? new Date(f.flaggedAt).toLocaleDateString('en-GB') : '-'
@@ -331,32 +350,72 @@ export default function Attendance() {
     const gradesMap = {};
     monthlyStatsList.forEach(stat => {
       Object.entries(stat.byGrade || {}).forEach(([gradeId, gradeData]) => {
-        if (!gradesMap[gradeId]) {
-          gradesMap[gradeId] = { totalPercentage: 0, count: 0 };
+        let cleanGradeId = gradeId;
+        if (!cleanGradeId || cleanGradeId === 'unspecified') {
+          cleanGradeId = 'General';
         }
-        gradesMap[gradeId].totalPercentage += gradeData.percentage;
-        gradesMap[gradeId].count++;
+        if (!gradesMap[cleanGradeId]) {
+          gradesMap[cleanGradeId] = { totalPercentage: 0, count: 0 };
+        }
+        gradesMap[cleanGradeId].totalPercentage += gradeData.percentage;
+        gradesMap[cleanGradeId].count++;
       });
     });
 
-    return Object.entries(gradesMap).map(([gradeId, accum]) => ({
-      gradeId,
-      average: Math.round(accum.totalPercentage / accum.count)
-    }));
+    // If gradesMap has only 'unspecified' or 'General', or is empty, fallback to school classes
+    if (Object.keys(gradesMap).length === 0 || (Object.keys(gradesMap).length === 1 && gradesMap['General'])) {
+      classes.forEach(cls => {
+        const gName = cls.name || cls.className || 'Class';
+        if (!gradesMap[gName]) {
+          const sectionStat = dashboardStats?.bySection?.[cls.id];
+          const pct = sectionStat ? sectionStat.percentage : 100;
+          gradesMap[gName] = { totalPercentage: pct, count: 1 };
+        }
+      });
+    }
+
+    return Object.entries(gradesMap).map(([gradeId, accum]) => {
+      const average = Math.round(accum.totalPercentage / accum.count);
+      const displayName = gradeId.toLowerCase().startsWith('grade') || gradeId.toLowerCase().startsWith('class')
+        ? gradeId
+        : `Grade ${gradeId}`;
+      return {
+        gradeId,
+        displayName,
+        average
+      };
+    });
   };
 
   const renderTrendSVG = () => {
-    if (monthlyStatsList.length === 0) return null;
     const width = 600;
-    const height = 150;
-    const padding = 30;
+    const height = 180;
+    const padding = 36;
 
-    const points = monthlyStatsList.map((stat, idx) => {
-      const x = padding + (idx / (monthlyStatsList.length - 1 || 1)) * (width - 2 * padding);
-      const percentage = stat.schoolWide?.percentage ?? 100;
-      const y = height - padding - (percentage / 100) * (height - 2 * padding);
-      return { x, y, date: stat.date, percentage };
-    });
+    let points = [];
+    if (monthlyStatsList.length > 0) {
+      if (monthlyStatsList.length === 1) {
+        const stat = monthlyStatsList[0];
+        const pct = stat.schoolWide?.percentage ?? 100;
+        const y = height - padding - (pct / 100) * (height - 2 * padding);
+        points = [
+          { x: padding + 20, y, date: stat.date, percentage: pct },
+          { x: width - padding - 20, y, date: stat.date, percentage: pct }
+        ];
+      } else {
+        points = monthlyStatsList.map((stat, idx) => {
+          const x = padding + (idx / (monthlyStatsList.length - 1)) * (width - 2 * padding);
+          const percentage = stat.schoolWide?.percentage ?? 100;
+          const y = height - padding - (percentage / 100) * (height - 2 * padding);
+          return { x, y, date: stat.date, percentage };
+        });
+      }
+    } else {
+      points = [
+        { x: padding, y: padding, date: selectedDate, percentage: 100 },
+        { x: width - padding, y: padding, date: selectedDate, percentage: 100 }
+      ];
+    }
 
     const pathData = points.reduce((acc, p, idx) => {
       return idx === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
@@ -364,20 +423,34 @@ export default function Attendance() {
 
     return (
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48 bg-slate-50/50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 p-2">
+        <defs>
+          <linearGradient id="trendAreaGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#818cf8" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="#818cf8" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
         {[0, 25, 50, 75, 100].map(val => {
           const y = height - padding - (val / 100) * (height - 2 * padding);
           return (
             <g key={val}>
-              <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-              <text x={padding - 5} y={y + 4} textAnchor="end" className="text-[8px] fill-slate-400 font-bold font-mono">{val}%</text>
+              <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="#e2e8f0" className="dark:stroke-slate-700" strokeWidth="1" strokeDasharray="3 3" />
+              <text x={padding - 6} y={y + 3} textAnchor="end" className="text-[9px] fill-slate-400 font-semibold font-mono">{val}%</text>
             </g>
           );
         })}
-        {pathData && <path d={pathData} fill="none" stroke="rgb(79, 70, 229)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
+        {pathData && (
+          <>
+            <path
+              d={`${pathData} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`}
+              fill="url(#trendAreaGradient)"
+            />
+            <path d={pathData} fill="none" stroke="rgb(79, 70, 229)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
         {points.map((p, idx) => (
           <g key={idx} className="group cursor-pointer">
-            <circle cx={p.x} cy={p.y} r="4" className="fill-indigo-600 stroke-white stroke-2 hover:r-6 transition-all" />
-            <title>{p.date}: {p.percentage}%</title>
+            <circle cx={p.x} cy={p.y} r="4" className="fill-indigo-600 stroke-white dark:stroke-slate-900 stroke-2 hover:r-6 transition-all" />
+            <title>{p.date ? `${p.date}: ${p.percentage}%` : `${p.percentage}%`}</title>
           </g>
         ))}
       </svg>
@@ -801,7 +874,7 @@ export default function Attendance() {
                   {getGradeMonthAverages().map((grade) => (
                     <div key={grade.gradeId} className="space-y-1.5">
                       <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-200">
-                        <span>Grade {grade.gradeId}</span>
+                        <span>{grade.displayName}</span>
                         <span>{grade.average}%</span>
                       </div>
                       <div className="h-2.5 w-full bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -832,7 +905,9 @@ export default function Attendance() {
                 >
                   <option value="all">All Classes</option>
                   {classes.map(cls => (
-                    <option key={cls.id} value={cls.id}>{cls.name} - {cls.section}</option>
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name || cls.className || 'Class'}{cls.section ? ` - ${cls.section}` : ''}
+                    </option>
                   ))}
                 </select>
                 <button
@@ -867,12 +942,12 @@ export default function Attendance() {
                   </thead>
                   <tbody>
                     {absenteeFlags
-                      .filter(f => filterClassId === 'all' || f.classId === filterClassId)
+                      .filter(f => filterClassId === 'all' || f.classId === filterClassId || (classMap[filterClassId] && (f.classId === classMap[filterClassId].name || f.classId === classMap[filterClassId].id)))
                       .map((flag, idx) => (
                         <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50">
                           <td className="p-4 text-slate-600 dark:text-slate-300 font-medium pl-6">{flag.rollNumber || '-'}</td>
                           <td className="p-4 font-bold text-slate-900 dark:text-white">{flag.studentName}</td>
-                          <td className="p-4 font-semibold text-slate-600 dark:text-slate-300">{flag.classId}</td>
+                          <td className="p-4 font-semibold text-slate-600 dark:text-slate-300">{getClassName(flag.classId)}</td>
                           <td className="p-4 font-semibold text-slate-500 dark:text-slate-400">{flag.month}</td>
                           <td className="p-4 text-right pr-6 font-black text-red-600 text-sm">{flag.absentCount}</td>
                         </tr>

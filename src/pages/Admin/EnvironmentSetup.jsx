@@ -1,11 +1,117 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { getSchool, updateSchool, subscribeToFeeCollectionPeriods, createFeeCollectionPeriod, updateFeeCollectionPeriod, deleteFeeCollectionPeriod, getAttendanceSettings, saveAttendanceSettings, subscribeToLeaveApprovalRules, createLeaveApprovalRule, updateLeaveApprovalRule, deleteLeaveApprovalRule } from '../../firebase/firestore';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config';
-import { LuSave as Save, LuBuilding2 as Building2, LuMapPin as MapPin, LuPhone as Phone, LuGlobe as Globe, LuImage as ImageIcon, LuPalette as Palette, LuCalendar as Calendar, LuCircleCheck as CheckCircle2, LuSettings as Settings, LuPlus as Plus, LuPencil as Pencil, LuTrash as Trash, LuX as X, LuIndianRupee as IndianRupee, LuClock as Clock, LuTriangleAlert as AlertTriangle, LuUserCheck as UserCheck } from 'react-icons/lu';
+import { LuSave as Save, LuBuilding2 as Building2, LuMapPin as MapPin, LuPhone as Phone, LuGlobe as Globe, LuImage as ImageIcon, LuPalette as Palette, LuCalendar as Calendar, LuCircleCheck as CheckCircle2, LuSettings as Settings, LuPlus as Plus, LuPencil as Pencil, LuTrash as Trash, LuX as X, LuIndianRupee as IndianRupee, LuClock as Clock, LuTriangleAlert as AlertTriangle, LuUserCheck as UserCheck, LuChevronUp, LuChevronDown } from 'react-icons/lu';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../../components/ConfirmModal';
+
+// Reusable Interactive Time Dropdown Picker matching Image 3
+function TimeDropdownPicker({ value = '09:00', onChange, label }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  const [hStr = '09', mStr = '00'] = (value || '09:00').split(':');
+  const selectedHour = hStr.padStart(2, '0');
+  const selectedMinute = mStr.padStart(2, '0');
+
+  const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+  const minutes = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const handleSelectHour = (newH) => {
+    onChange(`${newH}:${selectedMinute}`);
+  };
+
+  const handleSelectMinute = (newM) => {
+    onChange(`${selectedHour}:${newM}`);
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+      {label && <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">{label}</label>}
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-primary-500 flex items-center justify-between cursor-pointer shadow-sm transition-all"
+      >
+        <span className="text-slate-800 dark:text-slate-100 font-semibold text-sm">
+          {selectedHour}:{selectedMinute}
+        </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsOpen(!isOpen);
+          }}
+          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 rounded transition-colors"
+          title="Pick time"
+        >
+          <Clock size={18} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1.5 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-2 w-44 flex gap-1 animate-fade-in">
+          {/* Hours Column */}
+          <div className="flex-1 max-h-52 overflow-y-auto pr-1 scrollbar-thin">
+            {hours.map((h) => {
+              const isSelected = h === selectedHour;
+              return (
+                <button
+                  type="button"
+                  key={h}
+                  onClick={() => handleSelectHour(h)}
+                  className={`w-full text-center py-1 px-2 text-xs font-semibold rounded-lg transition-colors block ${
+                    isSelected
+                      ? 'bg-blue-600 text-white font-bold shadow-sm'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {h}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="w-px bg-slate-100 dark:bg-slate-800 my-1"></div>
+
+          {/* Minutes Column */}
+          <div className="flex-1 max-h-52 overflow-y-auto pl-1 scrollbar-thin">
+            {minutes.map((m) => {
+              const isSelected = m === selectedMinute;
+              return (
+                <button
+                  type="button"
+                  key={m}
+                  onClick={() => handleSelectMinute(m)}
+                  className={`w-full text-center py-1 px-2 text-xs font-semibold rounded-lg transition-colors block ${
+                    isSelected
+                      ? 'bg-blue-600 text-white font-bold shadow-sm'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {m}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function EnvironmentSetup() {
   const { userProfile, updateProfileData } = useAuth(); // Assume we can refresh auth context
@@ -725,41 +831,54 @@ export default function EnvironmentSetup() {
           </div>
           <form onSubmit={handleSaveAttendanceConfig} className="p-8 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <TimeDropdownPicker
+                label="Working Hours Start"
+                value={attendanceConfig.workingHoursStart || '09:00'}
+                onChange={(val) => setAttendanceConfig({ ...attendanceConfig, workingHoursStart: val })}
+              />
+              <TimeDropdownPicker
+                label="Working Hours End"
+                value={attendanceConfig.workingHoursEnd || '16:00'}
+                onChange={(val) => setAttendanceConfig({ ...attendanceConfig, workingHoursEnd: val })}
+              />
+              <TimeDropdownPicker
+                label="Cutoff Time (Late after this)"
+                value={attendanceConfig.cutoffTime || '09:30'}
+                onChange={(val) => setAttendanceConfig({ ...attendanceConfig, cutoffTime: val })}
+              />
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Working Hours Start</label>
-                <input
-                  type="time" required
-                  value={attendanceConfig.workingHoursStart}
-                  onChange={(e) => setAttendanceConfig({ ...attendanceConfig, workingHoursStart: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Working Hours End</label>
-                <input
-                  type="time" required
-                  value={attendanceConfig.workingHoursEnd}
-                  onChange={(e) => setAttendanceConfig({ ...attendanceConfig, workingHoursEnd: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Cutoff Time (Late after this)</label>
-                <input
-                  type="time" required
-                  value={attendanceConfig.cutoffTime}
-                  onChange={(e) => setAttendanceConfig({ ...attendanceConfig, cutoffTime: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Absentee Threshold For Students (Absences/Month before Flag)</label>
-                <input
-                  type="number" required min="1"
-                  value={attendanceConfig.absenteeThreshold}
-                  onChange={(e) => setAttendanceConfig({ ...attendanceConfig, absenteeThreshold: Number(e.target.value) })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500"
-                />
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Absentee Threshold For Students (Absences/Month before Flag)
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    max="31"
+                    value={attendanceConfig.absenteeThreshold}
+                    onChange={(e) => setAttendanceConfig({ ...attendanceConfig, absenteeThreshold: Math.max(1, parseInt(e.target.value) || 1) })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-primary-500 text-sm font-medium pr-10 shadow-sm"
+                  />
+                  <div className="absolute right-2 flex flex-col gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceConfig(prev => ({ ...prev, absenteeThreshold: (Number(prev.absenteeThreshold) || 1) + 1 }))}
+                      className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                      title="Increment"
+                    >
+                      <LuChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceConfig(prev => ({ ...prev, absenteeThreshold: Math.max(1, (Number(prev.absenteeThreshold) || 1) - 1) }))}
+                      className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                      title="Decrement"
+                    >
+                      <LuChevronDown size={14} />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
             <div className="flex justify-end pt-4">

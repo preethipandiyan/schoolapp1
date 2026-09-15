@@ -147,6 +147,7 @@ export default function HRPayrollManagement() {
 
   const [signatureFile, setSignatureFile] = useState(null);
   const [uploadingSig, setUploadingSig] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -717,40 +718,76 @@ export default function HRPayrollManagement() {
               </button>
             </div>
             <div className="p-6">
-              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Authorized Signature</label>
+              <label className="block text-sm font-bold text-slate-800 dark:text-white mb-1">Authorized Signature</label>
               <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">This signature will appear on all generated payslips.</p>
               
-              {schoolDetails?.hrConfig?.authorizedSignature && (
-                <div className="mb-4 p-4 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 flex justify-between items-center">
-                  <div>
-                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Current Signature</p>
-                    <img src={schoolDetails.hrConfig.authorizedSignature} alt="Authorized Signature" className="max-h-16 object-contain mix-blend-multiply" />
-                  </div>
-                  <button 
-                    onClick={handleRemoveSignature}
-                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                    title="Remove Signature"
-                  >
-                    <Trash2 size={20} />
-                  </button>
-                </div>
-              )}
-
               <div className="flex items-center gap-3">
                 <input 
                   type="file" 
+                  ref={fileInputRef}
                   accept="image/*"
-                  onChange={e => setSignatureFile(e.target.files[0])}
-                  className="flex-1 text-sm text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer border border-slate-200 dark:border-slate-700 rounded-xl p-1.5"
+                  onChange={e => setSignatureFile(e.target.files?.[0] || null)}
+                  className="hidden"
                 />
+                
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 flex items-center gap-3 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-900 cursor-pointer shadow-sm hover:border-slate-300 dark:hover:border-slate-600 transition-all min-w-0"
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 shrink-0 transition-colors"
+                  >
+                    Choose File
+                  </button>
+                  <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {signatureFile ? signatureFile.name : 'No file chosen'}
+                  </span>
+                </div>
+
                 <button 
+                  type="button"
                   onClick={handleUploadSignature}
                   disabled={!signatureFile || uploadingSig}
-                  className="w-full sm:w-auto px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-50 flex justify-center items-center gap-2"
+                  className="px-5 py-2.5 bg-[#986794] hover:bg-[#835680] text-white text-xs font-bold rounded-2xl transition-colors disabled:opacity-50 flex items-center gap-2 shrink-0 shadow-sm"
                 >
-                  {uploadingSig ? 'Uploading...' : <><UploadCloud size={18}/> Upload</>}
+                  {uploadingSig ? (
+                    <>
+                      <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud size={16} />
+                      <span>Upload</span>
+                    </>
+                  )}
                 </button>
               </div>
+
+              {schoolDetails?.hrConfig?.authorizedSignature && (
+                <div className="mt-4 p-4 border border-slate-100 dark:border-slate-800 rounded-2xl bg-slate-50/70 dark:bg-slate-800/50 flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <img src={schoolDetails.hrConfig.authorizedSignature} alt="Authorized Signature" className="h-10 max-w-[120px] object-contain bg-white rounded p-1 border border-slate-200 dark:border-slate-700" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">Current Active Signature</p>
+                      <p className="text-[10px] text-slate-400">Attached to generated payslips</p>
+                    </div>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={handleRemoveSignature}
+                    className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-slate-700 rounded-xl transition-colors"
+                    title="Remove Signature"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

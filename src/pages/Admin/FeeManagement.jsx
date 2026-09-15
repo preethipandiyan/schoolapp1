@@ -426,16 +426,16 @@ export default function FeeManagement() {
           </div>
         </div>
 
-        <div className="overflow-x-auto w-full min-w-0">
-          <table className="w-full text-left border-collapse min-w-max">
+        <div className="overflow-x-auto w-full min-w-0 -mx-4 sm:mx-0 px-4 sm:px-0">
+          <table className="w-full text-left border-collapse min-w-[760px]">
             <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold">
-                <th className="p-4 pl-6">Student</th>
-                <th className="p-4">Fee Details</th>
-                <th className="p-4">Collection Period</th>
-                <th className="p-4">Amount</th>
-                <th className="p-4">Status</th>
-                <th className="p-4 pr-6 text-right">Action</th>
+              <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold whitespace-nowrap">
+                <th className="p-4 pl-6 min-w-[200px] whitespace-nowrap">Student</th>
+                <th className="p-4 min-w-[160px] whitespace-nowrap">Fee Details</th>
+                <th className="p-4 min-w-[160px] whitespace-nowrap">Collection Period</th>
+                <th className="p-4 min-w-[110px] whitespace-nowrap">Amount</th>
+                <th className="p-4 min-w-[120px] whitespace-nowrap">Status</th>
+                <th className="p-4 pr-6 text-right min-w-[110px] whitespace-nowrap">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
@@ -466,7 +466,7 @@ export default function FeeManagement() {
                           : 'hover:bg-slate-50/50'
                       }`}
                     >
-                      <td className="p-4 pl-6">
+                      <td className="p-4 pl-6 whitespace-nowrap">
                         {student ? (
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-sm border border-slate-200 dark:border-slate-700 shrink-0">
@@ -485,13 +485,13 @@ export default function FeeManagement() {
                           <span className="text-slate-400 dark:text-slate-300 italic">Unknown Student</span>
                         )}
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 whitespace-nowrap">
                         <div className="font-bold text-slate-900 dark:text-white">{inv.feeName}</div>
                         <div className={`text-xs mt-0.5 ${isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 dark:text-slate-400'}`}>
                           Due: {inv.dueDate || 'N/A'}
                         </div>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 whitespace-nowrap">
                         {inv.collectionPeriodName && inv.collectionPeriodName !== 'General' ? (
                           <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
                             {inv.collectionPeriodName}
@@ -500,10 +500,10 @@ export default function FeeManagement() {
                           <span className="text-xs text-slate-400 dark:text-slate-300 italic">General</span>
                         )}
                       </td>
-                      <td className="p-4 font-mono font-bold text-slate-700 dark:text-slate-200">
+                      <td className="p-4 font-mono font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
                         ₹{Number(inv.amount || 0).toLocaleString()}
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 whitespace-nowrap">
                         {inv.status === 'Paid' ? (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-green-100 text-green-700 border border-green-200">
                             <CheckCircle2 size={14} /> Paid
@@ -518,7 +518,7 @@ export default function FeeManagement() {
                           </span>
                         )}
                       </td>
-                      <td className="p-4 pr-6 text-right">
+                      <td className="p-4 pr-6 text-right whitespace-nowrap">
                         {inv.status !== 'Paid' && hasEditPermission && (
                           <button 
                             onClick={() => handleMarkPaid(inv.id)}

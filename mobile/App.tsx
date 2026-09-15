@@ -23,6 +23,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import StudentPortal from './src/StudentPortal';
+import { StaffDirectoryScreen, StaffItem as StaffDirectoryItem, ALL_ROLES_LIST } from './src/StaffDirectoryModule';
 
 const { ZunaFilePicker } = NativeModules;
 
@@ -183,17 +184,7 @@ interface ModuleItem {
   color: string;
 }
 
-interface StaffItem {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  gender: 'Male' | 'Female';
-  staffType: 'Teaching' | 'Non-Teaching';
-  status: 'Active' | 'Inactive';
-  classAssignments: string[];
-  subjectAssignments: string[];
-}
+type StaffItem = StaffDirectoryItem;
 
 interface ClassItem {
   id: string;
@@ -716,12 +707,14 @@ function App() {
   const [datePickerYear, setDatePickerYear] = useState<number>(2026);
   const [datePickerMonth, setDatePickerMonth] = useState<number>(8); // 8 = September
   const [datePickerDay, setDatePickerDay] = useState<number>(10);
+  const [datePickerViewMode, setDatePickerViewMode] = useState<'calendar' | 'month' | 'year'>('calendar');
 
   const datePickerCallbackRef = React.useRef<((dateStr: string) => void) | null>(null);
 
   const openDatePicker = (target: string, initialDateStr?: string, title?: string, onSelect?: (dateStr: string) => void) => {
     setDatePickerTarget(target);
     setDatePickerTargetTitle(title || 'Select Date');
+    setDatePickerViewMode('calendar');
     datePickerCallbackRef.current = onSelect || null;
     if (initialDateStr) {
       const parts = initialDateStr.trim().split(/[-/]/);
@@ -740,14 +733,14 @@ function App() {
     setShowDatePickerModal(true);
   };
 
-  const handleSelectCalendarDate = (dayNum: number) => {
+  const handleConfirmCalendarDate = () => {
     const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
-    const dStr = `${pad(dayNum)}-${pad(datePickerMonth + 1)}-${datePickerYear}`;
-    const isoStr = `${datePickerYear}-${pad(datePickerMonth + 1)}-${pad(dayNum)}`;
+    const dStr = `${pad(datePickerDay)}-${pad(datePickerMonth + 1)}-${datePickerYear}`;
+    const isoStr = `${datePickerYear}-${pad(datePickerMonth + 1)}-${pad(datePickerDay)}`;
+
     if (datePickerCallbackRef.current) {
       datePickerCallbackRef.current(dStr);
-    }
-    if (datePickerTarget === 'attendance') {
+    } else if (datePickerTarget === 'attendance') {
       setAttSelectedDate(dStr);
     } else if (datePickerTarget === 'newAssessment') {
       setNewAssessmentForm(prev => ({ ...prev, date: dStr }));
@@ -781,123 +774,254 @@ function App() {
       setLeadsStartDate(dStr);
     } else if (datePickerTarget === 'leadsEndDate') {
       setLeadsEndDate(dStr);
+    } else if (datePickerTarget === 'auditStartDate') {
+      setAuditStartDate(dStr);
+    } else if (datePickerTarget === 'auditEndDate') {
+      setAuditEndDate(dStr);
     }
     setShowDatePickerModal(false);
   };
 
-  const renderGlobalDatePickerModal = () => (
-    <Modal visible={showDatePickerModal} transparent animationType="fade" onRequestClose={() => setShowDatePickerModal(false)}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
-        <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, width: '100%', maxWidth: 360, elevation: 6 }}>
-          {/* Modal Header */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>{datePickerTargetTitle}</Text>
-            <TouchableOpacity onPress={() => setShowDatePickerModal(false)} style={{ padding: 4 }}>
-              <IconComp name="close-outline" size={22} color="#64748B" />
-            </TouchableOpacity>
-          </View>
+  const renderGlobalDatePickerModal = () => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const yearsList = [];
+    for (let y = 1970; y <= 2035; y++) yearsList.push(y);
 
-          {/* Month / Year Navigator */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, marginBottom: 14 }}>
-            <TouchableOpacity
-              onPress={() => {
-                if (datePickerMonth === 0) {
-                  setDatePickerMonth(11);
-                  setDatePickerYear(prev => prev - 1);
-                } else {
-                  setDatePickerMonth(prev => prev - 1);
-                }
-              }}
-              style={{ padding: 6 }}>
-              <IconComp name="chevron-back" size={18} color="#0F172A" />
-            </TouchableOpacity>
+    return (
+      <Modal visible={showDatePickerModal} transparent animationType="fade" onRequestClose={() => setShowDatePickerModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, width: '100%', maxWidth: 360, elevation: 6 }}>
+            {/* Modal Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{datePickerTargetTitle}</Text>
+              <TouchableOpacity onPress={() => setShowDatePickerModal(false)} style={{ padding: 4 }}>
+                <IconComp name="close-outline" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
 
-            <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>
-              {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][datePickerMonth]} {datePickerYear}
-            </Text>
-
-            <TouchableOpacity
-              onPress={() => {
-                if (datePickerMonth === 11) {
-                  setDatePickerMonth(0);
-                  setDatePickerYear(prev => prev + 1);
-                } else {
-                  setDatePickerMonth(prev => prev + 1);
-                }
-              }}
-              style={{ padding: 6 }}>
-              <IconComp name="chevron-forward" size={18} color="#0F172A" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Weekday Labels */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 }}>
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) => (
-              <Text key={i} style={{ width: 38, textAlign: 'center', fontSize: 12, fontWeight: '700', color: i === 0 ? '#EF4444' : '#64748B' }}>
-                {d}
-              </Text>
-            ))}
-          </View>
-
-          {/* Days Grid */}
-          {(() => {
-            const daysInMonth = new Date(datePickerYear, datePickerMonth + 1, 0).getDate();
-            const firstDayIndex = new Date(datePickerYear, datePickerMonth, 1).getDay();
-            const cells = [];
-            for (let i = 0; i < firstDayIndex; i++) {
-              cells.push(<View key={`empty-${i}`} style={{ width: 38, height: 38 }} />);
-            }
-            for (let day = 1; day <= daysInMonth; day++) {
-              const isSelected = datePickerDay === day;
-              cells.push(
-                <TouchableOpacity
-                  key={`day-${day}`}
-                  onPress={() => handleSelectCalendarDate(day)}
-                  style={{
-                    width: 38,
-                    height: 38,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    borderRadius: 19,
-                    backgroundColor: isSelected ? '#B07FA8' : 'transparent',
-                  }}>
-                  <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : '#0F172A' }}>
-                    {day}
-                  </Text>
-                </TouchableOpacity>
-              );
-            }
-            return (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start' }}>
-                {cells}
+            {datePickerViewMode === 'month' ? (
+              /* MONTH SELECTION GRID */
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748B' }}>Select Month</Text>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#F1F5F9' }}
+                    onPress={() => setDatePickerViewMode('calendar')}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>Back to Calendar</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>
+                  {shortMonths.map((mName, idx) => {
+                    const isSelected = datePickerMonth === idx;
+                    return (
+                      <TouchableOpacity
+                        key={mName}
+                        style={{
+                          width: '30%',
+                          paddingVertical: 12,
+                          borderRadius: 10,
+                          backgroundColor: isSelected ? '#b07fa8' : '#F8FAFC',
+                          alignItems: 'center',
+                          borderWidth: 1,
+                          borderColor: isSelected ? '#b07fa8' : '#E2E8F0',
+                        }}
+                        onPress={() => {
+                          setDatePickerMonth(idx);
+                          setDatePickerViewMode('calendar');
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : '#0F172A' }}>
+                          {mName}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
-            );
-          })()}
+            ) : datePickerViewMode === 'year' ? (
+              /* YEAR SELECTION GRID */
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748B' }}>Select Year</Text>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: '#F1F5F9' }}
+                    onPress={() => setDatePickerViewMode('calendar')}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>Back to Calendar</Text>
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={{ maxHeight: 240 }} nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>
+                    {yearsList.map(yNum => {
+                      const isSelected = datePickerYear === yNum;
+                      return (
+                        <TouchableOpacity
+                          key={yNum}
+                          style={{
+                            width: '30%',
+                            paddingVertical: 10,
+                            borderRadius: 10,
+                            backgroundColor: isSelected ? '#b07fa8' : '#F8FAFC',
+                            alignItems: 'center',
+                            borderWidth: 1,
+                            borderColor: isSelected ? '#b07fa8' : '#E2E8F0',
+                          }}
+                          onPress={() => {
+                            setDatePickerYear(yNum);
+                            setDatePickerViewMode('calendar');
+                          }}>
+                          <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : '#0F172A' }}>
+                            {yNum}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </View>
+            ) : (
+              /* STANDARD CALENDAR VIEW WITH INTERACTIVE MONTH & YEAR HEADERS */
+              <View>
+                {/* Month / Year Navigator */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12, marginBottom: 14 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (datePickerMonth === 0) {
+                        setDatePickerMonth(11);
+                        setDatePickerYear(prev => prev - 1);
+                      } else {
+                        setDatePickerMonth(prev => prev - 1);
+                      }
+                    }}
+                    style={{ padding: 6 }}>
+                    <IconComp name="chevron-back" size={18} color="#0F172A" />
+                  </TouchableOpacity>
 
-          {/* Footer Buttons */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
-            <TouchableOpacity
-              onPress={() => {
-                const today = new Date();
-                setDatePickerYear(today.getFullYear());
-                setDatePickerMonth(today.getMonth());
-                handleSelectCalendarDate(today.getDate());
-              }}
-              style={{ paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#F1F5F9', borderRadius: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Today</Text>
-            </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {/* Tappable Month Selector */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        paddingVertical: 4,
+                        paddingHorizontal: 8,
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                      }}
+                      onPress={() => setDatePickerViewMode('month')}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                        {monthNames[datePickerMonth]}
+                      </Text>
+                      <IconComp name="chevron-down" size={12} color="#64748B" />
+                    </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => setShowDatePickerModal(false)}
-              style={{ paddingVertical: 8, paddingHorizontal: 16 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748B' }}>Cancel</Text>
-            </TouchableOpacity>
+                    {/* Tappable Year Selector */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        paddingVertical: 4,
+                        paddingHorizontal: 8,
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                      }}
+                      onPress={() => setDatePickerViewMode('year')}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                        {datePickerYear}
+                      </Text>
+                      <IconComp name="chevron-down" size={12} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (datePickerMonth === 11) {
+                        setDatePickerMonth(0);
+                        setDatePickerYear(prev => prev + 1);
+                      } else {
+                        setDatePickerMonth(prev => prev + 1);
+                      }
+                    }}
+                    style={{ padding: 6 }}>
+                    <IconComp name="chevron-forward" size={18} color="#0F172A" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Weekday Labels */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 }}>
+                  {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) => (
+                    <Text key={i} style={{ width: 38, textAlign: 'center', fontSize: 12, fontWeight: '700', color: i === 0 ? '#EF4444' : '#64748B' }}>
+                      {d}
+                    </Text>
+                  ))}
+                </View>
+
+                {/* Days Grid */}
+                {(() => {
+                  const daysInMonth = new Date(datePickerYear, datePickerMonth + 1, 0).getDate();
+                  const firstDayIndex = new Date(datePickerYear, datePickerMonth, 1).getDay();
+                  const cells = [];
+                  for (let i = 0; i < firstDayIndex; i++) {
+                    cells.push(<View key={`empty-${i}`} style={{ width: 38, height: 38 }} />);
+                  }
+                  for (let day = 1; day <= daysInMonth; day++) {
+                    const isSelected = datePickerDay === day;
+                    cells.push(
+                      <TouchableOpacity
+                        key={`day-${day}`}
+                        onPress={() => setDatePickerDay(day)}
+                        style={{
+                          width: 38,
+                          height: 38,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          borderRadius: 19,
+                          backgroundColor: isSelected ? '#b07fa8' : 'transparent',
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : '#0F172A' }}>
+                          {day}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }
+                  return (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {cells}
+                    </View>
+                  );
+                })()}
+
+                {/* Bottom Action Buttons: Cancel and Confirm (Matches Requirement 12) */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 14, paddingVertical: 8 }}
+                    onPress={() => setShowDatePickerModal(false)}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#b07fa8',
+                      paddingHorizontal: 18,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                    }}
+                    onPress={handleConfirmCalendarDate}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Confirm</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         </View>
-      </View>
-    </Modal>
-  );
-
+      </Modal>
+    );
+  };
   const getTeacherTimetableSlots = (day: string) => {
     const classSlots = (timetablesData && timetablesData[timetableClassSelected] && timetablesData[timetableClassSelected][day]) || [];
     if (classSlots.length > 0) {
@@ -1398,6 +1522,7 @@ function App() {
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newSubjectCode, setNewSubjectCode] = useState('');
   const [newSubjectTeacher, setNewSubjectTeacher] = useState('Ragu D');
+  const [newSubjectAssignedTeacherIds, setNewSubjectAssignedTeacherIds] = useState<string[]>([]);
 
   // --- 4. Student Directory & Admissions State (Screenshot 4 matching) ---
   const [studentDirectoryTab, setStudentDirectoryTab] = useState<'enrolled' | 'applications'>('enrolled');
@@ -1824,6 +1949,94 @@ function App() {
         );
     } catch (e) {}
 
+    // 5b. Teachers / Staff Real-time Subscription
+    let unsubStaff: any = null;
+    try {
+      unsubStaff = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('teachers')
+        .onSnapshot(
+          (snapshot: any) => {
+            if (snapshot && !snapshot.empty) {
+              const list: StaffItem[] = [];
+              snapshot.forEach((docSnap: any) => {
+                const data = docSnap.data();
+                const fullName = data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim() || 'Staff';
+                const stRole = (data.roles && data.roles[0]) || data.role || 'Staffs';
+                const stType = (data.staff_type === 'non-teaching' || data.staffType === 'Non-Teaching' || data.staffType === 'Non-Teaching Staff') ? 'Non-Teaching' : 'Teaching';
+                list.push({
+                  id: docSnap.id,
+                  staffId: data.staffId || data.employeeId || '',
+                  employeeId: data.employeeId || data.staffId || '',
+                  firstName: data.firstName || '',
+                  lastName: data.lastName || '',
+                  name: fullName,
+                  email: data.email || '',
+                  mobileNumber: data.mobileNumber || data.phone || '',
+                  phone: data.mobileNumber || data.phone || '',
+                  role: stRole,
+                  roles: data.roles || [stRole],
+                  gender: data.gender || 'Male',
+                  staffType: stType,
+                  staff_type: data.staff_type || (stType === 'Non-Teaching' ? 'non-teaching' : 'teaching'),
+                  status: data.status || 'Active',
+                  dob: data.dob || '',
+                  nationality: data.nationality || 'Indian',
+                  maritalStatus: data.maritalStatus || 'Single',
+                  bloodGroup: data.bloodGroup || '',
+                  fatherGuardianName: data.fatherGuardianName || '',
+                  emergencyContact: data.emergencyContact || '',
+                  assignedClassId: data.assignedClassId || '',
+                  languagesKnown: data.languagesKnown || '',
+                  residentialAddress: data.residentialAddress || data.address || '',
+                  highestQualification: data.highestQualification || data.qualifications || '',
+                  degreeSpecialization: data.degreeSpecialization || '',
+                  universityName: data.universityName || '',
+                  yearOfPassing: data.yearOfPassing || '',
+                  previousExperience: data.previousExperience || data.experience || '',
+                  previousOrganization: data.previousOrganization || '',
+                  subjectSpecialization: data.subjectSpecialization || '',
+                  gradesClassesHandled: data.gradesClassesHandled || '',
+                  professionalCertifications: data.professionalCertifications || '',
+                  govtIdType: data.govtIdType || 'Aadhaar',
+                  govtIdNumber: data.govtIdNumber || '',
+                  aadharNumber: data.aadharNumber || '',
+                  panNumber: data.panNumber || '',
+                  taxIdDetails: data.taxIdDetails || '',
+                  pfNumber: data.pfNumber || '',
+                  esicNumber: data.esicNumber || '',
+                  uanNumber: data.uanNumber || '',
+                  bankAccountNumber: data.bankAccountNumber || data.accountNumber || '',
+                  bankName: data.bankName || '',
+                  branchName: data.branchName || '',
+                  ifscCode: data.ifscCode || '',
+                  photoUrl: data.photoUrl || '',
+                  academicCertificates: data.academicCertificates || [],
+                  markSheets: data.markSheets || [],
+                  experienceCertificates: data.experienceCertificates || [],
+                  relievingLetter: data.relievingLetter || [],
+                  resume: data.resume || [],
+                  referenceLetters: data.referenceLetters || [],
+                  govtIdDocument: data.govtIdDocument || [],
+                  salarySlips: data.salarySlips || [],
+                  classAssignments: data.classAssignments || (data.assignedClassId ? [`Class: ${data.assignedClassId}`] : []),
+                  subjectAssignments: data.subjectAssignments || (data.subjectSpecialization ? [data.subjectSpecialization] : []),
+                  customData: data.customData || {},
+                });
+              });
+              if (list.length > 0) {
+                setStaffList(list);
+                try {
+                  AsyncStorage.setItem('@zuna_saved_staff_list', JSON.stringify(list));
+                } catch (e) {}
+              }
+            }
+          },
+          (err: any) => console.warn('Teachers listener err:', err)
+        );
+    } catch (e) {}
+
     // 6. Invoices Real-time Subscription
     let unsubInvoices: any = null;
     try {
@@ -1937,6 +2150,7 @@ function App() {
       if (typeof unsubPeriods === 'function') unsubPeriods();
       if (typeof unsubLeaveRules === 'function') unsubLeaveRules();
       if (typeof unsubStudents === 'function') unsubStudents();
+      if (typeof unsubStaff === 'function') unsubStaff();
       if (typeof unsubInvoices === 'function') unsubInvoices();
       if (typeof unsubLessonPlans === 'function') unsubLessonPlans();
       if (typeof unsubResources === 'function') unsubResources();
@@ -2544,14 +2758,864 @@ function App() {
   const [issuedBooksList, setIssuedBooksList] = useState<any[]>([]);
 
   // --- Inventory & Assets Module State ---
-  const [inventoryActiveTab, setInventoryActiveTab] = useState<'items'|'categories'>('items');
+  const adminSchoolId = 'school1';
+  const [inventoryItemsList, setInventoryItemsList] = useState<any[]>([]);
+  const [inventoryCategoriesList, setInventoryCategoriesList] = useState<any[]>([
+    { id: 'cat_1', name: 'Electronics', description: 'Computers, projectors, lab gadgets' },
+    { id: 'cat_2', name: 'Furniture', description: 'Desks, benches, chairs, podiums' },
+    { id: 'cat_3', name: 'Stationery', description: 'Notebooks, markers, paper supplies' },
+    { id: 'cat_4', name: 'Sports Equipment', description: 'Balls, nets, racquets, athletic gear' },
+    { id: 'cat_5', name: 'Lab Supplies', description: 'Chemicals, glassware, microscopes' },
+  ]);
+  const [inventoryAuditLogsList, setInventoryAuditLogsList] = useState<any[]>([]);
+  const [inventorySubView, setInventorySubView] = useState<'main' | 'audit_logs'>('main');
+  const [inventoryActiveTab, setInventoryActiveTab] = useState<'items' | 'categories'>('items');
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All Categories');
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState('All Statuses');
+  const [inventorySelectedIds, setInventorySelectedIds] = useState<string[]>([]);
+  const [showInventoryCatDropdown, setShowInventoryCatDropdown] = useState(false);
+  const [showInventoryStatusDropdown, setShowInventoryStatusDropdown] = useState(false);
+
+  // Add / Edit Item Modal State
   const [showAddItemModal, setShowAddItemModal] = useState(false);
-  const [newItemForm, setNewItemForm] = useState({ productId: '', name: '', category: '', quantity: '', unit: 'pcs', status: 'In Stock' });
-  const inventoryItemsList: any[] = []; // Empty — matches web empty state
-  const inventoryCategoriesList: any[] = [];
+  const [newItemForm, setNewItemForm] = useState<{
+    id?: string;
+    productId: string;
+    name: string;
+    category: string;
+    quantity: string;
+    unit: string;
+    status: string;
+  }>({
+    productId: '',
+    name: '',
+    category: '',
+    quantity: '0',
+    unit: 'pcs',
+    status: 'In Stock',
+  });
+  const [showAddCategoryDropdown, setShowAddCategoryDropdown] = useState(false);
+  const [isSavingItem, setIsSavingItem] = useState(false);
+  const [isQuantityFocused, setIsQuantityFocused] = useState(false);
+  const [isProdNameFocused, setIsProdNameFocused] = useState(false);
+  const [isProdIdFocused, setIsProdIdFocused] = useState(false);
+  const [isUnitFocused, setIsUnitFocused] = useState(false);
+
+  // Bulk Import State (using showInventoryImportModal to prevent naming collisions)
+  const [showInventoryImportModal, setShowInventoryImportModal] = useState(false);
+  const [importDuplicateAction, setImportDuplicateAction] = useState<'skip' | 'update' | 'create-new'>('skip');
+  const [showDuplicateActionDropdown, setShowDuplicateActionDropdown] = useState(false);
+  const [importAutoCreateCategories, setImportAutoCreateCategories] = useState(false);
+  const [selectedImportFile, setSelectedImportFile] = useState<{
+    name: string;
+    size: string | number;
+    uri: string;
+    base64: string;
+    type: string;
+  } | null>(null);
+  const [isProcessingImport, setIsProcessingImport] = useState(false);
+
+  // Audit Logs State
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditStartDate, setAuditStartDate] = useState('');
+  const [auditEndDate, setAuditEndDate] = useState('');
+  const [auditProductFilter, setAuditProductFilter] = useState('All Products');
+  const [auditCategoryFilter, setAuditCategoryFilter] = useState('All Categories');
+  const [auditUserFilter, setAuditUserFilter] = useState('All Users');
+  const [auditActionFilter, setAuditActionFilter] = useState('All Actions');
+  const [auditTransactionFilter, setAuditTransactionFilter] = useState('All Transactions');
+  const [showAuditProductDropdown, setShowAuditProductDropdown] = useState(false);
+  const [showAuditCategoryDropdown, setShowAuditCategoryDropdown] = useState(false);
+  const [showAuditUserDropdown, setShowAuditUserDropdown] = useState(false);
+  const [showAuditActionDropdown, setShowAuditActionDropdown] = useState(false);
+  const [showAuditTransactionDropdown, setShowAuditTransactionDropdown] = useState(false);
+  const [showAuditExportDropdown, setShowAuditExportDropdown] = useState(false);
+
+  // Add / Edit Category Modal State
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryDesc, setNewCategoryDesc] = useState('');
+  const [editingCategoryItem, setEditingCategoryItem] = useState<any | null>(null);
+
+  // --- Real-time Inventory Firestore & AsyncStorage Persistence Sync ---
+  useEffect(() => {
+    let unsubItems: any = null;
+    let unsubCats: any = null;
+    let unsubLogs: any = null;
+
+    const loadCachedInventory = async () => {
+      try {
+        const cachedItems = await AsyncStorage.getItem('@zuna_inventory_items');
+        if (cachedItems) {
+          const parsed = JSON.parse(cachedItems);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setInventoryItemsList(parsed);
+          }
+        }
+        const cachedCats = await AsyncStorage.getItem('@zuna_inventory_categories');
+        if (cachedCats) {
+          const parsed = JSON.parse(cachedCats);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setInventoryCategoriesList(parsed);
+          }
+        }
+        const cachedLogs = await AsyncStorage.getItem('@zuna_inventory_audit_logs');
+        if (cachedLogs) {
+          const parsed = JSON.parse(cachedLogs);
+          if (Array.isArray(parsed)) {
+            setInventoryAuditLogsList(parsed);
+          }
+        }
+      } catch (e) {}
+    };
+    loadCachedInventory();
+
+    if (db) {
+      const targetSchool = adminSchoolId || 'school1';
+      try {
+        unsubItems = db
+          .collection('schools')
+          .doc(targetSchool)
+          .collection('inventory')
+          .onSnapshot(
+            (snapshot: any) => {
+              if (snapshot) {
+                const list: any[] = [];
+                snapshot.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+                setInventoryItemsList(list);
+                AsyncStorage.setItem('@zuna_inventory_items', JSON.stringify(list)).catch(() => {});
+              }
+            },
+            (err: any) => console.warn('Inventory snapshot error:', err)
+          );
+
+        unsubCats = db
+          .collection('schools')
+          .doc(targetSchool)
+          .collection('inventory_categories')
+          .onSnapshot(
+            (snapshot: any) => {
+              if (snapshot) {
+                const list: any[] = [];
+                snapshot.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+                if (list.length > 0) {
+                  setInventoryCategoriesList(list);
+                  AsyncStorage.setItem('@zuna_inventory_categories', JSON.stringify(list)).catch(() => {});
+                }
+              }
+            },
+            (err: any) => console.warn('Categories snapshot error:', err)
+          );
+
+        unsubLogs = db
+          .collection('schools')
+          .doc(targetSchool)
+          .collection('inventory_audit_logs')
+          .onSnapshot(
+            (snapshot: any) => {
+              if (snapshot) {
+                const list: any[] = [];
+                snapshot.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+                list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+                setInventoryAuditLogsList(list);
+                AsyncStorage.setItem('@zuna_inventory_audit_logs', JSON.stringify(list)).catch(() => {});
+              }
+            },
+            (err: any) => console.warn('Audit logs snapshot error:', err)
+          );
+      } catch (e) {
+        console.warn('Firestore inventory error:', e);
+      }
+    }
+
+    return () => {
+      if (unsubItems) unsubItems();
+      if (unsubCats) unsubCats();
+      if (unsubLogs) unsubLogs();
+    };
+  }, [adminSchoolId]);
+
+  // --- Audit Log Writer Helper ---
+  const logInventoryAudit = async (actionType: string, details: any) => {
+    const targetSchool = adminSchoolId || 'school1';
+    const currentUserName = (auth && auth.currentUser && (auth.currentUser.displayName || auth.currentUser.email)) || 'Preethi';
+    const entry = {
+      timestamp: new Date().toISOString(),
+      userName: currentUserName,
+      userRole: 'ADMIN',
+      actionType,
+      ...details,
+    };
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(targetSchool, 'inventory_audit_logs', entry);
+      }
+    } catch (e) {
+      console.warn('Write audit log err:', e);
+    }
+    setInventoryAuditLogsList(prev => {
+      const updated = [{ id: 'log_' + Date.now(), ...entry }, ...prev];
+      AsyncStorage.setItem('@zuna_inventory_audit_logs', JSON.stringify(updated)).catch(() => {});
+      return updated;
+    });
+  };
+
+  // --- Save or Update Inventory Product ---
+  const handleSaveInventoryProduct = async () => {
+    const nameTrimmed = (newItemForm.name || '').trim();
+    if (!nameTrimmed) {
+      Alert.alert('Validation Error', 'Product Name is mandatory.');
+      return;
+    }
+
+    const prodIdTrimmed = (newItemForm.productId || '').trim();
+    if (prodIdTrimmed) {
+      const isDuplicate = inventoryItemsList.some(
+        i => i.id !== newItemForm.id && (i.productId || '').toLowerCase() === prodIdTrimmed.toLowerCase()
+      );
+      if (isDuplicate) {
+        Alert.alert('Validation Error', 'Product ID must be unique.');
+        return;
+      }
+    }
+
+    setIsSavingItem(true);
+    const targetSchool = adminSchoolId || 'school1';
+    const qty = Math.max(0, parseInt(newItemForm.quantity || '0', 10) || 0);
+    const status = qty === 0 ? 'Out of Stock' : qty <= 10 ? 'Low Stock' : 'In Stock';
+    const catName = (newItemForm.category || '').trim() || 'General';
+
+    // Auto-create category if doesn't exist
+    const catExists = inventoryCategoriesList.some(c => (c.name || '').toLowerCase() === catName.toLowerCase());
+    if (!catExists && catName) {
+      try {
+        if (typeof addSubDocument === 'function') {
+          await addSubDocument(targetSchool, 'inventory_categories', {
+            name: catName,
+            description: 'Auto-created during item creation',
+            createdAt: new Date().toISOString(),
+          });
+        }
+        setInventoryCategoriesList(prev => [...prev, { id: 'cat_' + Date.now(), name: catName, description: 'Auto-created' }]);
+      } catch (e) {}
+    }
+
+    const payload = {
+      productId: prodIdTrimmed,
+      name: nameTrimmed,
+      category: catName,
+      quantity: qty,
+      unit: (newItemForm.unit || 'pcs').trim() || 'pcs',
+      status: status,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (newItemForm.id) {
+        // Edit Item
+        const prevItem = inventoryItemsList.find(i => i.id === newItemForm.id);
+        if (typeof updateSubDocument === 'function') {
+          await updateSubDocument(targetSchool, 'inventory', newItemForm.id, payload);
+        }
+        setInventoryItemsList(prev => {
+          const updated = prev.map(i => (i.id === newItemForm.id ? { ...i, ...payload } : i));
+          AsyncStorage.setItem('@zuna_inventory_items', JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+        await logInventoryAudit('Product Updated', {
+          productName: nameTrimmed,
+          productId: prodIdTrimmed,
+          category: catName,
+          previousStock: prevItem?.quantity ?? 0,
+          newStock: qty,
+          quantityChanged: qty - (prevItem?.quantity ?? 0),
+          remarks: 'Manual update',
+        });
+        showToast('Product updated successfully');
+      } else {
+        // New Item
+        let newDocId = 'inv_' + Date.now();
+        if (typeof addSubDocument === 'function') {
+          newDocId = await addSubDocument(targetSchool, 'inventory', {
+            ...payload,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        const created = { id: newDocId, ...payload, createdAt: new Date().toISOString() };
+        setInventoryItemsList(prev => {
+          const updated = [created, ...prev];
+          AsyncStorage.setItem('@zuna_inventory_items', JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+        await logInventoryAudit('Product Created', {
+          productName: nameTrimmed,
+          productId: prodIdTrimmed,
+          category: catName,
+          previousStock: 0,
+          newStock: qty,
+          quantityChanged: qty,
+          remarks: 'Manual creation',
+        });
+        showToast('Product added successfully');
+      }
+      setShowAddItemModal(false);
+      setNewItemForm({ productId: '', name: '', category: '', quantity: '0', unit: 'pcs', status: 'In Stock' });
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save product to inventory.');
+    } finally {
+      setIsSavingItem(false);
+    }
+  };
+
+  // --- Delete Inventory Item ---
+  const handleDeleteInventoryProduct = (item: any) => {
+    Alert.alert(
+      'Delete Product',
+      `Are you sure you want to delete "${item.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const targetSchool = adminSchoolId || 'school1';
+            try {
+              if (typeof deleteSubDocument === 'function') {
+                await deleteSubDocument(targetSchool, 'inventory', item.id);
+              }
+            } catch (e) {}
+            setInventoryItemsList(prev => {
+              const updated = prev.filter(i => i.id !== item.id);
+              AsyncStorage.setItem('@zuna_inventory_items', JSON.stringify(updated)).catch(() => {});
+              return updated;
+            });
+            await logInventoryAudit('Product Deleted', {
+              productName: item.name || '',
+              productId: item.productId || '',
+              category: item.category || '',
+              previousStock: item.quantity ?? 0,
+              newStock: 0,
+              quantityChanged: -(item.quantity ?? 0),
+              remarks: 'Manual deletion',
+            });
+            showToast(`Deleted ${item.name}`);
+          },
+        },
+      ]
+    );
+  };
+
+  // --- Save or Update Category ---
+  const handleSaveCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      Alert.alert('Validation Error', 'Category name is required.');
+      return;
+    }
+    const targetSchool = adminSchoolId || 'school1';
+    try {
+      if (editingCategoryItem && editingCategoryItem.id) {
+        // Update existing category
+        const payload = {
+          name,
+          description: newCategoryDesc.trim() || '',
+          updatedAt: new Date().toISOString(),
+        };
+        if (typeof updateSubDocument === 'function') {
+          await updateSubDocument(targetSchool, 'inventory_categories', editingCategoryItem.id, payload);
+        }
+        setInventoryCategoriesList(prev => {
+          const next = prev.map(c => (c.id === editingCategoryItem.id ? { ...c, ...payload } : c));
+          AsyncStorage.setItem('@zuna_inventory_categories', JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+        await logInventoryAudit('Category Updated', {
+          category: name,
+          remarks: `Updated description: ${payload.description}`,
+        });
+        showToast(`Category "${name}" updated`);
+      } else {
+        // Create new category
+        let docId = 'cat_' + Date.now();
+        const payload = {
+          name,
+          description: newCategoryDesc.trim() || '',
+          createdAt: new Date().toISOString(),
+        };
+        if (typeof addSubDocument === 'function') {
+          docId = await addSubDocument(targetSchool, 'inventory_categories', payload);
+        }
+        setInventoryCategoriesList(prev => {
+          const next = [...prev, { id: docId, ...payload }];
+          AsyncStorage.setItem('@zuna_inventory_categories', JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+        await logInventoryAudit('Category Created', {
+          category: name,
+          remarks: payload.description,
+        });
+        showToast(`Category "${name}" created`);
+      }
+      setShowAddCategoryModal(false);
+      setEditingCategoryItem(null);
+      setNewCategoryName('');
+      setNewCategoryDesc('');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to save category');
+    }
+  };
+
+  // --- Bulk Export Handler ---
+  const handleExportInventoryProducts = async (format: 'xlsx' | 'csv' = 'xlsx') => {
+    const listToExport = inventorySelectedIds.length > 0
+      ? inventoryItemsList.filter(i => inventorySelectedIds.includes(i.id))
+      : filteredInventoryItems;
+
+    if (listToExport.length === 0) {
+      Alert.alert('Export Error', 'No inventory products found to export.');
+      return;
+    }
+
+    const rows = listToExport.map(i => ({
+      'ID Number': i.productId || '',
+      'Product Name': i.name || '',
+      'Category': i.category || '',
+      'Current Stock': i.quantity ?? 0,
+      'Unit': i.unit || 'pcs',
+      'Status': i.status || 'In Stock',
+      'Created Date': i.createdAt ? new Date(i.createdAt).toLocaleString() : '',
+    }));
+
+    const fileName = `inventory_products_${new Date().toISOString().slice(0, 10)}`;
+    await exportAndShareExcel(fileName, 'Inventory Products', rows, [16, 28, 20, 14, 10, 15, 22]);
+    await logInventoryAudit('Bulk Export', {
+      remarks: `Exported ${listToExport.length} products to ${format.toUpperCase()}`,
+    });
+    showToast(`Exported ${listToExport.length} products`);
+  };
+
+  // --- Download Bulk Import Template ---
+  const handleDownloadInventoryTemplate = async (format: 'xlsx' | 'csv') => {
+    const sampleRows = [
+      { 'ID Number': 'PROD-101', 'Product Name': 'Mathematics Textbook', 'Category': 'Books', 'Initial Stock': 50 },
+      { 'ID Number': 'PROD-102', 'Product Name': 'Wooden Student Desk', 'Category': 'Furniture', 'Initial Stock': 25 },
+      { 'ID Number': 'PROD-103', 'Product Name': 'Whiteboard Marker Set', 'Category': 'Stationery', 'Initial Stock': 100 },
+      { 'ID Number': 'PROD-104', 'Product Name': 'Digital Projector', 'Category': 'Electronics', 'Initial Stock': 8 },
+    ];
+    const fileName = `inventory_import_template_${format === 'csv' ? 'csv' : 'xlsx'}`;
+    await exportAndShareExcel(fileName, 'Template', sampleRows, [16, 28, 20, 16]);
+    showToast(`Downloaded ${format.toUpperCase()} template`);
+  };
+
+  // --- Pick File for Bulk Import ---
+  const handlePickImportFile = async () => {
+    try {
+      const res = await pickDocument('excel');
+      if (res && res.name) {
+        setSelectedImportFile(res);
+        showToast(`Selected ${res.name}`);
+      }
+    } catch (e) {
+      console.warn('Pick file err:', e);
+    }
+  };
+
+  // --- Process Bulk Import ---
+  const handleProcessBulkImport = async () => {
+    if (!selectedImportFile || !selectedImportFile.base64) {
+      Alert.alert('Missing File', 'Please choose an Excel or CSV file first.');
+      return;
+    }
+
+    if (!XLSX) {
+      Alert.alert('Error', 'Excel library is not available.');
+      return;
+    }
+
+    setIsProcessingImport(true);
+    try {
+      let workbook: any;
+      try {
+        workbook = XLSX.read(selectedImportFile.base64, { type: 'base64' });
+      } catch (err) {
+        Alert.alert('Parse Error', 'Failed to read file. Please ensure it is a valid .xlsx or .csv file.');
+        setIsProcessingImport(false);
+        return;
+      }
+
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+      if (!data || data.length <= 1) {
+        Alert.alert('Empty File', 'Uploaded file contains no data rows.');
+        setIsProcessingImport(false);
+        return;
+      }
+
+      const headers = data[0].map(h => String(h || '').trim().toLowerCase());
+      const idxId = headers.findIndex(h => h.includes('id') || h.includes('number'));
+      const idxName = headers.findIndex(h => h.includes('product') || h.includes('name'));
+      const idxCat = headers.findIndex(h => h.includes('category'));
+      const idxStock = headers.findIndex(h => h.includes('stock') || h.includes('quantity') || h.includes('qty'));
+
+      if (idxName === -1 || idxCat === -1) {
+        Alert.alert('Invalid Template', 'Header columns "Product Name" and "Category" are required.');
+        setIsProcessingImport(false);
+        return;
+      }
+
+      const targetSchool = adminSchoolId || 'school1';
+      let successCount = 0;
+      let skippedCount = 0;
+      let updatedCount = 0;
+      const currentItems = [...inventoryItemsList];
+      const currentCats = [...inventoryCategoriesList];
+
+      for (let rIdx = 1; rIdx < data.length; rIdx++) {
+        const row = data[rIdx];
+        if (!row || row.length === 0 || row.every(val => val === null || val === undefined || String(val).trim() === '')) {
+          continue;
+        }
+
+        const rawId = idxId !== -1 ? String(row[idxId] || '').trim() : '';
+        const rawName = String(row[idxName] || '').trim();
+        const rawCat = String(row[idxCat] || '').trim() || 'General';
+        const rawStock = idxStock !== -1 ? Math.max(0, parseInt(String(row[idxStock]), 10) || 0) : 0;
+
+        if (!rawName) continue;
+
+        const existing = currentItems.find(
+          i => (rawId && (i.productId || '').toLowerCase() === rawId.toLowerCase()) ||
+               (i.name || '').toLowerCase() === rawName.toLowerCase()
+        );
+
+        if (existing) {
+          if (importDuplicateAction === 'skip' || importDuplicateAction === 'create-new') {
+            skippedCount++;
+            continue;
+          } else if (importDuplicateAction === 'update') {
+            const newQty = (existing.quantity || 0) + rawStock;
+            const status = newQty === 0 ? 'Out of Stock' : newQty <= 10 ? 'Low Stock' : 'In Stock';
+            const updatedItem = { ...existing, quantity: newQty, status };
+            if (typeof updateSubDocument === 'function') {
+              await updateSubDocument(targetSchool, 'inventory', existing.id, { quantity: newQty, status });
+            }
+            const idx = currentItems.findIndex(i => i.id === existing.id);
+            if (idx !== -1) currentItems[idx] = updatedItem;
+            await logInventoryAudit('Product Updated', {
+              productName: rawName,
+              productId: rawId || existing.productId || '',
+              category: rawCat,
+              previousStock: existing.quantity || 0,
+              newStock: newQty,
+              quantityChanged: rawStock,
+              remarks: 'Updated via bulk import',
+            });
+            updatedCount++;
+          }
+        } else {
+          // Check category auto-creation
+          const catExists = currentCats.some(c => (c.name || '').toLowerCase() === rawCat.toLowerCase());
+          if (!catExists && importAutoCreateCategories) {
+            if (typeof addSubDocument === 'function') {
+              await addSubDocument(targetSchool, 'inventory_categories', {
+                name: rawCat,
+                description: 'Auto-created during bulk import',
+                createdAt: new Date().toISOString(),
+              });
+            }
+            currentCats.push({ id: 'cat_' + Date.now(), name: rawCat });
+            await logInventoryAudit('Category Created', {
+              category: rawCat,
+              remarks: 'Auto-created during bulk import',
+            });
+          }
+
+          const status = rawStock === 0 ? 'Out of Stock' : rawStock <= 10 ? 'Low Stock' : 'In Stock';
+          const newPayload = {
+            productId: rawId,
+            name: rawName,
+            category: rawCat,
+            quantity: rawStock,
+            unit: 'pcs',
+            status: status,
+            createdAt: new Date().toISOString(),
+          };
+
+          let newDocId = 'inv_' + Date.now() + '_' + rIdx;
+          if (typeof addSubDocument === 'function') {
+            newDocId = await addSubDocument(targetSchool, 'inventory', newPayload);
+          }
+          currentItems.push({ id: newDocId, ...newPayload });
+          await logInventoryAudit('Product Created', {
+            productName: rawName,
+            productId: rawId,
+            category: rawCat,
+            previousStock: 0,
+            newStock: rawStock,
+            quantityChanged: rawStock,
+            remarks: 'Imported via bulk import',
+          });
+          successCount++;
+        }
+      }
+
+      setInventoryItemsList(currentItems);
+      setInventoryCategoriesList(currentCats);
+      AsyncStorage.setItem('@zuna_inventory_items', JSON.stringify(currentItems)).catch(() => {});
+      AsyncStorage.setItem('@zuna_inventory_categories', JSON.stringify(currentCats)).catch(() => {});
+      setShowInventoryImportModal(false);
+      setSelectedImportFile(null);
+      Alert.alert(
+        'Bulk Import Completed',
+        `Results:\n• Created: ${successCount}\n• Updated: ${updatedCount}\n• Skipped: ${skippedCount}`
+      );
+    } catch (err: any) {
+      Alert.alert('Import Error', err?.message || 'Failed to process bulk import.');
+    } finally {
+      setIsProcessingImport(false);
+    }
+  };
+
+  // --- Build Audit Logs PDF Document ---
+  const buildAuditLogsPdf = (title: string, list: any[]) => {
+    const sanitize = (str: string) => String(str || '').replace(/[()\\]/g, '\\$&');
+    const contentStream: string[] = [
+      'BT',
+      '/F1 16 Tf',
+      '30 750 Td',
+      '(' + sanitize(title) + ') Tj',
+      '/F1 9 Tf',
+      '0 -18 Td',
+      '(Generated: ' + sanitize(new Date().toLocaleString()) + ' | Total Records: ' + list.length + ') Tj',
+      '0 -24 Td',
+      '/F1 8 Tf',
+      '(DATE & TIME         USER            ACTION          PRODUCT           DIFF   REMARKS) Tj',
+      '0 -12 Td',
+    ];
+
+    list.slice(0, 45).forEach(l => {
+      const dStr = (l.timestamp ? new Date(l.timestamp).toLocaleDateString() : '—').padEnd(18);
+      const uStr = (l.userName || 'Admin').slice(0, 14).padEnd(16);
+      const aStr = (l.actionType || 'Action').slice(0, 14).padEnd(16);
+      const pStr = (l.productName || '—').slice(0, 16).padEnd(18);
+      const diffStr = (l.quantityChanged !== undefined ? (l.quantityChanged > 0 ? '+' + l.quantityChanged : String(l.quantityChanged)) : '—').slice(0, 6).padEnd(7);
+      const rStr = (l.remarks || '—').slice(0, 24);
+      const line = (dStr + uStr + aStr + pStr + diffStr + rStr).slice(0, 95);
+      contentStream.push('(' + sanitize(line) + ') Tj');
+      contentStream.push('0 -13 Td');
+    });
+
+    contentStream.push('ET');
+    const streamData = contentStream.join('\n');
+    let streamByteLen = 0;
+    for (let i = 0; i < streamData.length; i++) {
+      streamByteLen += streamData.charCodeAt(i) > 255 ? 2 : 1;
+    }
+
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+
+    const addObj = (objStr: string) => {
+      offsets.push(pdf.length);
+      pdf += objStr + '\n';
+    };
+
+    addObj('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj');
+    addObj('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj');
+    addObj('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj');
+    addObj('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>\nendobj');
+    addObj('5 0 obj\n<< /Length ' + streamByteLen + ' >>\nstream\n' + streamData + '\nendstream\nendobj');
+
+    const startXref = pdf.length;
+    pdf += 'xref\n0 ' + (offsets.length + 1) + '\n';
+    pdf += '0000000000 65535 f \n';
+    offsets.forEach(off => {
+      pdf += String(off).padStart(10, '0') + ' 00000 n \n';
+    });
+    pdf += 'trailer\n<< /Size ' + (offsets.length + 1) + ' /Root 1 0 R >>\n';
+    pdf += 'startxref\n' + startXref + '\n%%EOF';
+    return pdf;
+  };
+
+  // --- Export Audit Logs Handler (Supporting XLSX, CSV, PDF - Matches Image 3) ---
+  const handleExportAuditLogs = async (format: 'xlsx' | 'csv' | 'pdf') => {
+    setShowAuditExportDropdown(false);
+
+    if (filteredAuditLogs.length === 0) {
+      Alert.alert('Export Error', 'No audit logs found matching the selected filters.');
+      return;
+    }
+
+    const rows = filteredAuditLogs.map((l, idx) => ({
+      'Log ID': l.id || `LOG-${idx + 1000}`,
+      'Date & Time': l.timestamp ? new Date(l.timestamp).toLocaleString() : '',
+      'User Name': l.userName || 'Admin',
+      'User Role': l.userRole || 'admin',
+      'Action Type': l.actionType || '',
+      'Product Name': l.productName || '—',
+      'Product ID': l.productId || '—',
+      'Category': l.category || '—',
+      'Previous Stock': l.previousStock !== undefined ? l.previousStock : '—',
+      'New Stock': l.newStock !== undefined ? l.newStock : '—',
+      'Quantity Changed': l.quantityChanged !== undefined ? l.quantityChanged : '—',
+      'Remarks': l.remarks || '—',
+    }));
+
+    const baseName = `inventory_audit_logs_${new Date().toISOString().slice(0, 10)}`;
+
+    try {
+      if (format === 'xlsx') {
+        await exportAndShareExcel(baseName, 'Audit Logs', rows, [14, 22, 18, 12, 18, 25, 15, 18, 12, 12, 12, 25]);
+        showToast(`Exported ${filteredAuditLogs.length} audit logs to Excel`);
+      } else if (format === 'csv') {
+        if (!XLSX) {
+          Alert.alert('Error', 'Export library unavailable.');
+          return;
+        }
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
+        const csvBase64 = XLSX.write(wb, { type: 'base64', bookType: 'csv' });
+        await saveAndOpenFile(`${baseName}.csv`, 'text/csv', csvBase64);
+        showToast(`Exported ${filteredAuditLogs.length} audit logs to CSV`);
+      } else if (format === 'pdf') {
+        const pdfString = buildAuditLogsPdf('Inventory Audit Logs Report', filteredAuditLogs);
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        let b64 = '';
+        for (let i = 0; i < pdfString.length; i += 3) {
+          const a = pdfString.charCodeAt(i);
+          const b = i + 1 < pdfString.length ? pdfString.charCodeAt(i + 1) : 0;
+          const c = i + 2 < pdfString.length ? pdfString.charCodeAt(i + 2) : 0;
+          const n = (a << 16) | (b << 8) | c;
+          b64 += chars.charAt((n >> 18) & 63) +
+                 chars.charAt((n >> 12) & 63) +
+                 (i + 1 < pdfString.length ? chars.charAt((n >> 6) & 63) : '=') +
+                 (i + 2 < pdfString.length ? chars.charAt(n & 63) : '=');
+        }
+        await saveAndOpenFile(`${baseName}.pdf`, 'application/pdf', b64);
+        showToast(`Exported ${filteredAuditLogs.length} audit logs to PDF`);
+      }
+    } catch (err: any) {
+      Alert.alert('Export Error', err?.message || 'Failed to export audit logs.');
+    }
+  };
+
+  // --- Reset Audit Filters ---
+  const handleResetAuditFilters = () => {
+    setAuditSearch('');
+    setAuditStartDate('');
+    setAuditEndDate('');
+    setAuditProductFilter('All Products');
+    setAuditCategoryFilter('All Categories');
+    setAuditUserFilter('All Users');
+    setAuditActionFilter('All Actions');
+    setAuditTransactionFilter('All Transactions');
+    showToast('Audit filters reset');
+  };
+
+  // --- Dynamic Category Options ---
+  const inventoryCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    inventoryCategoriesList.forEach((c: any) => { if (c.name) set.add(c.name); });
+    inventoryItemsList.forEach((i: any) => { if (i.category) set.add(i.category); });
+    return ['All Categories', ...Array.from(set)];
+  }, [inventoryCategoriesList, inventoryItemsList]);
+
+  // --- Dynamic Audit Log Filter Options ---
+  const auditUniqueProducts = useMemo(() => {
+    const set = new Set<string>();
+    inventoryAuditLogsList.forEach((l: any) => { if (l.productName) set.add(l.productName); });
+    return ['All Products', ...Array.from(set)];
+  }, [inventoryAuditLogsList]);
+
+  const auditUniqueCategories = useMemo(() => {
+    const set = new Set<string>();
+    inventoryAuditLogsList.forEach((l: any) => { if (l.category) set.add(l.category); });
+    return ['All Categories', ...Array.from(set)];
+  }, [inventoryAuditLogsList]);
+
+  const auditUniqueUsers = useMemo(() => {
+    const set = new Set<string>();
+    inventoryAuditLogsList.forEach((l: any) => { if (l.userName) set.add(l.userName); });
+    return ['All Users', ...Array.from(set)];
+  }, [inventoryAuditLogsList]);
+
+  const auditUniqueActions = useMemo(() => {
+    const set = new Set<string>();
+    inventoryAuditLogsList.forEach((l: any) => { if (l.actionType) set.add(l.actionType); });
+    return ['All Actions', ...Array.from(set)];
+  }, [inventoryAuditLogsList]);
+
+  // --- Filtered Inventory Items ---
+  const filteredInventoryItems = useMemo(() => {
+    return inventoryItemsList.filter((item: any) => {
+      if (inventorySearch.trim()) {
+        const q = inventorySearch.toLowerCase();
+        const matchName = (item.name || '').toLowerCase().includes(q);
+        const matchId = (item.productId || '').toLowerCase().includes(q);
+        const matchCat = (item.category || '').toLowerCase().includes(q);
+        if (!matchName && !matchId && !matchCat) return false;
+      }
+      if (inventoryCategoryFilter !== 'All Categories' && item.category !== inventoryCategoryFilter) {
+        return false;
+      }
+      if (inventoryStatusFilter !== 'All Statuses') {
+        if (inventoryStatusFilter === 'In Stock' && item.status !== 'In Stock') return false;
+        if (inventoryStatusFilter === 'Low Stock' && item.status !== 'Low Stock') return false;
+        if (inventoryStatusFilter === 'Out of Stock' && item.status !== 'Out of Stock') return false;
+      }
+      return true;
+    });
+  }, [inventoryItemsList, inventorySearch, inventoryCategoryFilter, inventoryStatusFilter]);
+
+  // --- Filtered Audit Logs ---
+  const filteredAuditLogs = useMemo(() => {
+    return inventoryAuditLogsList.filter((log: any) => {
+      if (auditSearch.trim()) {
+        const q = auditSearch.toLowerCase();
+        const matchProd = (log.productName || '').toLowerCase().includes(q);
+        const matchId = (log.productId || '').toLowerCase().includes(q);
+        const matchUser = (log.userName || '').toLowerCase().includes(q);
+        const matchRemarks = (log.remarks || '').toLowerCase().includes(q);
+        if (!matchProd && !matchId && !matchUser && !matchRemarks) return false;
+      }
+
+      if (auditStartDate) {
+        const sParts = auditStartDate.split('-');
+        if (sParts.length === 3) {
+          const sDate = new Date(parseInt(sParts[2], 10), parseInt(sParts[1], 10) - 1, parseInt(sParts[0], 10));
+          const logDate = new Date(log.timestamp);
+          if (logDate < sDate) return false;
+        }
+      }
+      if (auditEndDate) {
+        const eParts = auditEndDate.split('-');
+        if (eParts.length === 3) {
+          const eDate = new Date(parseInt(eParts[2], 10), parseInt(eParts[1], 10) - 1, parseInt(eParts[0], 10), 23, 59, 59, 999);
+          const logDate = new Date(log.timestamp);
+          if (logDate > eDate) return false;
+        }
+      }
+
+      if (auditProductFilter !== 'All Products' && log.productName !== auditProductFilter) return false;
+      if (auditCategoryFilter !== 'All Categories' && log.category !== auditCategoryFilter) return false;
+      if (auditUserFilter !== 'All Users' && log.userName !== auditUserFilter) return false;
+      if (auditActionFilter !== 'All Actions' && log.actionType !== auditActionFilter) return false;
+
+      if (auditTransactionFilter === 'Inbound Stock') {
+        const act = (log.actionType || '').toLowerCase();
+        if (!act.includes('inbound') && (log.quantityChanged ?? 0) <= 0) return false;
+      } else if (auditTransactionFilter === 'Outbound Stock') {
+        const act = (log.actionType || '').toLowerCase();
+        if (!act.includes('outbound') && (log.quantityChanged ?? 0) >= 0) return false;
+      }
+
+      return true;
+    });
+  }, [inventoryAuditLogsList, auditSearch, auditStartDate, auditEndDate, auditProductFilter, auditCategoryFilter, auditUserFilter, auditActionFilter, auditTransactionFilter]);
 
   // --- Admit New Student Form State (Pic 1 / Student Directory Matching) ---
   const [admitStudentForm, setAdmitStudentForm] = useState({
@@ -2729,6 +3793,89 @@ function App() {
     { id: 'lf2', title: 'Kindergarten Enquiry', submissions: 12, status: 'Active', embedCode: '<iframe src="https://sms.zuna.edu/embed/kg" />' },
     { id: 'lf3', title: 'High School Enquiry', submissions: 18, status: 'Active', embedCode: '<iframe src="https://sms.zuna.edu/embed/highschool" />' },
   ]);
+
+  // Create Form Configuration Modal State (Matches Image 3)
+  const [showCreateFormModal, setShowCreateFormModal] = useState(false);
+  const [newFormConfig, setNewFormConfig] = useState<{
+    id?: string;
+    title: string;
+    description: string;
+    successMessage: string;
+    fields: Array<{ id: string; label: string; type: string; required: boolean; options?: string }>;
+  }>({
+    title: '',
+    description: '',
+    successMessage: '',
+    fields: [
+      { id: 'f_1', label: 'Full Name', type: 'text', required: true, options: '' },
+      { id: 'f_2', label: 'Email Address', type: 'email', required: true, options: '' },
+      { id: 'f_3', label: 'Phone Number', type: 'phone', required: true, options: '' },
+    ],
+  });
+  const [newFieldInputLabel, setNewFieldInputLabel] = useState('');
+  const [newFieldInputType, setNewFieldInputType] = useState('text');
+  const [newFieldInputRequired, setNewFieldInputRequired] = useState(false);
+  const [newFieldInputOptions, setNewFieldInputOptions] = useState('');
+  const [showFieldTypeDropdown, setShowFieldTypeDropdown] = useState(false);
+  const [isSavingFormConfig, setIsSavingFormConfig] = useState(false);
+
+  // Public Admission Application Form State (Matches Image 2)
+  const [showPublicAdmissionModal, setShowPublicAdmissionModal] = useState(false);
+  const [admissionFormData, setAdmissionFormData] = useState({
+    // 1. Student Personal Details
+    fullName: '',
+    firstName: '',
+    lastName: '',
+    dob: '',
+    gender: 'Male',
+    bloodGroup: '',
+    nationality: 'Indian',
+    religion: '',
+    motherTongue: '',
+    aadharNumber: '',
+    photoFile: null as any,
+
+    // 2. Academic & Target Class
+    targetClassId: '',
+    previousSchool: '',
+    previousMarks: '',
+    preferredStream: '',
+    secondLanguage: '',
+
+    // 3. Parent & Guardian Information
+    parentName: '',
+    relationship: 'Father',
+    parentPhone: '',
+    parentEmail: '',
+    parentOccupation: '',
+    secondaryPhone: '',
+
+    // 4. Residential Address
+    homeAddress: '',
+    city: '',
+    state: '',
+    pincode: '',
+
+    // 5. Declaration & Security Verification
+    declaration: false,
+    verificationCodeInput: '',
+  });
+
+  const [captchaCode, setCaptchaCode] = useState('J5DL9X');
+  const [showAdmissionGenderDropdown, setShowAdmissionGenderDropdown] = useState(false);
+  const [showAdmissionBloodDropdown, setShowAdmissionBloodDropdown] = useState(false);
+  const [showAdmissionClassDropdown, setShowAdmissionClassDropdown] = useState(false);
+  const [showAdmissionRelDropdown, setShowAdmissionRelDropdown] = useState(false);
+  const [isSubmittingAdmission, setIsSubmittingAdmission] = useState(false);
+
+  const generateCaptchaCode = () => {
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setCaptchaCode(code);
+  };
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [newLeadForm, setNewLeadForm] = useState({
     name: '',
@@ -2750,6 +3897,21 @@ function App() {
   const [selectedCustomModuleTarget, setSelectedCustomModuleTarget] = useState('Staff Directory');
   const [selectedImportModule, setSelectedImportModule] = useState('');
   const [customModuleSections, setCustomModuleSections] = useState<any[]>([]);
+  const [showTargetModuleDropdown, setShowTargetModuleDropdown] = useState(false);
+  const [showImportModuleDropdown, setShowImportModuleDropdown] = useState(false);
+
+  const SCHEMA_MODULE_LIST = [
+    'Staff Directory',
+    'Student Directory',
+    'Inventory Management',
+    'HR & Payroll',
+    'Timetables',
+    'Exams & Results',
+    'Fees & Payments',
+    'Transport',
+    'Library',
+    'Environment Setup',
+  ];
   const [showAddSectionModal, setShowAddSectionModal] = useState(false);
   const [newSectionTitle, setNewSectionTitle] = useState('');
   const [showAddFieldModal, setShowAddFieldModal] = useState(false);
@@ -2779,7 +3941,7 @@ function App() {
     'Subject Management',
     'Student Directory',
     'Staff Management',
-    'Timetable & Scheduling',
+    'Timetables & Scheduling',
     'Transport Management (GPS/Routes)',
     'Library Management',
     'Examinations & Report Cards',
@@ -2799,6 +3961,26 @@ function App() {
     'Billing & Subscriptions',
     'Leads Management',
   ];
+
+  // Teacher Panel Permissions (Matches Image 1 & Image 2)
+  const TEACHER_ROLE_MODULES = [
+    'Chat & Messaging',
+    'Homework Management',
+    'Leave Requests',
+    'Lesson Plans',
+    'Resource Sharing',
+    'PTM Scheduler',
+    'Performance Tracking',
+    'Timetables & Scheduling',
+    'Transport Management (GPS/Routes)',
+    'Examinations & Report Cards',
+    'Noticeboard & Announcements',
+    'HR & Payroll Management',
+    'Attendance Management',
+    'Academic Calendar',
+  ];
+
+  const [showTargetLoginPanelDropdown, setShowTargetLoginPanelDropdown] = useState(false);
   const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES_LIST);
   const [selectedRole, setSelectedRole] = useState<string>('Correspondent');
   const [targetLoginPanel, setTargetLoginPanel] = useState<'Admin Panel' | 'Teacher Panel'>('Admin Panel');
@@ -4505,22 +5687,73 @@ function App() {
     showToast(`Created class ${newClass.name} - ${newClass.section}!`);
   };
 
-  const handleAddSubjectSubmit = () => {
-    if (!newSubjectName.trim() || !newSubjectCode.trim()) {
-      Alert.alert('Required', 'Please enter subject name and code.');
+  const handleOpenAddSubjectModal = () => {
+    setNewSubjectName('');
+    setNewSubjectCode('');
+    setNewSubjectAssignedTeacherIds([]);
+    setShowAddSubjectModal(true);
+  };
+
+  const handleToggleSubjectTeacher = (teacherId: string) => {
+    setNewSubjectAssignedTeacherIds(prev => {
+      if (prev.includes(teacherId)) {
+        return prev.filter(id => id !== teacherId);
+      } else {
+        return [...prev, teacherId];
+      }
+    });
+  };
+
+  const handleAddSubjectSubmit = async () => {
+    if (!newSubjectName.trim()) {
+      Alert.alert('Required', 'Please enter a Subject Name.');
       return;
     }
+    const nameTrimmed = newSubjectName.trim();
+    const codeTrimmed = newSubjectCode.trim();
+
+    const isDuplicate = subjectList.some(s =>
+      s.name.toLowerCase() === nameTrimmed.toLowerCase() ||
+      (codeTrimmed && s.code && s.code.toLowerCase() === codeTrimmed.toLowerCase())
+    );
+
+    if (isDuplicate) {
+      Alert.alert('Duplicate', 'A subject with this Name or Code already exists.');
+      return;
+    }
+
+    const assignedNames = newSubjectAssignedTeacherIds.map(tid => {
+      const f = (staffList || []).find((fac: any) => fac.id === tid);
+      return f ? f.name : tid;
+    });
+
     const newSub: SubjectItem = {
       id: Date.now().toString(),
-      name: newSubjectName.trim(),
-      code: newSubjectCode.trim(),
-      assignedTeachers: [newSubjectTeacher],
+      name: nameTrimmed,
+      code: codeTrimmed,
+      assignedTeachers: assignedNames.length > 0 ? assignedNames : (newSubjectTeacher ? [newSubjectTeacher] : []),
     };
+
     setSubjectList(prev => [...prev, newSub]);
     setNewSubjectName('');
     setNewSubjectCode('');
+    setNewSubjectAssignedTeacherIds([]);
     setShowAddSubjectModal(false);
-    showToast(`Added subject ${newSub.name} (${newSub.code})!`);
+    showToast('Subject created successfully!');
+
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('subjects').doc(newSub.id).set({
+          name: nameTrimmed,
+          code: codeTrimmed,
+          assignedTeachers: newSub.assignedTeachers,
+          assignedTeacherIds: newSubjectAssignedTeacherIds,
+          createdAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.warn('Subject persistence error:', err);
+    }
   };
 
   const handleChangeClassSubmit = async () => {
@@ -4946,8 +6179,15 @@ function App() {
   };
 
   // --- Registration Links Handlers ---
-  const handleCopyLink = (id: string, url: string) => {
+  const handleCopyLink = async (id: string, url: string) => {
     setCopiedLinkType(id);
+    try {
+      if (NativeModules.ZunaFilePicker && typeof NativeModules.ZunaFilePicker.copyToClipboard === 'function') {
+        await NativeModules.ZunaFilePicker.copyToClipboard(url);
+      }
+    } catch (e) {
+      console.warn('Native clipboard copy err:', e);
+    }
     showToast(`Copied link to clipboard!`);
     setTimeout(() => setCopiedLinkType(null), 2500);
   };
@@ -5030,6 +6270,230 @@ function App() {
   };
 
   // --- Leads Management Handlers ---
+  // --- Save Form Configuration Handler (Matches Image 3) ---
+  const handleSaveFormConfiguration = async () => {
+    if (!newFormConfig.title.trim()) {
+      Alert.alert('Validation Error', 'Form Title is mandatory.');
+      return;
+    }
+
+    setIsSavingFormConfig(true);
+    const targetSchool = adminSchoolId || 'school1';
+    const docId = 'form_' + Date.now();
+    const payload = {
+      title: newFormConfig.title.trim(),
+      description: newFormConfig.description.trim() || '',
+      successMessage: newFormConfig.successMessage.trim() || 'Thank you. Your enquiry has been received!',
+      fields: newFormConfig.fields,
+      status: 'Active',
+      submissions: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(targetSchool, 'leadForms', payload);
+      }
+    } catch (e) {
+      console.warn('Save lead form Firestore err:', e);
+    }
+
+    setLeadsFormsList(prev => {
+      const updated = [{ id: docId, ...payload }, ...prev];
+      AsyncStorage.setItem('@zuna_lead_forms', JSON.stringify(updated)).catch(() => {});
+      return updated;
+    });
+
+    showToast(`Form "${payload.title}" configuration saved`);
+    setIsSavingFormConfig(false);
+    setShowCreateFormModal(false);
+  };
+
+  // --- Submit Public Admission Application Handler (Matches Image 2) ---
+  const handleSubmitPublicAdmission = async () => {
+    // 1. Mandatory Validations
+    if (!admissionFormData.firstName.trim()) {
+      Alert.alert('Validation Error', 'Student First Name is required.');
+      return;
+    }
+    if (!admissionFormData.lastName.trim()) {
+      Alert.alert('Validation Error', 'Student Last Name is required.');
+      return;
+    }
+    if (!admissionFormData.dob.trim()) {
+      Alert.alert('Validation Error', 'Date of Birth is required.');
+      return;
+    }
+
+    // Aadhaar: Strictly 12 digits numeric
+    const cleanAadhaar = admissionFormData.aadharNumber.replace(/[^0-9]/g, '');
+    if (!cleanAadhaar) {
+      Alert.alert('Validation Error', 'Aadhaar Number is required.');
+      return;
+    }
+    if (cleanAadhaar.length !== 12) {
+      Alert.alert('Validation Error', 'Aadhaar Number must be exactly 12 digits (numbers only).');
+      return;
+    }
+
+    // Parent Name
+    if (!admissionFormData.parentName.trim()) {
+      Alert.alert('Validation Error', 'Father / Guardian Name is required.');
+      return;
+    }
+
+    // Phone: Strictly 10 digits numeric
+    const cleanPhone = admissionFormData.parentPhone.replace(/[^0-9]/g, '');
+    if (!cleanPhone) {
+      Alert.alert('Validation Error', 'Primary Mobile Number is required.');
+      return;
+    }
+    if (cleanPhone.length !== 10) {
+      Alert.alert('Validation Error', 'Mobile Number must be exactly 10 digits.');
+      return;
+    }
+
+    // Email format validation
+    if (admissionFormData.parentEmail.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(admissionFormData.parentEmail.trim())) {
+        Alert.alert('Validation Error', 'Please enter a valid email address.');
+        return;
+      }
+    }
+
+    // Residential Address
+    if (!admissionFormData.homeAddress.trim()) {
+      Alert.alert('Validation Error', 'Residential Address is required.');
+      return;
+    }
+
+    // PIN code: Strictly 6 digits numeric
+    const cleanPin = admissionFormData.pincode.replace(/[^0-9]/g, '');
+    if (!cleanPin) {
+      Alert.alert('Validation Error', 'PIN / Postal Code is required.');
+      return;
+    }
+    if (cleanPin.length !== 6) {
+      Alert.alert('Validation Error', 'PIN / Postal Code must be exactly 6 digits.');
+      return;
+    }
+
+    // Declaration checkbox
+    if (!admissionFormData.declaration) {
+      Alert.alert('Validation Error', 'Please confirm the declaration statement before submitting.');
+      return;
+    }
+
+    // Security Verification Captcha
+    if (!admissionFormData.verificationCodeInput.trim() ||
+        admissionFormData.verificationCodeInput.trim().toUpperCase() !== captchaCode.toUpperCase()) {
+      Alert.alert('Validation Error', 'Security verification code does not match. Please try again.');
+      generateCaptchaCode();
+      return;
+    }
+
+    setIsSubmittingAdmission(true);
+    const targetSchool = adminSchoolId || 'school1';
+    const appNum = `ADM-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const targetClassObj = classList.find(c => c.id === admissionFormData.targetClassId);
+    const targetClassName = targetClassObj ? `${targetClassObj.name} - ${targetClassObj.section}` : '';
+
+    const payload = {
+      applicationNumber: appNum,
+      firstName: admissionFormData.firstName.trim(),
+      lastName: admissionFormData.lastName.trim(),
+      studentName: `${admissionFormData.firstName.trim()} ${admissionFormData.lastName.trim()}`,
+      dob: admissionFormData.dob,
+      gender: admissionFormData.gender,
+      bloodGroup: admissionFormData.bloodGroup,
+      nationality: admissionFormData.nationality || 'Indian',
+      religion: admissionFormData.religion,
+      motherTongue: admissionFormData.motherTongue,
+      aadharNumber: cleanAadhaar,
+      photoUrl: admissionFormData.photoFile ? admissionFormData.photoFile.name : '',
+
+      targetClassId: admissionFormData.targetClassId,
+      targetClassName: targetClassName,
+      previousSchool: admissionFormData.previousSchool,
+      previousMarks: admissionFormData.previousMarks,
+      preferredStream: admissionFormData.preferredStream,
+      secondLanguage: admissionFormData.secondLanguage,
+
+      parentName: admissionFormData.parentName.trim(),
+      parentRelationship: admissionFormData.relationship,
+      parentPhone: cleanPhone,
+      parentEmail: admissionFormData.parentEmail.trim(),
+      parentOccupation: admissionFormData.parentOccupation,
+      secondaryPhone: admissionFormData.secondaryPhone,
+
+      homeAddress: admissionFormData.homeAddress.trim(),
+      city: admissionFormData.city,
+      state: admissionFormData.state,
+      pincode: cleanPin,
+
+      status: 'Pending',
+      submittedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (typeof addSubDocument === 'function') {
+        await addSubDocument(targetSchool, 'admissionApplications', payload);
+      }
+    } catch (e) {
+      console.warn('Admission submission err:', e);
+    }
+
+    try {
+      const cached = await AsyncStorage.getItem('@zuna_admission_apps');
+      const parsed = cached ? JSON.parse(cached) : [];
+      await AsyncStorage.setItem('@zuna_admission_apps', JSON.stringify([{ id: 'app_' + Date.now(), ...payload }, ...parsed]));
+    } catch (e) {}
+
+    setIsSubmittingAdmission(false);
+    setShowPublicAdmissionModal(false);
+
+    Alert.alert(
+      'Application Submitted Successfully',
+      `Your application has been registered with Reference Number:\n\n${appNum}\n\nThe school administration will review and verify your details.`,
+      [{ text: 'OK' }]
+    );
+
+    // Reset Form
+    setAdmissionFormData({
+      fullName: '',
+      firstName: '',
+      lastName: '',
+      dob: '',
+      gender: 'Male',
+      bloodGroup: '',
+      nationality: 'Indian',
+      religion: '',
+      motherTongue: '',
+      aadharNumber: '',
+      photoFile: null,
+      targetClassId: '',
+      previousSchool: '',
+      previousMarks: '',
+      preferredStream: '',
+      secondLanguage: '',
+      parentName: '',
+      relationship: 'Father',
+      parentPhone: '',
+      parentEmail: '',
+      parentOccupation: '',
+      secondaryPhone: '',
+      homeAddress: '',
+      city: '',
+      state: '',
+      pincode: '',
+      declaration: false,
+      verificationCodeInput: '',
+    });
+  };
+
   const handleCreateLeadSubmit = () => {
     if (!newLeadForm.name.trim()) {
       Alert.alert('Required', 'Please enter lead contact name.');
@@ -5178,8 +6642,22 @@ function App() {
     showToast('Field removed.');
   };
 
-  const handleSaveSchema = () => {
+  const handleSaveSchema = async () => {
+    const modKey = selectedCustomModuleTarget.toLowerCase().replace(/[^a-z0-9]/g, '_');
     showToast(`Form Schema for "${selectedCustomModuleTarget}" saved successfully!`);
+
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(modKey).set({
+          targetModule: selectedCustomModuleTarget,
+          sections: customModuleSections,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+      await AsyncStorage.setItem(`sms_schema_${adminSchoolId || 'default'}_${modKey}`, JSON.stringify(customModuleSections));
+    } catch (err) {
+      console.warn('Error saving schema:', err);
+    }
   };
 
   const handleImportSchema = (source: string) => {
@@ -5274,11 +6752,70 @@ function App() {
     showToast(`${nextVal ? 'Granted all' : 'Cleared'} permissions for ${moduleName}`);
   };
 
-  const handleSavePermissions = () => {
-    showToast(`Permissions successfully saved for ${selectedRole}!`);
+  const handleSavePermissions = async () => {
+    const rolePerms = rolePermissionsMap[selectedRole] || {};
+    const activePanel = targetLoginPanel === 'Teacher Panel' ? 'teacher' : 'admin';
+    showToast(`${selectedRole} permissions saved successfully!`);
+
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('roles').doc(selectedRole).set({
+          name: selectedRole,
+          permissions: rolePerms,
+          loginPanel: activePanel,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+      await AsyncStorage.setItem(`sms_role_${adminSchoolId || 'default'}_${selectedRole}`, JSON.stringify({
+        permissions: rolePerms,
+        loginPanel: activePanel,
+      }));
+    } catch (err) {
+      console.warn('Error saving permissions:', err);
+    }
   };
 
-  const handleAddRoleSubmit = () => {
+  const handleDeleteRole = (roleToDelete: string) => {
+    if (DEFAULT_ROLES_LIST.includes(roleToDelete)) {
+      Alert.alert('System Role', 'Cannot delete core system roles.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete Role',
+      `Are you sure you want to delete the role "${roleToDelete}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const nextRoles = rolesList.filter(r => r !== roleToDelete);
+            setRolesList(nextRoles);
+            setRolePermissionsMap(prev => {
+              const updated = { ...prev };
+              delete updated[roleToDelete];
+              return updated;
+            });
+            if (selectedRole === roleToDelete) {
+              setSelectedRole(nextRoles[0] || 'Correspondent');
+            }
+            showToast(`${roleToDelete} role deleted successfully!`);
+
+            try {
+              if (db && adminSchoolId) {
+                await db.collection('schools').doc(adminSchoolId).collection('roles').doc(roleToDelete).delete();
+              }
+            } catch (err) {
+              console.warn('Error deleting role from firestore:', err);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAddRoleSubmit = async () => {
     if (!newRoleNameInput.trim()) {
       Alert.alert('Required', 'Please enter a role name.');
       return;
@@ -5291,7 +6828,7 @@ function App() {
     setRolesList([...rolesList, roleName]);
     setRolePermissionsMap(prev => {
       const perms: Record<string, { read: boolean; create: boolean; edit: boolean; delete: boolean }> = {};
-      DEFAULT_ROLE_MODULES.forEach(mod => {
+      [...DEFAULT_ROLE_MODULES, ...TEACHER_ROLE_MODULES].forEach(mod => {
         perms[mod] = { read: true, create: false, edit: false, delete: false };
       });
       return { ...prev, [roleName]: perms };
@@ -5300,6 +6837,19 @@ function App() {
     setNewRoleNameInput('');
     setShowAddRoleModal(false);
     showToast(`Role "${roleName}" added successfully!`);
+
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('roles').doc(roleName).set({
+          name: roleName,
+          permissions: {},
+          loginPanel: 'admin',
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('Error adding role doc:', e);
+    }
   };
 
   // --- Filtered & Paginated Lists ---
@@ -13796,14 +15346,7 @@ function App() {
                 </TouchableOpacity>
               )}
 
-              {activeModuleModal === 'Subject Management' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowAddSubjectModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Add Subject</Text>
-                </TouchableOpacity>
-              )}
+
 
               {activeModuleModal === 'HR & Payroll' && (
                 <TouchableOpacity
@@ -14086,100 +15629,15 @@ function App() {
 
             {/* --- SCREENSHOT 1: STAFF DIRECTORY & ATTACHMENTS --- */}
             {activeModuleModal === 'Staff Directory' && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="person-add-outline"
-                  title="Staff Directory & Attachments"
-                  badgeText={`${staffList.length} Staff`}
-                  subtitle="Manage your teachers, upload documents, and assign classes."
-                />
-
-                {/* Top Action Buttons */}
-                <View style={styles.actionButtonsTopRow}>
-                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Exported staff directory')}>
-                    <IconComp name="download-outline" size={14} color="#475569" />
-                    <Text style={styles.outlineActionBtnText}>Export</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowAddStaffModal(true)}>
-                    <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>+ Add Staff</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => showToast('Bulk Import staff modal opened')}>
-                    <IconComp name="cloud-upload-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>Bulk Import</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* 6 Metric Cards Row (Screenshot 1 Matching) */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, marginVertical: 12 }}>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>TOTAL STAFF</Text>
-                    <Text style={styles.smallStatValue}>{staffList.length}</Text>
-                  </View>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>ACTIVE</Text>
-                    <Text style={[styles.smallStatValue, { color: '#059669' }]}>{staffList.length}</Text>
-                  </View>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>MALE STAFF</Text>
-                    <Text style={styles.smallStatValue}>{staffList.filter(s => s.gender === 'Male').length}</Text>
-                  </View>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>FEMALE STAFF</Text>
-                    <Text style={styles.smallStatValue}>{staffList.filter(s => s.gender === 'Female').length}</Text>
-                  </View>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>TEACHERS</Text>
-                    <Text style={styles.smallStatValue}>{staffList.length}</Text>
-                  </View>
-                  <View style={styles.smallStatBoxItem}>
-                    <Text style={styles.smallStatLabel}>NON-TEACHING</Text>
-                    <Text style={styles.smallStatValue}>0</Text>
-                  </View>
-                </ScrollView>
-
-                {/* Staff Cards List */}
-                <View style={{ gap: 10 }}>
-                  {staffList.map(st => (
-                    <View key={st.id} style={styles.studentCardContainer}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                        <View style={[styles.avatarCircleInitial, { backgroundColor: '#EDE9FE' }]}>
-                          <Text style={[styles.avatarInitialText, { color: '#b07fa8' }]}>{(st.name || 'S')[0]}</Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.studentNameTitle}>{st.name}</Text>
-                          <Text style={styles.studentSubText}>📧 {st.email}</Text>
-
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                            {st.classAssignments.map((ca, idx) => (
-                              <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
-                                <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{ca}</Text>
-                              </View>
-                            ))}
-                            {st.subjectAssignments.map((sa, idx) => (
-                              <View key={idx} style={[styles.classBadgePill, { backgroundColor: '#EFF6FF' }]}>
-                                <Text style={[styles.classBadgeText, { color: '#2563EB' }]}>{sa}</Text>
-                              </View>
-                            ))}
-                          </View>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                          <TouchableOpacity onPress={() => showToast(`Viewing staff profile: ${st.name}`)}>
-                            <IconComp name="eye-outline" size={18} color="#64748B" />
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => showToast(`Removed staff member: ${st.name}`)}>
-                            <IconComp name="trash-outline" size={18} color="#DC2626" />
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.editOutlineBtn} onPress={() => showToast(`Editing staff: ${st.name}`)}>
-                            <Text style={styles.editOutlineBtnText}>Edit</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
+              <StaffDirectoryScreen
+                staffList={staffList}
+                classesList={classList}
+                schoolId={adminSchoolId}
+                showToast={showToast}
+                addSubDocument={addSubDocument}
+                updateSubDocument={updateSubDocument}
+                deleteSubDocument={deleteSubDocument}
+              />
             )}
 
             {/* --- SCREENSHOT 2: CLASSES & SECTIONS MANAGEMENT --- */}
@@ -14256,7 +15714,7 @@ function App() {
                 />
 
                 <View style={[styles.actionButtonsTopRow, { justifyContent: 'flex-end' }]}>
-                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowAddSubjectModal(true)}>
+                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={handleOpenAddSubjectModal}>
                     <IconComp name="add-outline" size={14} color="#FFFFFF" />
                     <Text style={styles.purplePrimaryBtnText}>+ Add Subject</Text>
                   </TouchableOpacity>
@@ -15301,149 +16759,1130 @@ function App() {
 
             {/* --- MODULE: INVENTORY & ASSETS --- */}
             {activeModuleModal === 'Inventory & Assets' && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="cube-outline"
-                  title="Inventory & Assets"
-                  subtitle="Track school assets, stock, and inventory."
-                />
-
-                {/* Action Buttons Row */}
-                <View style={[styles.actionButtonsTopRow, { marginBottom: 14 }]}>
-                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Opening Audit Logs...')}>
-                    <IconComp name="list-outline" size={14} color="#475569" />
-                    <Text style={styles.outlineActionBtnText}>Audit Logs</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Bulk import modal opened')}>
-                    <IconComp name="cloud-upload-outline" size={14} color="#475569" />
-                    <Text style={styles.outlineActionBtnText}>Bulk Import</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Exporting inventory...')}>
-                    <IconComp name="download-outline" size={14} color="#475569" />
-                    <Text style={styles.outlineActionBtnText}>Export</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowAddItemModal(true)}>
-                    <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>Add Item</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Sub-Tabs */}
-                <View style={styles.moduleTabRow}>
-                  <TouchableOpacity
-                    style={[styles.moduleTabBtn, inventoryActiveTab === 'items' && styles.moduleTabBtnActive]}
-                    onPress={() => setInventoryActiveTab('items')}>
-                    <Text style={[styles.moduleTabText, inventoryActiveTab === 'items' && styles.moduleTabTextActive]}>
-                      Inventory Items ({inventoryItemsList.length})
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.moduleTabBtn, inventoryActiveTab === 'categories' && styles.moduleTabBtnActive]}
-                    onPress={() => setInventoryActiveTab('categories')}>
-                    <Text style={[styles.moduleTabText, inventoryActiveTab === 'categories' && styles.moduleTabTextActive]}>
-                      Categories ({inventoryCategoriesList.length})
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Stats Row */}
-                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-                  <View style={[styles.statBoxCard, { flex: 1 }]}>
-                    <IconComp name="cube-outline" size={18} color="#b07fa8" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', marginTop: 4 }}>TOTAL ITEMS</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>{inventoryItemsList.length}</Text>
-                  </View>
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
-                    <IconComp name="alert-circle-outline" size={18} color="#D97706" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#B45309', marginTop: 4 }}>LOW STOCK</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '900', color: '#92400E' }}>0</Text>
-                  </View>
-                  <View style={[styles.statBoxCard, { flex: 1, backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
-                    <IconComp name="close-circle-outline" size={18} color="#DC2626" />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#B91C1C', marginTop: 4 }}>OUT OF STOCK</Text>
-                    <Text style={{ fontSize: 22, fontWeight: '900', color: '#991B1B' }}>0</Text>
-                  </View>
-                </View>
-
-                {/* Search + Filters */}
-                <SearchInputBox
-                  wrapperStyle={[styles.searchBarWrapperFull, { marginBottom: 8 }]}
-                  style={styles.searchInputField}
-                  placeholder="Search by name, product ID or category..."
-                  value={inventorySearch}
-                  onChangeText={setInventorySearch}
-                />
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                  {['All Categories', 'Electronics', 'Furniture', 'Stationery'].map(cat => (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[styles.filterChipItem, inventoryCategoryFilter === cat && styles.filterChipItemActive]}
-                      onPress={() => setInventoryCategoryFilter(cat)}>
-                      <Text style={[styles.filterChipText, inventoryCategoryFilter === cat && styles.filterChipTextActive]}>{cat}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Items List or Empty */}
-                {inventoryActiveTab === 'items' && (
-                  inventoryItemsList.length === 0 ? (
-                    <View style={styles.emptyModuleCardContainer}>
-                      <View style={styles.emptyIconCircleLarge}>
-                        <IconComp name="cube-outline" size={40} color="#94A3B8" />
+              <View style={{ flex: 1 }}>
+                {inventorySubView === 'audit_logs' ? (
+                  /* ========================================================== */
+                  /* Dedicated Screen: INVENTORY AUDIT LOGS (Matches Image 1, 2, 3) */
+                  /* ========================================================== */
+                  <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+                    {/* Header Bar */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 220 }}>
+                        <TouchableOpacity
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            backgroundColor: '#FFFFFF',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => setInventorySubView('main')}>
+                          <IconComp name="arrow-back-outline" size={20} color="#0F172A" />
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <IconComp name="clipboard-outline" size={20} color="#b07fa8" />
+                            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>Inventory Audit Logs</Text>
+                          </View>
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                            Review, filter, and track all stock inbound/outbound records.
+                          </Text>
+                        </View>
                       </View>
-                      <Text style={styles.emptyModuleTitle}>No inventory products found</Text>
-                      <Text style={styles.emptyModuleSub}>Add your first item to start tracking school assets and inventory.</Text>
-                      <TouchableOpacity style={styles.emptyActionPurpleBtn} onPress={() => setShowAddItemModal(true)}>
-                        <IconComp name="add-outline" size={16} color="#FFFFFF" />
-                        <Text style={styles.emptyActionBtnText}>Add Item</Text>
+
+                      {/* Top Action Buttons: Reset & Export Logs Dropdown (Matches Image 3) */}
+                      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                            paddingHorizontal: 12,
+                            paddingVertical: 9,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={handleResetAuditFilters}>
+                          <IconComp name="refresh-outline" size={15} color="#475569" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Reset</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ position: 'relative', zIndex: 999 }}>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              paddingHorizontal: 14,
+                              paddingVertical: 9,
+                              borderRadius: 10,
+                              backgroundColor: '#b07fa8',
+                            }}
+                            onPress={() => setShowAuditExportDropdown(!showAuditExportDropdown)}>
+                            <IconComp name="download-outline" size={15} color="#FFFFFF" />
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Export Logs</Text>
+                            <IconComp name="chevron-down" size={13} color="#FFFFFF" />
+                          </TouchableOpacity>
+
+                          {/* Export Logs Dropdown Menu (Matches Image 3) */}
+                          {showAuditExportDropdown && (
+                            <View style={{
+                              position: 'absolute',
+                              top: 42,
+                              right: 0,
+                              width: 155,
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 12,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              elevation: 6,
+                              zIndex: 1000,
+                              overflow: 'hidden',
+                              shadowColor: '#000',
+                              shadowOffset: { width: 0, height: 4 },
+                              shadowOpacity: 0.15,
+                              shadowRadius: 8,
+                            }}>
+                              <TouchableOpacity
+                                style={{
+                                  paddingHorizontal: 14,
+                                  paddingVertical: 11,
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#F1F5F9',
+                                }}
+                                onPress={() => handleExportAuditLogs('xlsx')}>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>Excel (.xlsx)</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={{
+                                  paddingHorizontal: 14,
+                                  paddingVertical: 11,
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#F1F5F9',
+                                }}
+                                onPress={() => handleExportAuditLogs('csv')}>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>CSV (.csv)</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={{
+                                  paddingHorizontal: 14,
+                                  paddingVertical: 11,
+                                }}
+                                onPress={() => handleExportAuditLogs('pdf')}>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>PDF Document</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Filter Card (Matches Image 2) */}
+                    <View style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      padding: 16,
+                      marginBottom: 16,
+                      elevation: 1,
+                    }}>
+                      {/* Search Logs */}
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                        SEARCH LOGS
+                      </Text>
+                      <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        backgroundColor: '#F8FAFC',
+                        paddingHorizontal: 12,
+                        height: 42,
+                        marginBottom: 14,
+                      }}>
+                        <IconComp name="search-outline" size={16} color="#94A3B8" />
+                        <RNTextInput
+                          style={{ flex: 1, marginLeft: 8, fontSize: 13, color: '#0F172A', paddingVertical: 0 }}
+                          placeholder="Search product, product ID, user name..."
+                          placeholderTextColor="#94A3B8"
+                          value={auditSearch}
+                          onChangeText={setAuditSearch}
+                        />
+                        {auditSearch ? (
+                          <TouchableOpacity onPress={() => setAuditSearch('')}>
+                            <IconComp name="close-circle" size={16} color="#94A3B8" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {/* Dates Row: Start Date & End Date */}
+                      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            START DATE
+                          </Text>
+                          <View style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 10,
+                            backgroundColor: '#FFFFFF',
+                            paddingHorizontal: 12,
+                            height: 40,
+                          }}>
+                            <RNTextInput
+                              style={{ flex: 1, fontSize: 12, color: '#0F172A', paddingVertical: 0 }}
+                              placeholder="dd-mm-yyyy"
+                              placeholderTextColor="#94A3B8"
+                              value={auditStartDate}
+                              onChangeText={setAuditStartDate}
+                            />
+                            <IconComp name="calendar-outline" size={16} color="#94A3B8" />
+                          </View>
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            END DATE
+                          </Text>
+                          <View style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 10,
+                            backgroundColor: '#FFFFFF',
+                            paddingHorizontal: 12,
+                            height: 40,
+                          }}>
+                            <RNTextInput
+                              style={{ flex: 1, fontSize: 12, color: '#0F172A', paddingVertical: 0 }}
+                              placeholder="dd-mm-yyyy"
+                              placeholderTextColor="#94A3B8"
+                              value={auditEndDate}
+                              onChangeText={setAuditEndDate}
+                            />
+                            <IconComp name="calendar-outline" size={16} color="#94A3B8" />
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Dropdowns Grid (Row 1: Product & Category) */}
+                      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
+                        {/* Product Dropdown */}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            PRODUCT
+                          </Text>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 10,
+                              backgroundColor: '#FFFFFF',
+                              paddingHorizontal: 12,
+                              height: 40,
+                            }}
+                            onPress={() => setShowAuditProductDropdown(!showAuditProductDropdown)}>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                              {auditProductFilter}
+                            </Text>
+                            <IconComp name="chevron-down" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          {showAuditProductDropdown && (
+                            <View style={{
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 8,
+                              backgroundColor: '#FFFFFF',
+                              marginTop: 4,
+                              maxHeight: 160,
+                              elevation: 4,
+                            }}>
+                              <ScrollView nestedScrollEnabled>
+                                {auditUniqueProducts.map(opt => (
+                                  <TouchableOpacity
+                                    key={opt}
+                                    style={{
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      backgroundColor: auditProductFilter === opt ? '#f6eef5' : '#FFFFFF',
+                                    }}
+                                    onPress={() => {
+                                      setAuditProductFilter(opt);
+                                      setShowAuditProductDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 12, color: auditProductFilter === opt ? '#b07fa8' : '#0F172A', fontWeight: auditProductFilter === opt ? '700' : '400' }}>
+                                      {opt}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Category Dropdown */}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            CATEGORY
+                          </Text>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 10,
+                              backgroundColor: '#FFFFFF',
+                              paddingHorizontal: 12,
+                              height: 40,
+                            }}
+                            onPress={() => setShowAuditCategoryDropdown(!showAuditCategoryDropdown)}>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                              {auditCategoryFilter}
+                            </Text>
+                            <IconComp name="chevron-down" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          {showAuditCategoryDropdown && (
+                            <View style={{
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 8,
+                              backgroundColor: '#FFFFFF',
+                              marginTop: 4,
+                              maxHeight: 160,
+                              elevation: 4,
+                            }}>
+                              <ScrollView nestedScrollEnabled>
+                                {auditUniqueCategories.map(opt => (
+                                  <TouchableOpacity
+                                    key={opt}
+                                    style={{
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      backgroundColor: auditCategoryFilter === opt ? '#f6eef5' : '#FFFFFF',
+                                    }}
+                                    onPress={() => {
+                                      setAuditCategoryFilter(opt);
+                                      setShowAuditCategoryDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 12, color: auditCategoryFilter === opt ? '#b07fa8' : '#0F172A', fontWeight: auditCategoryFilter === opt ? '700' : '400' }}>
+                                      {opt}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Dropdowns Grid (Row 2: User & Action Type) */}
+                      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
+                        {/* User Dropdown */}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            USER
+                          </Text>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 10,
+                              backgroundColor: '#FFFFFF',
+                              paddingHorizontal: 12,
+                              height: 40,
+                            }}
+                            onPress={() => setShowAuditUserDropdown(!showAuditUserDropdown)}>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                              {auditUserFilter}
+                            </Text>
+                            <IconComp name="chevron-down" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          {showAuditUserDropdown && (
+                            <View style={{
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 8,
+                              backgroundColor: '#FFFFFF',
+                              marginTop: 4,
+                              maxHeight: 160,
+                              elevation: 4,
+                            }}>
+                              <ScrollView nestedScrollEnabled>
+                                {auditUniqueUsers.map(opt => (
+                                  <TouchableOpacity
+                                    key={opt}
+                                    style={{
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      backgroundColor: auditUserFilter === opt ? '#f6eef5' : '#FFFFFF',
+                                    }}
+                                    onPress={() => {
+                                      setAuditUserFilter(opt);
+                                      setShowAuditUserDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 12, color: auditUserFilter === opt ? '#b07fa8' : '#0F172A', fontWeight: auditUserFilter === opt ? '700' : '400' }}>
+                                      {opt}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Action Type Dropdown */}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                            ACTION TYPE
+                          </Text>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 10,
+                              backgroundColor: '#FFFFFF',
+                              paddingHorizontal: 12,
+                              height: 40,
+                            }}
+                            onPress={() => setShowAuditActionDropdown(!showAuditActionDropdown)}>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                              {auditActionFilter}
+                            </Text>
+                            <IconComp name="chevron-down" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          {showAuditActionDropdown && (
+                            <View style={{
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderRadius: 8,
+                              backgroundColor: '#FFFFFF',
+                              marginTop: 4,
+                              maxHeight: 160,
+                              elevation: 4,
+                            }}>
+                              <ScrollView nestedScrollEnabled>
+                                {auditUniqueActions.map(opt => (
+                                  <TouchableOpacity
+                                    key={opt}
+                                    style={{
+                                      paddingVertical: 8,
+                                      paddingHorizontal: 12,
+                                      backgroundColor: auditActionFilter === opt ? '#f6eef5' : '#FFFFFF',
+                                    }}
+                                    onPress={() => {
+                                      setAuditActionFilter(opt);
+                                      setShowAuditActionDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 12, color: auditActionFilter === opt ? '#b07fa8' : '#0F172A', fontWeight: auditActionFilter === opt ? '700' : '400' }}>
+                                      {opt}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Transaction Type Dropdown (Row 3) */}
+                      <View>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                          TRANSACTION TYPE
+                        </Text>
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 10,
+                            backgroundColor: '#FFFFFF',
+                            paddingHorizontal: 12,
+                            height: 40,
+                          }}
+                          onPress={() => setShowAuditTransactionDropdown(!showAuditTransactionDropdown)}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>
+                            {auditTransactionFilter}
+                          </Text>
+                          <IconComp name="chevron-down" size={14} color="#64748B" />
+                        </TouchableOpacity>
+                        {showAuditTransactionDropdown && (
+                          <View style={{
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 8,
+                            backgroundColor: '#FFFFFF',
+                            marginTop: 4,
+                            elevation: 4,
+                          }}>
+                            {['All Transactions', 'Inbound Stock', 'Outbound Stock'].map(opt => (
+                              <TouchableOpacity
+                                key={opt}
+                                style={{
+                                  paddingVertical: 9,
+                                  paddingHorizontal: 12,
+                                  backgroundColor: auditTransactionFilter === opt ? '#f6eef5' : '#FFFFFF',
+                                }}
+                                onPress={() => {
+                                  setAuditTransactionFilter(opt);
+                                  setShowAuditTransactionDropdown(false);
+                                }}>
+                                <Text style={{ fontSize: 12, color: auditTransactionFilter === opt ? '#b07fa8' : '#0F172A', fontWeight: auditTransactionFilter === opt ? '700' : '400' }}>
+                                  {opt}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    {/* Audit Logs Table Card */}
+                    <View style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      overflow: 'hidden',
+                      elevation: 1,
+                    }}>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                        <View style={{ minWidth: 880 }}>
+                          {/* Table Header */}
+                          <View style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: '#F8FAFC',
+                            paddingVertical: 12,
+                            paddingHorizontal: 16,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#E2E8F0',
+                          }}>
+                            <Text style={{ width: 140, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>TIMESTAMP</Text>
+                            <Text style={{ width: 100, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>USER</Text>
+                            <Text style={{ width: 80, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>ROLE</Text>
+                            <Text style={{ width: 120, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>ACTION</Text>
+                            <Text style={{ width: 140, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>PRODUCT NAME</Text>
+                            <Text style={{ width: 110, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>CATEGORY</Text>
+                            <Text style={{ width: 100, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>STOCK CHANGED</Text>
+                            <Text style={{ flex: 1, minWidth: 120, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>REMARKS</Text>
+                          </View>
+
+                          {/* Table Rows */}
+                          {filteredAuditLogs.length === 0 ? (
+                            <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
+                              <IconComp name="clipboard-outline" size={32} color="#CBD5E1" />
+                              <Text style={{ fontSize: 13, color: '#64748B', marginTop: 8 }}>
+                                No audit logs found matching the selected filters.
+                              </Text>
+                            </View>
+                          ) : (
+                            filteredAuditLogs.map((log: any, idx: number) => {
+                              const isPositive = (log.quantityChanged ?? 0) > 0;
+                              const isNegative = (log.quantityChanged ?? 0) < 0;
+                              return (
+                                <View
+                                  key={log.id || idx}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    paddingVertical: 12,
+                                    paddingHorizontal: 16,
+                                    borderBottomWidth: 1,
+                                    borderBottomColor: '#F1F5F9',
+                                    backgroundColor: idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA',
+                                  }}>
+                                  <Text style={{ width: 140, fontSize: 12, color: '#0F172A' }}>
+                                    {log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}
+                                  </Text>
+                                  <Text style={{ width: 100, fontSize: 12, fontWeight: '600', color: '#0F172A' }}>
+                                    {log.userName || 'Admin'}
+                                  </Text>
+                                  <View style={{ width: 80 }}>
+                                    <View style={{
+                                      backgroundColor: '#F1F5F9',
+                                      borderRadius: 6,
+                                      paddingHorizontal: 6,
+                                      paddingVertical: 2,
+                                      alignSelf: 'flex-start',
+                                    }}>
+                                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#475569' }}>
+                                        {log.userRole || 'ADMIN'}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                  <Text style={{ width: 120, fontSize: 12, fontWeight: '600', color: '#0F172A' }}>
+                                    {log.actionType || '—'}
+                                  </Text>
+                                  <Text style={{ width: 140, fontSize: 12, color: '#0F172A' }} numberOfLines={1}>
+                                    {log.productName || '—'}
+                                  </Text>
+                                  <Text style={{ width: 110, fontSize: 12, color: '#64748B' }} numberOfLines={1}>
+                                    {log.category || '—'}
+                                  </Text>
+                                  <View style={{ width: 100 }}>
+                                    {log.quantityChanged !== undefined && log.quantityChanged !== 0 ? (
+                                      <Text style={{
+                                        fontSize: 12,
+                                        fontWeight: '700',
+                                        color: isPositive ? '#16A34A' : isNegative ? '#DC2626' : '#0F172A',
+                                      }}>
+                                        {isPositive ? `+${log.quantityChanged}` : log.quantityChanged}
+                                      </Text>
+                                    ) : (
+                                      <Text style={{ fontSize: 12, color: '#94A3B8' }}>—</Text>
+                                    )}
+                                  </View>
+                                  <Text style={{ flex: 1, minWidth: 120, fontSize: 12, color: '#64748B' }} numberOfLines={1}>
+                                    {log.remarks || '—'}
+                                  </Text>
+                                </View>
+                              );
+                            })
+                          )}
+                        </View>
+                      </ScrollView>
+                    </View>
+                  </ScrollView>
+                ) : (
+                  /* ========================================================== */
+                  /* Main View: INVENTORY & ASSETS (Items / Categories)        */
+                  /* ========================================================== */
+                  <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+                    {/* Header Bar */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                      <View style={{ flex: 1, minWidth: 200 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <IconComp name="cube-outline" size={24} color="#b07fa8" />
+                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A' }}>Inventory & Assets</Text>
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Track school assets, stock, and inventory.
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Top Action Bar (4 Buttons) */}
+                    <View style={{
+                      flexDirection: 'row',
+                      gap: 8,
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      marginBottom: 16,
+                    }}>
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingHorizontal: 12,
+                          paddingVertical: 9,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        onPress={() => setInventorySubView('audit_logs')}>
+                        <IconComp name="clipboard-outline" size={14} color="#475569" />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Audit Logs</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingHorizontal: 12,
+                          paddingVertical: 9,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        onPress={() => setShowInventoryImportModal(true)}>
+                        <IconComp name="cloud-upload-outline" size={14} color="#475569" />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Bulk Import</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingHorizontal: 12,
+                          paddingVertical: 9,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        onPress={() => handleExportInventoryProducts('xlsx')}>
+                        <IconComp name="download-outline" size={14} color="#475569" />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Bulk Export</Text>
+                      </TouchableOpacity>
+
+                      {/* 4th Action Button: Changes dynamically between "+ Add Item" and "+ Add Category" (Matches Image 4) */}
+                      {inventoryActiveTab === 'items' ? (
+                        <TouchableOpacity
+                          style={[styles.purplePrimaryActionBtn, { flex: 1, minWidth: 80, justifyContent: 'center' }]}
+                          onPress={() => {
+                            setNewItemForm({
+                              productId: '',
+                              name: '',
+                              category: '',
+                              quantity: '0',
+                              unit: 'pcs',
+                              status: 'In Stock',
+                            });
+                            setShowAddItemModal(true);
+                          }}>
+                          <IconComp name="add-outline" size={14} color="#FFFFFF" />
+                          <Text style={styles.purplePrimaryBtnText}>+ Add Item</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          style={[styles.purplePrimaryActionBtn, { flex: 1, minWidth: 95, justifyContent: 'center' }]}
+                          onPress={() => {
+                            setEditingCategoryItem(null);
+                            setNewCategoryName('');
+                            setNewCategoryDesc('');
+                            setShowAddCategoryModal(true);
+                          }}>
+                          <IconComp name="add-outline" size={14} color="#FFFFFF" />
+                          <Text style={styles.purplePrimaryBtnText}>+ Add Category</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* Sub-Tabs: Inventory Items vs Categories */}
+                    <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', marginBottom: 16 }}>
+                      <TouchableOpacity
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                          borderBottomWidth: 2,
+                          borderBottomColor: inventoryActiveTab === 'items' ? '#b07fa8' : 'transparent',
+                        }}
+                        onPress={() => setInventoryActiveTab('items')}>
+                        <Text style={{
+                          fontSize: 13,
+                          fontWeight: inventoryActiveTab === 'items' ? '700' : '600',
+                          color: inventoryActiveTab === 'items' ? '#b07fa8' : '#64748B',
+                        }}>
+                          Inventory Items ({inventoryItemsList.length})
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                          borderBottomWidth: 2,
+                          borderBottomColor: inventoryActiveTab === 'categories' ? '#b07fa8' : 'transparent',
+                        }}
+                        onPress={() => setInventoryActiveTab('categories')}>
+                        <Text style={{
+                          fontSize: 13,
+                          fontWeight: inventoryActiveTab === 'categories' ? '700' : '600',
+                          color: inventoryActiveTab === 'categories' ? '#b07fa8' : '#64748B',
+                        }}>
+                          Categories ({inventoryCategoriesList.length})
+                        </Text>
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    <View style={styles.sectionCardBox}>
-                      <View style={{ flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', marginBottom: 8 }}>
-                        <Text style={[styles.tableHeaderText, { width: 70 }]}>Product ID</Text>
-                        <Text style={[styles.tableHeaderText, { flex: 1 }]}>Product Name</Text>
-                        <Text style={[styles.tableHeaderText, { width: 60 }]}>Stock</Text>
-                        <Text style={[styles.tableHeaderText, { width: 50, textAlign: 'right' }]}>Status</Text>
-                      </View>
-                      {inventoryItemsList.map((item: any) => (
-                        <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' }}>
-                          <Text style={[styles.tableCellText, { width: 70, color: '#64748B' }]}>{item.productId}</Text>
-                          <Text style={[styles.tableCellText, { flex: 1, fontWeight: '600' }]}>{item.name}</Text>
-                          <Text style={[styles.tableCellText, { width: 60 }]}>{item.quantity} {item.unit}</Text>
-                          <View style={{ width: 50, alignItems: 'flex-end' }}>
-                            <View style={[styles.priorityPill, { backgroundColor: item.status === 'In Stock' ? '#ECFDF5' : '#FEE2E2' }]}>
-                              <Text style={[styles.priorityPillText, { color: item.status === 'In Stock' ? '#059669' : '#DC2626', fontSize: 9 }]}>{item.status}</Text>
+
+                    {/* TAB CONTENT: ITEMS */}
+                    {inventoryActiveTab === 'items' ? (
+                      <View>
+                        {/* Filters Row: Search, Category, Status */}
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 12,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          padding: 12,
+                          marginBottom: 16,
+                          gap: 10,
+                        }}>
+                          {/* Search */}
+                          <View style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                            borderRadius: 8,
+                            backgroundColor: '#F8FAFC',
+                            paddingHorizontal: 10,
+                            height: 38,
+                          }}>
+                            <IconComp name="search-outline" size={16} color="#94A3B8" />
+                            <RNTextInput
+                              style={{ flex: 1, marginLeft: 8, fontSize: 13, color: '#0F172A', paddingVertical: 0 }}
+                              placeholder="Search products..."
+                              placeholderTextColor="#94A3B8"
+                              value={inventorySearch}
+                              onChangeText={setInventorySearch}
+                            />
+                            {inventorySearch ? (
+                              <TouchableOpacity onPress={() => setInventorySearch('')}>
+                                <IconComp name="close-circle" size={16} color="#94A3B8" />
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+
+                          <View style={{ flexDirection: 'row', gap: 10 }}>
+                            {/* Category Filter */}
+                            <View style={{ flex: 1 }}>
+                              <TouchableOpacity
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  borderWidth: 1,
+                                  borderColor: '#E2E8F0',
+                                  borderRadius: 8,
+                                  backgroundColor: '#FFFFFF',
+                                  paddingHorizontal: 10,
+                                  height: 38,
+                                }}
+                                onPress={() => setShowInventoryCatDropdown(!showInventoryCatDropdown)}>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                                  {inventoryCategoryFilter}
+                                </Text>
+                                <IconComp name="chevron-down" size={14} color="#64748B" />
+                              </TouchableOpacity>
+                              {showInventoryCatDropdown && (
+                                <View style={{
+                                  borderWidth: 1,
+                                  borderColor: '#E2E8F0',
+                                  borderRadius: 8,
+                                  backgroundColor: '#FFFFFF',
+                                  marginTop: 4,
+                                  maxHeight: 140,
+                                  elevation: 4,
+                                }}>
+                                  <ScrollView nestedScrollEnabled>
+                                    {inventoryCategoryOptions.map(cat => (
+                                      <TouchableOpacity
+                                        key={cat}
+                                        style={{
+                                          paddingVertical: 8,
+                                          paddingHorizontal: 12,
+                                          backgroundColor: inventoryCategoryFilter === cat ? '#f6eef5' : '#FFFFFF',
+                                        }}
+                                        onPress={() => {
+                                          setInventoryCategoryFilter(cat);
+                                          setShowInventoryCatDropdown(false);
+                                        }}>
+                                        <Text style={{ fontSize: 12, color: inventoryCategoryFilter === cat ? '#b07fa8' : '#0F172A', fontWeight: inventoryCategoryFilter === cat ? '700' : '400' }}>
+                                          {cat}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    ))}
+                                  </ScrollView>
+                                </View>
+                              )}
+                            </View>
+
+                            {/* Status Filter */}
+                            <View style={{ flex: 1 }}>
+                              <TouchableOpacity
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  borderWidth: 1,
+                                  borderColor: '#E2E8F0',
+                                  borderRadius: 8,
+                                  backgroundColor: '#FFFFFF',
+                                  paddingHorizontal: 10,
+                                  height: 38,
+                                }}
+                                onPress={() => setShowInventoryStatusDropdown(!showInventoryStatusDropdown)}>
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                                  {inventoryStatusFilter}
+                                </Text>
+                                <IconComp name="chevron-down" size={14} color="#64748B" />
+                              </TouchableOpacity>
+                              {showInventoryStatusDropdown && (
+                                <View style={{
+                                  borderWidth: 1,
+                                  borderColor: '#E2E8F0',
+                                  borderRadius: 8,
+                                  backgroundColor: '#FFFFFF',
+                                  marginTop: 4,
+                                  elevation: 4,
+                                }}>
+                                  {['All Statuses', 'In Stock', 'Low Stock', 'Out of Stock'].map(st => (
+                                    <TouchableOpacity
+                                      key={st}
+                                      style={{
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 12,
+                                        backgroundColor: inventoryStatusFilter === st ? '#f6eef5' : '#FFFFFF',
+                                      }}
+                                      onPress={() => {
+                                        setInventoryStatusFilter(st);
+                                        setShowInventoryStatusDropdown(false);
+                                      }}>
+                                      <Text style={{ fontSize: 12, color: inventoryStatusFilter === st ? '#b07fa8' : '#0F172A', fontWeight: inventoryStatusFilter === st ? '700' : '400' }}>
+                                        {st}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
                             </View>
                           </View>
                         </View>
-                      ))}
-                    </View>
-                  )
-                )}
 
-                {/* Categories Tab */}
-                {inventoryActiveTab === 'categories' && (
-                  inventoryCategoriesList.length === 0 ? (
-                    <View style={styles.emptyModuleCardContainer}>
-                      <View style={styles.emptyIconCircleLarge}>
-                        <IconComp name="pricetag-outline" size={40} color="#94A3B8" />
-                      </View>
-                      <Text style={styles.emptyModuleTitle}>No Categories</Text>
-                      <Text style={styles.emptyModuleSub}>Add categories to organize your inventory items.</Text>
-                    </View>
-                  ) : (
-                    <View style={{ gap: 10 }}>
-                      {inventoryCategoriesList.map((cat: any) => (
-                        <View key={cat.id} style={styles.noticeCardItem}>
-                          <Text style={styles.noticeItemTitle}>{cat.name}</Text>
-                          <Text style={{ fontSize: 12, color: '#64748B' }}>{cat.description}</Text>
+                        {/* Items Table Card */}
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          overflow: 'hidden',
+                          elevation: 1,
+                        }}>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                            <View style={{ minWidth: 680 }}>
+                              {/* Header */}
+                              <View style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                backgroundColor: '#F8FAFC',
+                                paddingVertical: 12,
+                                paddingHorizontal: 16,
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#E2E8F0',
+                              }}>
+                                <Text style={{ width: 110, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>PRODUCT ID</Text>
+                                <Text style={{ width: 180, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>PRODUCT NAME</Text>
+                                <Text style={{ width: 120, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>CATEGORY</Text>
+                                <Text style={{ width: 80, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>STOCK</Text>
+                                <Text style={{ width: 100, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>STATUS</Text>
+                                <Text style={{ width: 90, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', textAlign: 'center' }}>ACTIONS</Text>
+                              </View>
+
+                              {/* Rows or Empty State */}
+                              {filteredInventoryItems.length === 0 ? (
+                                <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
+                                  <IconComp name="cube-outline" size={32} color="#CBD5E1" />
+                                  <Text style={{ fontSize: 13, color: '#64748B', marginTop: 8 }}>
+                                    No inventory items found. Add or import items to get started.
+                                  </Text>
+                                </View>
+                              ) : (
+                                filteredInventoryItems.map((item: any, idx: number) => {
+                                  const statusColor = item.status === 'In Stock' ? '#16A34A' : item.status === 'Low Stock' ? '#EAB308' : '#DC2626';
+                                  const statusBg = item.status === 'In Stock' ? '#DCFCE7' : item.status === 'Low Stock' ? '#FEF9C3' : '#FEE2E2';
+                                  return (
+                                    <View
+                                      key={item.id || idx}
+                                      style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        paddingVertical: 12,
+                                        paddingHorizontal: 16,
+                                        borderBottomWidth: 1,
+                                        borderBottomColor: '#F1F5F9',
+                                        backgroundColor: idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA',
+                                      }}>
+                                      <Text style={{ width: 110, fontSize: 12, fontWeight: '600', color: '#0F172A' }}>
+                                        {item.productId || '—'}
+                                      </Text>
+                                      <Text style={{ width: 180, fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                                        {item.name}
+                                      </Text>
+                                      <Text style={{ width: 120, fontSize: 12, color: '#64748B' }} numberOfLines={1}>
+                                        {item.category || 'General'}
+                                      </Text>
+                                      <Text style={{ width: 80, fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                                        {item.quantity ?? 0} {item.unit || 'pcs'}
+                                      </Text>
+                                      <View style={{ width: 100 }}>
+                                        <View style={{
+                                          backgroundColor: statusBg,
+                                          paddingHorizontal: 8,
+                                          paddingVertical: 3,
+                                          borderRadius: 12,
+                                          alignSelf: 'flex-start',
+                                        }}>
+                                          <Text style={{ fontSize: 10, fontWeight: '700', color: statusColor }}>
+                                            {item.status || 'In Stock'}
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <View style={{ width: 90, flexDirection: 'row', justifyContent: 'center', gap: 10 }}>
+                                        <TouchableOpacity
+                                          onPress={() => {
+                                            setNewItemForm({
+                                              id: item.id,
+                                              productId: item.productId || '',
+                                              name: item.name || '',
+                                              category: item.category || '',
+                                              quantity: String(item.quantity ?? 0),
+                                              unit: item.unit || 'pcs',
+                                              status: item.status || 'In Stock',
+                                            });
+                                            setShowAddItemModal(true);
+                                          }}>
+                                          <IconComp name="create-outline" size={16} color="#475569" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={() => handleDeleteInventoryProduct(item)}>
+                                          <IconComp name="trash-outline" size={16} color="#DC2626" />
+                                        </TouchableOpacity>
+                                      </View>
+                                    </View>
+                                  );
+                                })
+                              )}
+                            </View>
+                          </ScrollView>
                         </View>
-                      ))}
-                    </View>
-                  )
+                      </View>
+                    ) : (
+                      /* ========================================================== */
+                      /* TAB CONTENT: CATEGORIES (Redesigned to match Image 4)      */
+                      /* ========================================================== */
+                      <View style={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        overflow: 'hidden',
+                        elevation: 1,
+                        marginBottom: 16,
+                      }}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                          <View style={{ minWidth: 620 }}>
+                            {/* Table Header (Matching Image 4) */}
+                            <View style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              backgroundColor: '#F8FAFC',
+                              paddingVertical: 14,
+                              paddingHorizontal: 16,
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#E2E8F0',
+                            }}>
+                              <Text style={{ width: 180, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>
+                                CATEGORY NAME
+                              </Text>
+                              <Text style={{ flex: 1, minWidth: 320, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' }}>
+                                DESCRIPTION
+                              </Text>
+                              <Text style={{ width: 80, fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', textAlign: 'center' }}>
+                                ACTIONS
+                              </Text>
+                            </View>
+
+                            {/* Table Content or Empty State (Matches Image 4) */}
+                            {inventoryCategoriesList.length === 0 ? (
+                              <View style={{ paddingVertical: 64, alignItems: 'center', justifyContent: 'center' }}>
+                                <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '500' }}>
+                                  No categories found. Create a category to start organizing inventory.
+                                </Text>
+                              </View>
+                            ) : (
+                              inventoryCategoriesList.map((cat: any, idx: number) => (
+                                <View
+                                  key={cat.id || idx}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    paddingVertical: 14,
+                                    paddingHorizontal: 16,
+                                    borderBottomWidth: 1,
+                                    borderBottomColor: '#F1F5F9',
+                                    backgroundColor: idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA',
+                                  }}>
+                                  <Text style={{ width: 180, fontSize: 13, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                                    {cat.name}
+                                  </Text>
+                                  <Text style={{ flex: 1, minWidth: 320, fontSize: 12, color: '#64748B' }} numberOfLines={2}>
+                                    {cat.description || '—'}
+                                  </Text>
+                                  <View style={{ width: 80, flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        setEditingCategoryItem(cat);
+                                        setNewCategoryName(cat.name || '');
+                                        setNewCategoryDesc(cat.description || '');
+                                        setShowAddCategoryModal(true);
+                                      }}>
+                                      <IconComp name="create-outline" size={16} color="#475569" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        Alert.alert(
+                                          'Delete Category',
+                                          `Are you sure you want to delete category "${cat.name}"?`,
+                                          [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            {
+                                              text: 'Delete',
+                                              style: 'destructive',
+                                              onPress: async () => {
+                                                const targetSchool = adminSchoolId || 'school1';
+                                                try {
+                                                  if (typeof deleteSubDocument === 'function') {
+                                                    await deleteSubDocument(targetSchool, 'inventory_categories', cat.id);
+                                                  }
+                                                } catch (e) {}
+                                                setInventoryCategoriesList(prev => {
+                                                  const next = prev.filter(c => c.id !== cat.id);
+                                                  AsyncStorage.setItem('@zuna_inventory_categories', JSON.stringify(next)).catch(() => {});
+                                                  return next;
+                                                });
+                                                await logInventoryAudit('Category Deleted', {
+                                                  category: cat.name,
+                                                  remarks: 'Manual deletion',
+                                                });
+                                                showToast(`Category "${cat.name}" deleted`);
+                                              },
+                                            },
+                                          ]
+                                        );
+                                      }}>
+                                      <IconComp name="trash-outline" size={16} color="#DC2626" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              ))
+                            )}
+                          </View>
+                        </ScrollView>
+                      </View>
+                    )}
+                  </ScrollView>
                 )}
-              </ScrollView>
+              </View>
             )}
 
             {/* --- PIC 2: LEAVE MANAGEMENT MODULE --- */}
@@ -15454,11 +17893,6 @@ function App() {
                   title="Leave Management"
                   subtitle="Review, approve, or reject leave requests from teachers and students."
                   badgeText={`${leaveRequestsList.filter(l => l.status === 'Pending').length} Pending`}
-                  primaryButton={{
-                    label: "+ Request Leave",
-                    icon: "add-outline",
-                    onPress: () => setShowCreateLeaveModal(true),
-                  }}
                 />
 
                 {/* Sub-Tabs: Pending Requests vs History */}
@@ -15525,12 +17959,7 @@ function App() {
                             ? 'All leave applications from staff and students have been processed.'
                             : 'Approved and rejected requests will appear here.'}
                         </Text>
-                        <TouchableOpacity
-                          style={[styles.purplePrimaryActionBtn, { alignSelf: 'center', marginTop: 14 }]}
-                          onPress={() => setShowCreateLeaveModal(true)}>
-                          <IconComp name="add-outline" size={16} color="#FFFFFF" />
-                          <Text style={styles.purplePrimaryBtnText}>Submit New Leave Request</Text>
-                        </TouchableOpacity>
+
                       </View>
                     );
                   }
@@ -15931,11 +18360,6 @@ function App() {
                   icon="link-outline"
                   title="Generate Access Links"
                   subtitle="Easily onboard your teachers and parents by sharing these unique registration links."
-                  primaryButton={{
-                    label: "Share All",
-                    icon: "share-social-outline",
-                    onPress: () => handleShareLink('ZUNA Access Links', 'https://sms-teamcarrezza.vercel.app'),
-                  }}
                 />
 
                 <View style={{ gap: 14, marginTop: 12 }}>
@@ -15956,7 +18380,7 @@ function App() {
                     <View style={styles.regLinkUrlBox}>
                       <IconComp name="link-outline" size={15} color="#94A3B8" />
                       <Text style={styles.regLinkUrlText} numberOfLines={1}>
-                        https://sms-teamcarrezza.vercel.app/admission/school-123
+                        {`https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'school1'}`}
                       </Text>
                     </View>
 
@@ -15966,17 +18390,27 @@ function App() {
                           styles.regLinkCopyBtn,
                           copiedLinkType === 'admission' && { backgroundColor: '#10B981' }
                         ]}
-                        onPress={() => handleCopyLink('admission', 'https://sms-teamcarrezza.vercel.app/admission/school-123')}>
+                        onPress={() => handleCopyLink('admission', `https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'school1'}`)}>
                         <IconComp name={copiedLinkType === 'admission' ? 'checkmark-circle-outline' : 'copy-outline'} size={15} color="#FFFFFF" />
                         <Text style={styles.regLinkCopyBtnText}>
                           {copiedLinkType === 'admission' ? 'Copied!' : 'Copy Link'}
                         </Text>
                       </TouchableOpacity>
 
+                      {/* Open Link Button (Matches Image 1) -> Opens Public Admission Form Modal (Matches Image 2) */}
                       <TouchableOpacity
                         style={styles.regLinkShareBtn}
-                        onPress={() => handleShareLink('Admission Application Form', 'https://sms-teamcarrezza.vercel.app/admission/school-123')}>
-                        <IconComp name="share-social-outline" size={16} color="#475569" />
+                        onPress={() => {
+                          generateCaptchaCode();
+                          setShowPublicAdmissionModal(true);
+                        }}>
+                        <IconComp name="open-outline" size={16} color="#0F172A" />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.regLinkShareBtn}
+                        onPress={() => handleShareLink('Admission Application Form', `https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'school1'}`)}>
+                        <IconComp name="mail-outline" size={16} color="#475569" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -15998,7 +18432,7 @@ function App() {
                     <View style={styles.regLinkUrlBox}>
                       <IconComp name="link-outline" size={15} color="#94A3B8" />
                       <Text style={styles.regLinkUrlText} numberOfLines={1}>
-                        https://sms-teamcarrezza.vercel.app/register/teacher/school-123
+                        {`https://sms-teamcarrezza.vercel.app/register/teacher/${adminSchoolId || 'school1'}`}
                       </Text>
                     </View>
 
@@ -16008,7 +18442,7 @@ function App() {
                           styles.regLinkCopyBtn,
                           copiedLinkType === 'teacher' && { backgroundColor: '#10B981' }
                         ]}
-                        onPress={() => handleCopyLink('teacher', 'https://sms-teamcarrezza.vercel.app/register/teacher/school-123')}>
+                        onPress={() => handleCopyLink('teacher', `https://sms-teamcarrezza.vercel.app/register/teacher/${adminSchoolId || 'school1'}`)}>
                         <IconComp name={copiedLinkType === 'teacher' ? 'checkmark-circle-outline' : 'copy-outline'} size={15} color="#FFFFFF" />
                         <Text style={styles.regLinkCopyBtnText}>
                           {copiedLinkType === 'teacher' ? 'Copied!' : 'Copy Link'}
@@ -16017,8 +18451,17 @@ function App() {
 
                       <TouchableOpacity
                         style={styles.regLinkShareBtn}
-                        onPress={() => handleShareLink('Teacher Registration', 'https://sms-teamcarrezza.vercel.app/register/teacher/school-123')}>
-                        <IconComp name="share-social-outline" size={16} color="#475569" />
+                        onPress={() => {
+                          const url = `https://sms-teamcarrezza.vercel.app/register/teacher/${adminSchoolId || 'school1'}`;
+                          Linking.openURL(url).catch(() => {});
+                        }}>
+                        <IconComp name="open-outline" size={16} color="#0F172A" />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.regLinkShareBtn}
+                        onPress={() => handleShareLink('Teacher Registration Link', `https://sms-teamcarrezza.vercel.app/register/teacher/${adminSchoolId || 'school1'}`)}>
+                        <IconComp name="mail-outline" size={16} color="#475569" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -16040,7 +18483,7 @@ function App() {
                     <View style={styles.regLinkUrlBox}>
                       <IconComp name="link-outline" size={15} color="#94A3B8" />
                       <Text style={styles.regLinkUrlText} numberOfLines={1}>
-                        https://sms-teamcarrezza.vercel.app/register/parent/school-123
+                        {`https://sms-teamcarrezza.vercel.app/register/parent/${adminSchoolId || 'school1'}`}
                       </Text>
                     </View>
 
@@ -16050,7 +18493,7 @@ function App() {
                           styles.regLinkCopyBtn,
                           copiedLinkType === 'parent' && { backgroundColor: '#10B981' }
                         ]}
-                        onPress={() => handleCopyLink('parent', 'https://sms-teamcarrezza.vercel.app/register/parent/school-123')}>
+                        onPress={() => handleCopyLink('parent', `https://sms-teamcarrezza.vercel.app/register/parent/${adminSchoolId || 'school1'}`)}>
                         <IconComp name={copiedLinkType === 'parent' ? 'checkmark-circle-outline' : 'copy-outline'} size={15} color="#FFFFFF" />
                         <Text style={styles.regLinkCopyBtnText}>
                           {copiedLinkType === 'parent' ? 'Copied!' : 'Copy Link'}
@@ -16059,8 +18502,17 @@ function App() {
 
                       <TouchableOpacity
                         style={styles.regLinkShareBtn}
-                        onPress={() => handleShareLink('Parent Portal Registration', 'https://sms-teamcarrezza.vercel.app/register/parent/school-123')}>
-                        <IconComp name="share-social-outline" size={16} color="#475569" />
+                        onPress={() => {
+                          const url = `https://sms-teamcarrezza.vercel.app/register/parent/${adminSchoolId || 'school1'}`;
+                          Linking.openURL(url).catch(() => {});
+                        }}>
+                        <IconComp name="open-outline" size={16} color="#0F172A" />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.regLinkShareBtn}
+                        onPress={() => handleShareLink('Parent Portal Registration', `https://sms-teamcarrezza.vercel.app/register/parent/${adminSchoolId || 'school1'}`)}>
+                        <IconComp name="mail-outline" size={16} color="#475569" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -16157,9 +18609,25 @@ function App() {
                   title="Leads Management"
                   subtitle="Design lead forms, embed links, and track enquiries."
                   primaryButton={{
-                    label: "+ Add Lead",
-                    icon: "person-add-outline",
-                    onPress: () => setShowAddLeadModal(true),
+                    label: "+ Add Form",
+                    icon: "add-outline",
+                    onPress: () => {
+                      setNewFormConfig({
+                        title: '',
+                        description: '',
+                        successMessage: '',
+                        fields: [
+                          { id: 'f_1', label: 'Full Name', type: 'text', required: true, options: '' },
+                          { id: 'f_2', label: 'Email Address', type: 'email', required: true, options: '' },
+                          { id: 'f_3', label: 'Phone Number', type: 'phone', required: true, options: '' },
+                        ],
+                      });
+                      setNewFieldInputLabel('');
+                      setNewFieldInputType('text');
+                      setNewFieldInputRequired(false);
+                      setNewFieldInputOptions('');
+                      setShowCreateFormModal(true);
+                    },
                   }}
                 />
 
@@ -16628,47 +19096,212 @@ function App() {
 
                 {customModuleTab === 'schema' ? (
                   <>
-                    {/* Controls Row: Target Module Picker + Import Selector */}
-                    <View style={styles.customModControlsCard}>
-                      <Text style={styles.customModFieldLabel}>Target Module</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-                        {['Staff Directory', 'Student Directory', 'Inventory Management', 'HR & Payroll', 'Transport'].map(tm => (
-                          <TouchableOpacity
-                            key={tm}
-                            style={[
-                              styles.customModPill,
-                              selectedCustomModuleTarget === tm && styles.customModPillActive
-                            ]}
-                            onPress={() => setSelectedCustomModuleTarget(tm)}>
-                            <Text style={[
-                              styles.customModPillText,
-                              selectedCustomModuleTarget === tm && styles.customModPillTextActive
-                            ]}>{tm}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-
-                      <View style={styles.customModImportRow}>
-                        <View style={styles.customModImportSelectBox}>
-                          <Text style={styles.customModImportSelectText}>
-                            {selectedImportModule || '-- Select Module to Import --'}
-                          </Text>
-                        </View>
-
+                    {/* Controls Row: Target Module Dropdown + Import Dropdown + Import & Save Schema (Matches Images 4 & 5) */}
+                    <View style={[styles.customModControlsCard, { zIndex: 100 }]}>
+                      {/* Row with Target Module Dropdown (Image 4) */}
+                      <View style={{ marginBottom: 12, position: 'relative', zIndex: 30 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>TARGET MODULE</Text>
                         <TouchableOpacity
-                          style={styles.customModImportBtn}
+                          style={{
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            height: 42,
+                            paddingHorizontal: 12,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                          }}
                           onPress={() => {
-                            handleImportSchema(selectedCustomModuleTarget);
+                            setShowTargetModuleDropdown(!showTargetModuleDropdown);
+                            setShowImportModuleDropdown(false);
                           }}>
-                          <IconComp name="add-outline" size={15} color="#FFFFFF" />
-                          <Text style={styles.customModImportBtnText}>Import</Text>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedCustomModuleTarget}</Text>
+                          <IconComp name="chevron-down" size={16} color="#64748B" />
                         </TouchableOpacity>
 
+                        {/* Dropdown Options for Target Module (Image 4 matching) */}
+                        {showTargetModuleDropdown && (
+                          <View style={{
+                            position: 'absolute',
+                            top: 65,
+                            left: 0,
+                            right: 0,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            elevation: 8,
+                            shadowColor: '#000',
+                            shadowOpacity: 0.15,
+                            shadowRadius: 8,
+                            shadowOffset: { width: 0, height: 4 },
+                            maxHeight: 220,
+                            zIndex: 999,
+                          }}>
+                            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                              {SCHEMA_MODULE_LIST.map((modName, idx) => {
+                                const isSelected = selectedCustomModuleTarget === modName;
+                                return (
+                                  <TouchableOpacity
+                                    key={modName}
+                                    style={{
+                                      paddingVertical: 10,
+                                      paddingHorizontal: 14,
+                                      backgroundColor: isSelected ? '#2563EB' : (idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF'),
+                                      borderBottomWidth: idx < SCHEMA_MODULE_LIST.length - 1 ? 1 : 0,
+                                      borderBottomColor: '#F1F5F9',
+                                    }}
+                                    onPress={() => {
+                                      setSelectedCustomModuleTarget(modName);
+                                      setShowTargetModuleDropdown(false);
+                                    }}>
+                                    <Text style={{
+                                      fontSize: 13,
+                                      fontWeight: isSelected ? '800' : '500',
+                                      color: isSelected ? '#FFFFFF' : '#0F172A',
+                                    }}>
+                                      {modName}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Row with Import Dropdown (Image 5) + Import + Save Schema Button */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, position: 'relative', zIndex: 20 }}>
+                        {/* Import Dropdown */}
+                        <View style={{ flex: 1, position: 'relative' }}>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              height: 40,
+                              paddingHorizontal: 10,
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#CBD5E1',
+                            }}
+                            onPress={() => {
+                              setShowImportModuleDropdown(!showImportModuleDropdown);
+                              setShowTargetModuleDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: selectedImportModule ? '#0F172A' : '#64748B' }} numberOfLines={1}>
+                              {selectedImportModule || '-- Select Module to Import --'}
+                            </Text>
+                            <IconComp name="chevron-down" size={14} color="#64748B" />
+                          </TouchableOpacity>
+
+                          {/* Dropdown Options for Import Module (Image 5 matching) */}
+                          {showImportModuleDropdown && (
+                            <View style={{
+                              position: 'absolute',
+                              top: 44,
+                              left: 0,
+                              right: 0,
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#CBD5E1',
+                              elevation: 8,
+                              shadowColor: '#000',
+                              shadowOpacity: 0.15,
+                              shadowRadius: 8,
+                              shadowOffset: { width: 0, height: 4 },
+                              maxHeight: 200,
+                              zIndex: 999,
+                            }}>
+                              <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                                <TouchableOpacity
+                                  style={{
+                                    paddingVertical: 9,
+                                    paddingHorizontal: 12,
+                                    backgroundColor: !selectedImportModule ? '#2563EB' : '#FFFFFF',
+                                    borderBottomWidth: 1,
+                                    borderBottomColor: '#F1F5F9',
+                                  }}
+                                  onPress={() => {
+                                    setSelectedImportModule('');
+                                    setShowImportModuleDropdown(false);
+                                  }}>
+                                  <Text style={{ fontSize: 12, fontWeight: !selectedImportModule ? '800' : '500', color: !selectedImportModule ? '#FFFFFF' : '#64748B' }}>
+                                    -- Select Module to Import --
+                                  </Text>
+                                </TouchableOpacity>
+
+                                {SCHEMA_MODULE_LIST.filter(m => m !== selectedCustomModuleTarget).map((modName, idx) => {
+                                  const isSelected = selectedImportModule === modName;
+                                  return (
+                                    <TouchableOpacity
+                                      key={modName}
+                                      style={{
+                                        paddingVertical: 9,
+                                        paddingHorizontal: 12,
+                                        backgroundColor: isSelected ? '#2563EB' : '#FFFFFF',
+                                        borderBottomWidth: 1,
+                                        borderBottomColor: '#F1F5F9',
+                                      }}
+                                      onPress={() => {
+                                        setSelectedImportModule(modName);
+                                        setShowImportModuleDropdown(false);
+                                      }}>
+                                      <Text style={{
+                                        fontSize: 12,
+                                        fontWeight: isSelected ? '800' : '500',
+                                        color: isSelected ? '#FFFFFF' : '#0F172A',
+                                      }}>
+                                        {modName}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </ScrollView>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* + Import Button */}
                         <TouchableOpacity
-                          style={styles.customModSaveBtn}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: '#64748B',
+                            height: 40,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                          }}
+                          onPress={() => {
+                            if (selectedImportModule) {
+                              handleImportSchema(selectedImportModule);
+                            } else {
+                              showToast('Please select a module to import');
+                            }
+                          }}>
+                          <IconComp name="add-outline" size={15} color="#FFFFFF" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Import</Text>
+                        </TouchableOpacity>
+
+                        {/* Save Schema Button (Purple button matching Image 4, generic Save deleted) */}
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                            backgroundColor: '#b07fa8',
+                            height: 40,
+                            paddingHorizontal: 14,
+                            borderRadius: 8,
+                          }}
                           onPress={handleSaveSchema}>
                           <IconComp name="save-outline" size={15} color="#FFFFFF" />
-                          <Text style={styles.customModSaveBtnText}>Save</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Save Schema</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -16817,30 +19450,44 @@ function App() {
                   </View>
 
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-                    {rolesList.map(r => (
-                      <TouchableOpacity
-                        key={r}
-                        style={[
-                          styles.roleSelectPill,
-                          selectedRole === r && styles.roleSelectPillActive
-                        ]}
-                        onPress={() => setSelectedRole(r)}>
-                        <Text style={[
-                          styles.roleSelectPillText,
-                          selectedRole === r && styles.roleSelectPillTextActive
-                        ]}>
-                          {r}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                    {rolesList.map(r => {
+                      const isSelected = selectedRole === r;
+                      const isCustom = !DEFAULT_ROLES_LIST.includes(r);
+                      return (
+                        <View
+                          key={r}
+                          style={[
+                            styles.roleSelectPill,
+                            isSelected && styles.roleSelectPillActive,
+                            { flexDirection: 'row', alignItems: 'center', paddingRight: isCustom ? 8 : 14 }
+                          ]}>
+                          <TouchableOpacity onPress={() => setSelectedRole(r)}>
+                            <Text style={[
+                              styles.roleSelectPillText,
+                              isSelected && styles.roleSelectPillTextActive
+                            ]}>
+                              {r}
+                            </Text>
+                          </TouchableOpacity>
+                          {isCustom && (
+                            <TouchableOpacity
+                              onPress={() => handleDeleteRole(r)}
+                              style={{ marginLeft: 6, padding: 2 }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                              <IconComp name="trash-outline" size={14} color={isSelected ? '#FFFFFF' : '#EF4444'} />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      );
+                    })}
                   </ScrollView>
                 </View>
 
                 {/* Permissions Matrix Card */}
                 <View style={styles.permissionsMatrixCard}>
-                  {/* Card Title & Target Login Panel */}
+                  {/* Card Title & Target Login Panel Dropdown (Matching Image 1) */}
                   <View style={styles.permissionsCardHeader}>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
                       <Text style={styles.permissionsCardTitle}>{selectedRole} Permissions</Text>
                       <Text style={styles.permissionsCardSub}>
                         Select the modules and actions this role can access.
@@ -16848,11 +19495,66 @@ function App() {
                     </View>
 
                     <View style={styles.permissionsTargetPanelBox}>
-                      <Text style={styles.permissionsTargetPanelLabel}>Target Login Panel</Text>
-                      <View style={styles.permissionsPanelBadge}>
-                        <Text style={styles.permissionsPanelBadgeText}>{targetLoginPanel}</Text>
-                        <IconComp name="chevron-down" size={12} color="#475569" />
-                      </View>
+                      <Text style={styles.permissionsTargetPanelLabel}>Target Login Panel:</Text>
+                      <TouchableOpacity
+                        style={[styles.permissionsPanelBadge, { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', paddingVertical: 6, paddingHorizontal: 10 }]}
+                        onPress={() => setShowTargetLoginPanelDropdown(!showTargetLoginPanelDropdown)}>
+                        <Text style={[styles.permissionsPanelBadgeText, { fontWeight: '700', color: '#0F172A' }]}>{targetLoginPanel}</Text>
+                        <IconComp name="chevron-down" size={14} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Dropdown Menu for Target Login Panel */}
+                      {showTargetLoginPanelDropdown && (
+                        <View style={{
+                          position: 'absolute',
+                          top: 48,
+                          right: 0,
+                          width: 140,
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          elevation: 6,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 6,
+                          shadowOffset: { width: 0, height: 3 },
+                          zIndex: 999,
+                        }}>
+                          <TouchableOpacity
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              backgroundColor: targetLoginPanel === 'Admin Panel' ? '#F1F5F9' : '#FFFFFF',
+                              borderTopLeftRadius: 7,
+                              borderTopRightRadius: 7,
+                            }}
+                            onPress={() => {
+                              setTargetLoginPanel('Admin Panel');
+                              setShowTargetLoginPanelDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, fontWeight: targetLoginPanel === 'Admin Panel' ? '800' : '600', color: '#0F172A' }}>
+                              Admin Panel
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              backgroundColor: targetLoginPanel === 'Teacher Panel' ? '#2563EB' : '#FFFFFF',
+                              borderBottomLeftRadius: 7,
+                              borderBottomRightRadius: 7,
+                            }}
+                            onPress={() => {
+                              setTargetLoginPanel('Teacher Panel');
+                              setShowTargetLoginPanelDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, fontWeight: targetLoginPanel === 'Teacher Panel' ? '800' : '600', color: targetLoginPanel === 'Teacher Panel' ? '#FFFFFF' : '#0F172A' }}>
+                              Teacher Panel
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   </View>
 
@@ -16869,8 +19571,8 @@ function App() {
                         <Text style={[styles.permsTableColHead, { width: 90, textAlign: 'center' }]}>QUICK SELECT</Text>
                       </View>
 
-                      {/* Rows for all core modules */}
-                      {DEFAULT_ROLE_MODULES.map((modName, idx) => {
+                      {/* Rows: dynamic based on Admin Panel vs Teacher Panel */}
+                      {(targetLoginPanel === 'Teacher Panel' ? TEACHER_ROLE_MODULES : DEFAULT_ROLE_MODULES).map((modName, idx) => {
                         const currentPerms = rolePermissionsMap[selectedRole]?.[modName] || {
                           read: false,
                           create: false,
@@ -17519,40 +20221,153 @@ function App() {
           </View>
         </Modal>
 
-        {/* --- MODAL 3: ADD SUBJECT MODAL --- */}
-        <Modal visible={showAddSubjectModal} transparent animationType="slide">
+        {/* --- MODAL 3: ADD SUBJECT MODAL (Matches Image 3) --- */}
+        <Modal visible={showAddSubjectModal} transparent animationType="fade">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="journal-outline" size={20} color="#b07fa8" />
-                <Text style={styles.modalCardTitle}>Add New Subject</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Subject Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Science"
-                placeholderTextColor="#94A3B8"
-                value={newSubjectName}
-                onChangeText={setNewSubjectName}
-              />
-              <Text style={styles.fieldLabelText}>Subject Code *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. SCI01"
-                placeholderTextColor="#94A3B8"
-                value={newSubjectCode}
-                onChangeText={setNewSubjectCode}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddSubjectModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
+              {/* Modal Header Matching Image 3 */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Add Subject</Text>
+                <TouchableOpacity onPress={() => setShowAddSubjectModal(false)} style={{ padding: 4 }}>
+                  <IconComp name="close" size={20} color="#94A3B8" />
                 </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20 }}>
+                {/* Field 1: Subject Name * */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Subject Name *</Text>
+                <RNTextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 16,
+                  }}
+                  placeholder="e.g. Mathematics"
+                  placeholderTextColor="#94A3B8"
+                  value={newSubjectName}
+                  onChangeText={setNewSubjectName}
+                />
+
+                {/* Field 2: Subject Code (Optional) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Subject Code (Optional)</Text>
+                <RNTextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 16,
+                  }}
+                  placeholder="e.g. MATH101"
+                  placeholderTextColor="#94A3B8"
+                  value={newSubjectCode}
+                  onChangeText={setNewSubjectCode}
+                />
+
+                {/* Field 3: Assign to Teaching Staff */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Assign to Teaching Staff</Text>
+                <View style={{
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  borderRadius: 10,
+                  padding: 12,
+                  minHeight: 80,
+                  maxHeight: 180,
+                  backgroundColor: '#F8FAFC',
+                }}>
+                  <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                    {(() => {
+                      const staffMembers = (staffList || []);
+                      if (staffMembers.length === 0) {
+                        return (
+                          <Text style={{ fontSize: 12, color: '#94A3B8', fontStyle: 'italic', paddingVertical: 12, textAlign: 'center' }}>
+                            No teaching staff found.
+                          </Text>
+                        );
+                      }
+                      return staffMembers.map((fac: any) => {
+                        const isAssigned = newSubjectAssignedTeacherIds.includes(fac.id);
+                        return (
+                          <TouchableOpacity
+                            key={fac.id}
+                            onPress={() => handleToggleSubjectTeacher(fac.id)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              paddingVertical: 8,
+                              paddingHorizontal: 6,
+                              borderRadius: 6,
+                              backgroundColor: isAssigned ? '#faedf7' : 'transparent',
+                              marginBottom: 4,
+                            }}>
+                            <View style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: 4,
+                              borderWidth: 1.5,
+                              borderColor: isAssigned ? '#b07fa8' : '#CBD5E1',
+                              backgroundColor: isAssigned ? '#b07fa8' : '#FFFFFF',
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              marginRight: 10,
+                            }}>
+                              {isAssigned && <IconComp name="checkmark" size={12} color="#FFFFFF" />}
+                            </View>
+                            <Text style={{ fontSize: 13, color: isAssigned ? '#0F172A' : '#475569', fontWeight: isAssigned ? '700' : '500' }}>
+                              {fac.name} {fac.designation ? `(${fac.designation})` : ''}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      });
+                    })()}
+                  </ScrollView>
+                </View>
+              </ScrollView>
+
+              {/* Bottom Buttons Matching Image 3 */}
+              <View style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: 10,
+                paddingHorizontal: 20,
+                paddingVertical: 14,
+                borderTopWidth: 1,
+                borderTopColor: '#F1F5F9',
+                backgroundColor: '#FFFFFF',
+              }}>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={handleAddSubjectSubmit}>
-                  <Text style={styles.modalSmallBtnText}>Save Subject</Text>
+                  onPress={() => setShowAddSubjectModal(false)}
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                  }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleAddSubjectSubmit}
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 18,
+                    borderRadius: 8,
+                    backgroundColor: '#b07fa8',
+                  }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Save Subject</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -18401,35 +21216,1586 @@ function App() {
           </View>
         </Modal>
 
-        {/* ===== MODAL: ADD INVENTORY ITEM ===== */}
-        <Modal visible={showAddItemModal} transparent animationType="slide">
+        {/* ===== MODAL: CREATE FORM CONFIGURATION (Matches Image 3) ===== */}
+        <Modal visible={showCreateFormModal} transparent animationType="fade">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="cube-outline" size={20} color="#b07fa8" />
-                <Text style={styles.modalCardTitle}>Add Inventory Item</Text>
+            <View style={[styles.modalCardContainer, { maxWidth: 520, width: '94%', maxHeight: '92%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* Header (Matching Image 3) */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Create Form Configuration</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        backgroundColor: '#FFFFFF',
+                      }}
+                      onPress={() => setShowCreateFormModal(false)}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 7,
+                        borderRadius: 8,
+                        backgroundColor: '#b07fa8',
+                        opacity: isSavingFormConfig ? 0.6 : 1,
+                      }}
+                      disabled={isSavingFormConfig}
+                      onPress={handleSaveFormConfiguration}>
+                      {isSavingFormConfig ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Save Configuration</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* FORM TITLE */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                  FORM TITLE
+                </Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 14,
+                  }}
+                  placeholder="e.g. Admission Enquiry 2026"
+                  placeholderTextColor="#94A3B8"
+                  value={newFormConfig.title}
+                  onChangeText={val => setNewFormConfig(prev => ({ ...prev, title: val }))}
+                />
+
+                {/* DESCRIPTION */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                  DESCRIPTION
+                </Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 14,
+                  }}
+                  placeholder="Display prompt or helper text for enquiries"
+                  placeholderTextColor="#94A3B8"
+                  value={newFormConfig.description}
+                  onChangeText={val => setNewFormConfig(prev => ({ ...prev, description: val }))}
+                />
+
+                {/* SUCCESS / THANK-YOU MESSAGE */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                  SUCCESS / THANK-YOU MESSAGE
+                </Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 18,
+                  }}
+                  placeholder="e.g., Thank you. Your enquiry has been received!"
+                  placeholderTextColor="#94A3B8"
+                  value={newFormConfig.successMessage}
+                  onChangeText={val => setNewFormConfig(prev => ({ ...prev, successMessage: val }))}
+                />
+
+                {/* Form Inputs & Field Configurations Section (Matches Image 3) */}
+                <View style={{
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  borderRadius: 14,
+                  padding: 14,
+                  backgroundColor: '#FAFAFA',
+                  marginBottom: 16,
+                }}>
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 12 }}>
+                    Form Inputs & Field Configurations
+                  </Text>
+
+                  {/* Input Label */}
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                    INPUT LABEL
+                  </Text>
+                  <RNTextInput
+                    style={{
+                      height: 40,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 8,
+                      paddingHorizontal: 12,
+                      fontSize: 12,
+                      color: '#0F172A',
+                      backgroundColor: '#FFFFFF',
+                      marginBottom: 12,
+                    }}
+                    placeholder="e.g. Email Address"
+                    placeholderTextColor="#94A3B8"
+                    value={newFieldInputLabel}
+                    onChangeText={setNewFieldInputLabel}
+                  />
+
+                  {/* Field Type Dropdown */}
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                    FIELD TYPE
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      height: 40,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 8,
+                      paddingHorizontal: 12,
+                      backgroundColor: '#FFFFFF',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: showFieldTypeDropdown ? 4 : 12,
+                    }}
+                    onPress={() => setShowFieldTypeDropdown(!showFieldTypeDropdown)}>
+                    <Text style={{ fontSize: 12, color: '#0F172A', fontWeight: '600' }}>
+                      {newFieldInputType === 'text' ? 'Text Input' :
+                       newFieldInputType === 'number' ? 'Number Input' :
+                       newFieldInputType === 'email' ? 'Email' :
+                       newFieldInputType === 'phone' ? 'Phone' :
+                       newFieldInputType === 'date' ? 'Date' :
+                       newFieldInputType === 'dropdown' ? 'Dropdown Options' :
+                       newFieldInputType === 'textarea' ? 'Textarea (Long text)' : 'Text Input'}
+                    </Text>
+                    <IconComp name="chevron-down" size={14} color="#64748B" />
+                  </TouchableOpacity>
+                  {showFieldTypeDropdown && (
+                    <View style={{
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 8,
+                      backgroundColor: '#FFFFFF',
+                      marginBottom: 12,
+                      elevation: 3,
+                    }}>
+                      {[
+                        { key: 'text', label: 'Text Input' },
+                        { key: 'number', label: 'Number Input' },
+                        { key: 'email', label: 'Email' },
+                        { key: 'phone', label: 'Phone' },
+                        { key: 'date', label: 'Date' },
+                        { key: 'dropdown', label: 'Dropdown Options' },
+                        { key: 'textarea', label: 'Textarea (Long text)' },
+                      ].map(opt => (
+                        <TouchableOpacity
+                          key={opt.key}
+                          style={{
+                            paddingVertical: 9,
+                            paddingHorizontal: 12,
+                            backgroundColor: newFieldInputType === opt.key ? '#f6eef5' : '#FFFFFF',
+                          }}
+                          onPress={() => {
+                            setNewFieldInputType(opt.key);
+                            setShowFieldTypeDropdown(false);
+                          }}>
+                          <Text style={{ fontSize: 12, color: newFieldInputType === opt.key ? '#b07fa8' : '#0F172A', fontWeight: newFieldInputType === opt.key ? '700' : '400' }}>
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Options if Dropdown */}
+                  {newFieldInputType === 'dropdown' && (
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 6, textTransform: 'uppercase' }}>
+                        OPTIONS (comma-separated)
+                      </Text>
+                      <RNTextInput
+                        style={{
+                          height: 40,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 8,
+                          paddingHorizontal: 12,
+                          fontSize: 12,
+                          color: '#0F172A',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        placeholder="e.g. Option A, Option B, Option C"
+                        placeholderTextColor="#94A3B8"
+                        value={newFieldInputOptions}
+                        onChangeText={setNewFieldInputOptions}
+                      />
+                    </View>
+                  )}
+
+                  {/* Required Checkbox & Add Input Button */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 8,
+                        paddingHorizontal: 12,
+                        height: 38,
+                        flex: 1,
+                      }}
+                      onPress={() => setNewFieldInputRequired(!newFieldInputRequired)}>
+                      <View style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        borderWidth: 1.5,
+                        borderColor: newFieldInputRequired ? '#b07fa8' : '#94A3B8',
+                        backgroundColor: newFieldInputRequired ? '#b07fa8' : 'transparent',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}>
+                        {newFieldInputRequired && <IconComp name="checkmark" size={11} color="#FFFFFF" />}
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#334155', fontWeight: '600' }}>Yes, Required</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#b07fa8',
+                        paddingHorizontal: 18,
+                        height: 38,
+                        borderRadius: 8,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        if (!newFieldInputLabel.trim()) {
+                          Alert.alert('Validation Error', 'Input label is required.');
+                          return;
+                        }
+                        const newF = {
+                          id: 'f_' + Date.now(),
+                          label: newFieldInputLabel.trim(),
+                          type: newFieldInputType,
+                          required: newFieldInputRequired,
+                          options: newFieldInputOptions.trim(),
+                        };
+                        setNewFormConfig(prev => ({ ...prev, fields: [...prev.fields, newF] }));
+                        setNewFieldInputLabel('');
+                        setNewFieldInputOptions('');
+                        setNewFieldInputRequired(false);
+                      }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Add Input</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Configured Fields List */}
+                  {newFormConfig.fields.length > 0 && (
+                    <View style={{ marginTop: 14, gap: 8 }}>
+                      {newFormConfig.fields.map((f, idx) => (
+                        <View
+                          key={f.id}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: 1,
+                            borderColor: '#E2E8F0',
+                          }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#94A3B8' }}>#{idx + 1}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>{f.label}</Text>
+                            <View style={{ backgroundColor: '#F1F5F9', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', textTransform: 'uppercase' }}>{f.type}</Text>
+                            </View>
+                            {f.required && (
+                              <View style={{ backgroundColor: '#FEF2F2', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444' }}>Required</Text>
+                              </View>
+                            )}
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setNewFormConfig(prev => ({
+                                ...prev,
+                                fields: prev.fields.filter(item => item.id !== f.id),
+                              }));
+                            }}>
+                            <IconComp name="trash-outline" size={16} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: PUBLIC ADMISSION APPLICATION FORM (Matches Image 2) ===== */}
+        <Modal visible={showPublicAdmissionModal} animationType="slide">
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+            {/* Top Navigation Bar */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              backgroundColor: '#FFFFFF',
+              borderBottomWidth: 1,
+              borderBottomColor: '#E2E8F0',
+            }}>
+              <TouchableOpacity
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                onPress={() => setShowPublicAdmissionModal(false)}>
+                <IconComp name="arrow-back-outline" size={20} color="#0F172A" />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Public Admission Form</Text>
+              <View style={{ width: 38 }} />
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+              {/* Header Banner Card (Matching Image 2) */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 16,
+                alignItems: 'center',
+              }}>
+                <View style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  backgroundColor: '#b07fa8',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}>
+                  <IconComp name="school-outline" size={24} color="#FFFFFF" />
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>xyz</Text>
+                <Text style={{ fontSize: 11, color: '#64748B', textAlign: 'center', marginTop: 4 }}>
+                  Please complete the application form below. All accurate details will be verified by the school administration.
+                </Text>
               </View>
-              <Text style={styles.fieldLabelText}>Product Name *</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. Whiteboard Marker" placeholderTextColor="#94A3B8" value={newItemForm.name} onChangeText={v => setNewItemForm(p => ({ ...p, name: v }))} />
-              <Text style={styles.fieldLabelText}>Product ID</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. WBM-001" placeholderTextColor="#94A3B8" value={newItemForm.productId} onChangeText={v => setNewItemForm(p => ({ ...p, productId: v }))} />
-              <Text style={styles.fieldLabelText}>Category</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. Stationery" placeholderTextColor="#94A3B8" value={newItemForm.category} onChangeText={v => setNewItemForm(p => ({ ...p, category: v }))} />
-              <Text style={styles.fieldLabelText}>Quantity</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. 100" placeholderTextColor="#94A3B8" keyboardType="number-pad" value={newItemForm.quantity} onChangeText={v => setNewItemForm(p => ({ ...p, quantity: sanitizeNumeric(v, 5) }))} />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]} onPress={() => setShowAddItemModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+
+              {/* ===== SECTION 1: STUDENT PERSONAL DETAILS (Matching Image 2) ===== */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="person-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>1. Student Personal Details</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14 }}>
+                  Provide personal name, contact, photo, and identity numbers.
+                </Text>
+
+                {/* Photo Upload Box */}
+                <View style={{
+                  borderWidth: 1.5,
+                  borderStyle: 'dashed',
+                  borderColor: '#CBD5E1',
+                  borderRadius: 12,
+                  padding: 14,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#F8FAFC',
+                  marginBottom: 14,
+                }}>
+                  <IconComp name="camera-outline" size={24} color="#b07fa8" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A', marginTop: 4 }}>
+                    Upload Student Photo (Optional)
+                  </Text>
+                  <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>
+                    Accepts PNG, JPG (up to 5MB). Photo must be clear.
+                  </Text>
+                  {admissionFormData.photoFile ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#059669' }}>
+                        ✓ {admissionFormData.photoFile.name}
+                      </Text>
+                      <TouchableOpacity onPress={() => setAdmissionFormData(prev => ({ ...prev, photoFile: null }))}>
+                        <IconComp name="close-circle" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 8,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                      }}
+                      onPress={async () => {
+                        try {
+                          const res = await pickDocument('image');
+                          if (res && res.name) {
+                            setAdmissionFormData(prev => ({ ...prev, photoFile: res }));
+                            showToast(`Selected photo ${res.name}`);
+                          }
+                        } catch (e) {}
+                      }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>Choose File</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Full Name */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Full Name</Text>
+                <RNTextInput
+                  style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A', marginBottom: 10 }}
+                  placeholder="e.g. Aashi"
+                  placeholderTextColor="#94A3B8"
+                  value={admissionFormData.fullName}
+                  onChangeText={val => setAdmissionFormData(prev => ({ ...prev, fullName: val }))}
+                />
+
+                {/* First Name & Last Name */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>First Name *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Aarav"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.firstName}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, firstName: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Last Name *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Sharma"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.lastName}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, lastName: val }))}
+                    />
+                  </View>
+                </View>
+
+                {/* Date of Birth & Gender */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Date of Birth *</Text>
+                    <TouchableOpacity
+                      style={{
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => openDatePicker('admissionDob', admissionFormData.dob || '10-09-2015', 'Select Date of Birth')}>
+                      <Text style={{ fontSize: 12, color: admissionFormData.dob ? '#0F172A' : '#94A3B8' }}>
+                        {admissionFormData.dob || 'dd-mm-yyyy'}
+                      </Text>
+                      <IconComp name="calendar-outline" size={15} color="#94A3B8" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Gender *</Text>
+                    <TouchableOpacity
+                      style={{
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => setShowAdmissionGenderDropdown(!showAdmissionGenderDropdown)}>
+                      <Text style={{ fontSize: 12, color: '#0F172A' }}>{admissionFormData.gender}</Text>
+                      <IconComp name="chevron-down" size={13} color="#64748B" />
+                    </TouchableOpacity>
+                    {showAdmissionGenderDropdown && (
+                      <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, backgroundColor: '#FFFFFF', marginTop: 4, elevation: 3 }}>
+                        {['Male', 'Female', 'Other'].map(g => (
+                          <TouchableOpacity
+                            key={g}
+                            style={{ paddingVertical: 8, paddingHorizontal: 10, backgroundColor: admissionFormData.gender === g ? '#f6eef5' : '#FFFFFF' }}
+                            onPress={() => {
+                              setAdmissionFormData(prev => ({ ...prev, gender: g }));
+                              setShowAdmissionGenderDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, color: admissionFormData.gender === g ? '#b07fa8' : '#0F172A', fontWeight: admissionFormData.gender === g ? '700' : '400' }}>
+                              {g}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Blood Group & Nationality */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Blood Group</Text>
+                    <TouchableOpacity
+                      style={{
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => setShowAdmissionBloodDropdown(!showAdmissionBloodDropdown)}>
+                      <Text style={{ fontSize: 12, color: admissionFormData.bloodGroup ? '#0F172A' : '#94A3B8' }}>
+                        {admissionFormData.bloodGroup || 'Select Blood Group'}
+                      </Text>
+                      <IconComp name="chevron-down" size={13} color="#64748B" />
+                    </TouchableOpacity>
+                    {showAdmissionBloodDropdown && (
+                      <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, backgroundColor: '#FFFFFF', marginTop: 4, elevation: 3 }}>
+                        {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(bg => (
+                          <TouchableOpacity
+                            key={bg}
+                            style={{ paddingVertical: 7, paddingHorizontal: 10, backgroundColor: admissionFormData.bloodGroup === bg ? '#f6eef5' : '#FFFFFF' }}
+                            onPress={() => {
+                              setAdmissionFormData(prev => ({ ...prev, bloodGroup: bg }));
+                              setShowAdmissionBloodDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, color: admissionFormData.bloodGroup === bg ? '#b07fa8' : '#0F172A', fontWeight: admissionFormData.bloodGroup === bg ? '700' : '400' }}>
+                              {bg}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Nationality</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="Indian"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.nationality}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, nationality: val }))}
+                    />
+                  </View>
+                </View>
+
+                {/* Religion & Mother Tongue */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Religion & Caste</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Hindu / General"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.religion}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, religion: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Mother Tongue</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Hindi / Tamil"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.motherTongue}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, motherTongue: val }))}
+                    />
+                  </View>
+                </View>
+
+                {/* Aadhaar Number (Strict 12 digits, numeric keypad) */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Aadhaar Number *</Text>
+                <RNTextInput
+                  style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                  placeholder="Enter 12-digit Aadhaar number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  maxLength={12}
+                  value={admissionFormData.aadharNumber}
+                  onChangeText={val => {
+                    const clean = val.replace(/[^0-9]/g, '');
+                    setAdmissionFormData(prev => ({ ...prev, aadharNumber: clean }));
+                  }}
+                />
+              </View>
+
+              {/* ===== SECTION 2: ACADEMIC & TARGET CLASS (Matching Image 2) ===== */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="school-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>2. Academic & Target Class</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14 }}>
+                  Select preferred class and entry details.
+                </Text>
+
+                {/* Admission for Class / Grade * */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Admission for Class / Grade *</Text>
+                <TouchableOpacity
+                  style={{
+                    height: 40,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: showAdmissionClassDropdown ? 4 : 10,
+                  }}
+                  onPress={() => setShowAdmissionClassDropdown(!showAdmissionClassDropdown)}>
+                  <Text style={{ fontSize: 12, color: admissionFormData.targetClassId ? '#0F172A' : '#94A3B8' }}>
+                    {classList.find(c => c.id === admissionFormData.targetClassId)
+                      ? `${classList.find(c => c.id === admissionFormData.targetClassId)?.name} - ${classList.find(c => c.id === admissionFormData.targetClassId)?.section}`
+                      : 'Select Target Class'}
+                  </Text>
+                  <IconComp name="chevron-down" size={13} color="#64748B" />
+                </TouchableOpacity>
+                {showAdmissionClassDropdown && (
+                  <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, backgroundColor: '#FFFFFF', marginBottom: 10, elevation: 3 }}>
+                    <ScrollView nestedScrollEnabled style={{ maxHeight: 140 }}>
+                      {classList.map(cls => (
+                        <TouchableOpacity
+                          key={cls.id}
+                          style={{ paddingVertical: 8, paddingHorizontal: 10, backgroundColor: admissionFormData.targetClassId === cls.id ? '#f6eef5' : '#FFFFFF' }}
+                          onPress={() => {
+                            setAdmissionFormData(prev => ({ ...prev, targetClassId: cls.id }));
+                            setShowAdmissionClassDropdown(false);
+                          }}>
+                          <Text style={{ fontSize: 12, color: admissionFormData.targetClassId === cls.id ? '#b07fa8' : '#0F172A', fontWeight: admissionFormData.targetClassId === cls.id ? '700' : '400' }}>
+                            {cls.name} - {cls.section}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Previous School & Marks */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Previous School Name</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. St. Xavier's High School"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.previousSchool}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, previousSchool: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Previous Grade / %</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. 88% or 'A' Grade"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.previousMarks}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, previousMarks: val }))}
+                    />
+                  </View>
+                </View>
+
+                {/* Stream & Second Language */}
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Preferred Stream</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Science"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.preferredStream}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, preferredStream: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Second Language</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Hindi / French"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.secondLanguage}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, secondLanguage: val }))}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* ===== SECTION 3: PARENT & GUARDIAN INFORMATION (Matching Image 2) ===== */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="people-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>3. Parent & Guardian Information</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14 }}>
+                  Communication details for parents or legal guardians.
+                </Text>
+
+                {/* Father / Guardian Name & Relationship */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1.4 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Father / Guardian Name *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Rajesh Sharma"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.parentName}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, parentName: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Relationship *</Text>
+                    <TouchableOpacity
+                      style={{
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => setShowAdmissionRelDropdown(!showAdmissionRelDropdown)}>
+                      <Text style={{ fontSize: 12, color: '#0F172A' }}>{admissionFormData.relationship}</Text>
+                      <IconComp name="chevron-down" size={13} color="#64748B" />
+                    </TouchableOpacity>
+                    {showAdmissionRelDropdown && (
+                      <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, backgroundColor: '#FFFFFF', marginTop: 4, elevation: 3 }}>
+                        {['Father', 'Mother', 'Guardian'].map(rel => (
+                          <TouchableOpacity
+                            key={rel}
+                            style={{ paddingVertical: 8, paddingHorizontal: 10, backgroundColor: admissionFormData.relationship === rel ? '#f6eef5' : '#FFFFFF' }}
+                            onPress={() => {
+                              setAdmissionFormData(prev => ({ ...prev, relationship: rel }));
+                              setShowAdmissionRelDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, color: admissionFormData.relationship === rel ? '#b07fa8' : '#0F172A', fontWeight: admissionFormData.relationship === rel ? '700' : '400' }}>
+                              {rel}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Primary Phone (Strict 10 digits) & Email */}
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Primary Mobile / WhatsApp *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="10-digit number"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      value={admissionFormData.parentPhone}
+                      onChangeText={val => {
+                        const clean = val.replace(/[^0-9]/g, '');
+                        setAdmissionFormData(prev => ({ ...prev, parentPhone: clean }));
+                      }}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Email Address</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. parent@example.com"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={admissionFormData.parentEmail}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, parentEmail: val }))}
+                    />
+                  </View>
+                </View>
+
+                {/* Occupation & Secondary Phone */}
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Occupation</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="e.g. Software Engineer"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.parentOccupation}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, parentOccupation: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Secondary Phone</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="Secondary phone"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      value={admissionFormData.secondaryPhone}
+                      onChangeText={val => {
+                        const clean = val.replace(/[^0-9]/g, '');
+                        setAdmissionFormData(prev => ({ ...prev, secondaryPhone: clean }));
+                      }}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* ===== SECTION 4: RESIDENTIAL ADDRESS (Matching Image 2) ===== */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="location-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>4. Residential Address</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14 }}>
+                  Local contact address for correspondence.
+                </Text>
+
+                {/* Complete Residential Address * */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Complete Residential Address *</Text>
+                <RNTextInput
+                  style={{
+                    height: 60,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingTop: 8,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    marginBottom: 10,
+                    textAlignVertical: 'top',
+                  }}
+                  placeholder="Complete residential address..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  value={admissionFormData.homeAddress}
+                  onChangeText={val => setAdmissionFormData(prev => ({ ...prev, homeAddress: val }))}
+                />
+
+                {/* City, State, PIN (Strict 6 digits) */}
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>City *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="City"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.city}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, city: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>State *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="State"
+                      placeholderTextColor="#94A3B8"
+                      value={admissionFormData.state}
+                      onChangeText={val => setAdmissionFormData(prev => ({ ...prev, state: val }))}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>PIN Code *</Text>
+                    <RNTextInput
+                      style={{ height: 40, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, fontSize: 13, color: '#0F172A' }}
+                      placeholder="6-digit PIN"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="numeric"
+                      maxLength={6}
+                      value={admissionFormData.pincode}
+                      onChangeText={val => {
+                        const clean = val.replace(/[^0-9]/g, '');
+                        setAdmissionFormData(prev => ({ ...prev, pincode: clean }));
+                      }}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* ===== SECTION 5: DECLARATION & SECURITY VERIFICATION (Matching Image 2) ===== */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                padding: 16,
+                marginBottom: 24,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <IconComp name="shield-checkmark-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>5. Declaration & Security Verification</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14 }}>
+                  Confirm accuracy and submit application.
+                </Text>
+
+                {/* Declaration Checkbox */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 16 }}
+                  onPress={() => setAdmissionFormData(prev => ({ ...prev, declaration: !prev.declaration }))}>
+                  <View style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 4,
+                    borderWidth: 1.5,
+                    borderColor: admissionFormData.declaration ? '#b07fa8' : '#94A3B8',
+                    backgroundColor: admissionFormData.declaration ? '#b07fa8' : '#FFFFFF',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginTop: 2,
+                  }}>
+                    {admissionFormData.declaration && <IconComp name="checkmark" size={13} color="#FFFFFF" />}
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#475569', flex: 1, lineHeight: 16 }}>
+                    I hereby declare that all information provided in this admission application is true, complete, and accurate to the best of my knowledge. I understand that any false statement or omission may lead to rejection of this application or subsequent cancellation of admission.
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Captcha Box */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginBottom: 14,
+                  backgroundColor: '#F8FAFC',
+                  padding: 10,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                }}>
+                  <View style={{
+                    backgroundColor: '#EDE9FE',
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#DDD6FE',
+                  }}>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#6D28D9', letterSpacing: 5 }}>
+                      {captchaCode}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={{ padding: 8, borderRadius: 8, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1' }}
+                    onPress={generateCaptchaCode}>
+                    <IconComp name="refresh-outline" size={18} color="#475569" />
+                  </TouchableOpacity>
+
+                  <Text style={{ fontSize: 10, color: '#64748B', flex: 1 }}>
+                    Tap refresh if code is unclear
+                  </Text>
+                </View>
+
+                {/* Verification Code Input */}
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Verification Code *</Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    marginBottom: 20,
+                    letterSpacing: 2,
+                  }}
+                  placeholder="Type the 6-character code"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="characters"
+                  value={admissionFormData.verificationCodeInput}
+                  onChangeText={val => setAdmissionFormData(prev => ({ ...prev, verificationCodeInput: val }))}
+                />
+
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#b07fa8',
+                    paddingVertical: 14,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: isSubmittingAdmission ? 0.6 : 1,
+                  }}
+                  disabled={isSubmittingAdmission}
+                  onPress={handleSubmitPublicAdmission}>
+                  {isSubmittingAdmission ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF' }}>
+                      Submit Admission Application
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
+        {/* ===== MODAL: ADD / EDIT INVENTORY ITEM (Matches Image 4) ===== */}
+        <Modal visible={showAddItemModal} transparent animationType="fade">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '90%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* Header */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconComp name="cube-outline" size={20} color="#b07fa8" />
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                      {newItemForm.id ? 'Edit Product' : 'Add Item'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowAddItemModal(false)}>
+                    <IconComp name="close-outline" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Product ID (Optional) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Product ID</Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: isProdIdFocused ? '#b07fa8' : '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    marginBottom: 12,
+                  }}
+                  placeholder="e.g. PROD-001 (auto if blank)"
+                  placeholderTextColor="#94A3B8"
+                  value={newItemForm.productId}
+                  onFocus={() => setIsProdIdFocused(true)}
+                  onBlur={() => setIsProdIdFocused(false)}
+                  onChangeText={val => setNewItemForm(prev => ({ ...prev, productId: val }))}
+                />
+
+                {/* Product Name (Mandatory) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Product Name *</Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: isProdNameFocused ? '#b07fa8' : '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    marginBottom: 12,
+                  }}
+                  placeholder="e.g. Ergonomic Office Chair"
+                  placeholderTextColor="#94A3B8"
+                  value={newItemForm.name}
+                  onFocus={() => setIsProdNameFocused(true)}
+                  onBlur={() => setIsProdNameFocused(false)}
+                  onChangeText={val => setNewItemForm(prev => ({ ...prev, name: val }))}
+                />
+
+                {/* Category Dropdown */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Category *</Text>
+                <TouchableOpacity
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: showAddCategoryDropdown ? 4 : 12,
+                  }}
+                  onPress={() => setShowAddCategoryDropdown(!showAddCategoryDropdown)}>
+                  <Text style={{ fontSize: 13, color: newItemForm.category ? '#0F172A' : '#94A3B8' }}>
+                    {newItemForm.category || 'Select Category'}
+                  </Text>
+                  <IconComp name="chevron-down" size={14} color="#64748B" />
+                </TouchableOpacity>
+                {showAddCategoryDropdown && (
+                  <View style={{
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 8,
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 12,
+                    maxHeight: 140,
+                    elevation: 3,
+                  }}>
+                    <ScrollView nestedScrollEnabled>
+                      {inventoryCategoryOptions.filter(c => c !== 'All Categories').map(cat => (
+                        <TouchableOpacity
+                          key={cat}
+                          style={{
+                            paddingVertical: 9,
+                            paddingHorizontal: 12,
+                            backgroundColor: newItemForm.category === cat ? '#f6eef5' : '#FFFFFF',
+                          }}
+                          onPress={() => {
+                            setNewItemForm(prev => ({ ...prev, category: cat }));
+                            setShowAddCategoryDropdown(false);
+                          }}>
+                          <Text style={{ fontSize: 12, color: newItemForm.category === cat ? '#b07fa8' : '#0F172A', fontWeight: newItemForm.category === cat ? '700' : '400' }}>
+                            {cat}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Initial Stock Quantity with Stacked Stepper Buttons (Matches Image 4) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Initial Stock Quantity</Text>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: isQuantityFocused ? '#b07fa8' : '#E2E8F0',
+                  borderRadius: 8,
+                  height: 44,
+                  marginBottom: 12,
+                  overflow: 'hidden',
+                }}>
+                  <RNTextInput
+                    style={{
+                      flex: 1,
+                      height: 44,
+                      paddingHorizontal: 12,
+                      fontSize: 14,
+                      color: '#0F172A',
+                    }}
+                    keyboardType="numeric"
+                    value={String(newItemForm.quantity || '0')}
+                    onFocus={() => setIsQuantityFocused(true)}
+                    onBlur={() => setIsQuantityFocused(false)}
+                    onChangeText={val => {
+                      const clean = val.replace(/[^0-9]/g, '');
+                      setNewItemForm(prev => ({ ...prev, quantity: clean }));
+                    }}
+                  />
+                  {/* Vertical Stepper Buttons */}
+                  <View style={{ width: 34, height: '100%', borderLeftWidth: 1, borderLeftColor: '#E2E8F0' }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        backgroundColor: '#F8FAFC',
+                        borderBottomWidth: 1,
+                        borderBottomColor: '#E2E8F0',
+                      }}
+                      onPress={() => {
+                        const cur = parseInt(newItemForm.quantity || '0', 10) || 0;
+                        setNewItemForm(prev => ({ ...prev, quantity: String(cur + 1) }));
+                      }}>
+                      <IconComp name="chevron-up" size={13} color="#475569" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        backgroundColor: '#F8FAFC',
+                      }}
+                      onPress={() => {
+                        const cur = parseInt(newItemForm.quantity || '0', 10) || 0;
+                        setNewItemForm(prev => ({ ...prev, quantity: String(Math.max(0, cur - 1)) }));
+                      }}>
+                      <IconComp name="chevron-down" size={13} color="#475569" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Unit */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Unit</Text>
+                <RNTextInput
+                  style={{
+                    height: 42,
+                    borderWidth: 1,
+                    borderColor: isUnitFocused ? '#b07fa8' : '#E2E8F0',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    marginBottom: 16,
+                  }}
+                  placeholder="e.g. pcs, boxes, sets, kg"
+                  placeholderTextColor="#94A3B8"
+                  value={newItemForm.unit}
+                  onFocus={() => setIsUnitFocused(true)}
+                  onBlur={() => setIsUnitFocused(false)}
+                  onChangeText={val => setNewItemForm(prev => ({ ...prev, unit: val }))}
+                />
+
+                {/* Action Buttons */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 14, paddingVertical: 9 }}
+                    onPress={() => setShowAddItemModal(false)}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#b07fa8',
+                      paddingHorizontal: 20,
+                      paddingVertical: 9,
+                      borderRadius: 8,
+                      opacity: isSavingItem ? 0.6 : 1,
+                    }}
+                    disabled={isSavingItem}
+                    onPress={handleSaveInventoryProduct}>
+                    {isSavingItem ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                        {newItemForm.id ? 'Update Product' : 'Add Item'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: BULK IMPORT PRODUCTS (Matches Image 3) ===== */}
+        <Modal visible={showInventoryImportModal} transparent animationType="fade">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '90%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* Header */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconComp name="cloud-upload-outline" size={20} color="#b07fa8" />
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Bulk Import Products</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowInventoryImportModal(false)}>
+                    <IconComp name="close-outline" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Step 1: Download Template */}
+                <View style={{
+                  backgroundColor: '#F8FAFC',
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  padding: 12,
+                  marginBottom: 14,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#334155', marginBottom: 4 }}>
+                    Step 1: Download Template
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 10 }}>
+                    Use the provided template to ensure proper formatting of your data.
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
+                        paddingVertical: 8,
+                      }}
+                      onPress={() => handleDownloadInventoryTemplate('xlsx')}>
+                      <IconComp name="download-outline" size={14} color="#0F172A" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>Template (.xlsx)</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        borderWidth: 1,
+                        borderColor: '#CBD5E1',
+                        borderRadius: 8,
+                        backgroundColor: '#FFFFFF',
+                        paddingVertical: 8,
+                      }}
+                      onPress={() => handleDownloadInventoryTemplate('csv')}>
+                      <IconComp name="download-outline" size={14} color="#0F172A" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>Template (.csv)</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Step 2: Upload File */}
+                <View style={{
+                  backgroundColor: '#F8FAFC',
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  padding: 12,
+                  marginBottom: 14,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#334155', marginBottom: 4 }}>
+                    Step 2: Upload File
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 10 }}>
+                    Select your completed .xlsx or .csv spreadsheet file.
+                  </Text>
+
+                  <TouchableOpacity
+                    style={{
+                      borderWidth: 1.5,
+                      borderStyle: 'dashed',
+                      borderColor: '#b07fa8',
+                      borderRadius: 10,
+                      backgroundColor: '#FFFFFF',
+                      paddingVertical: 18,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onPress={handlePickImportFile}>
+                    <IconComp name="document-text-outline" size={26} color="#b07fa8" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginTop: 6 }}>
+                      {selectedImportFile ? selectedImportFile.name : 'Choose File to Upload'}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                      {selectedImportFile ? 'Tap to choose a different file' : 'Supports Excel (.xlsx) or CSV (.csv)'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Import Options */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#334155', marginBottom: 8 }}>
+                    Duplicate Handling
+                  </Text>
+                  <View style={{ gap: 8 }}>
+                    {[
+                      { key: 'skip', label: 'Skip duplicates (keep existing data)' },
+                      { key: 'update', label: 'Update existing products & add new stock' },
+                      { key: 'create-new', label: 'Create new entry with unique ID' },
+                    ].map(opt => (
+                      <TouchableOpacity
+                        key={opt.key}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                        onPress={() => setImportDuplicateAction(opt.key as any)}>
+                        <View style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 9,
+                          borderWidth: 2,
+                          borderColor: importDuplicateAction === opt.key ? '#b07fa8' : '#CBD5E1',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}>
+                          {importDuplicateAction === opt.key && (
+                            <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#b07fa8' }} />
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#334155' }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Auto-create categories */}
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 }}
+                    onPress={() => setImportAutoCreateCategories(!importAutoCreateCategories)}>
+                    <View style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      borderWidth: 2,
+                      borderColor: importAutoCreateCategories ? '#b07fa8' : '#CBD5E1',
+                      backgroundColor: importAutoCreateCategories ? '#b07fa8' : '#FFFFFF',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}>
+                      {importAutoCreateCategories && (
+                        <IconComp name="checkmark" size={13} color="#FFFFFF" />
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#334155' }}>
+                      Automatically create categories if they don't exist
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Footer Buttons */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 16, paddingVertical: 10 }}
+                    onPress={() => setShowInventoryImportModal(false)}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>Close</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#b07fa8',
+                      paddingHorizontal: 20,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      opacity: !selectedImportFile || isProcessingImport ? 0.6 : 1,
+                    }}
+                    disabled={!selectedImportFile || isProcessingImport}
+                    onPress={handleProcessBulkImport}>
+                    {isProcessingImport ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Import Data</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: ADD / EDIT INVENTORY CATEGORY (Matches Image 4) ===== */}
+        <Modal visible={showAddCategoryModal} transparent animationType="fade">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxWidth: 400, width: '90%' }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                  {editingCategoryItem ? 'Edit Category' : 'Add Category'}
+                </Text>
+                <TouchableOpacity onPress={() => setShowAddCategoryModal(false)}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Category Name *</Text>
+              <RNTextInput
+                style={{
+                  height: 42,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  fontSize: 13,
+                  color: '#0F172A',
+                  marginBottom: 12,
+                }}
+                placeholder="e.g. Science Equipment"
+                placeholderTextColor="#94A3B8"
+                value={newCategoryName}
+                onChangeText={setNewCategoryName}
+              />
+
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Description</Text>
+              <RNTextInput
+                style={{
+                  height: 60,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingTop: 8,
+                  fontSize: 13,
+                  color: '#0F172A',
+                  marginBottom: 16,
+                  textAlignVertical: 'top',
+                }}
+                placeholder="Brief description of items in category..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                value={newCategoryDesc}
+                onChangeText={setNewCategoryDesc}
+              />
+
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+                <TouchableOpacity
+                  style={{ paddingHorizontal: 14, paddingVertical: 8 }}
+                  onPress={() => setShowAddCategoryModal(false)}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={() => {
-                    if (!newItemForm.name.trim()) { Alert.alert('Error', 'Product name is required'); return; }
-                    setShowAddItemModal(false);
-                    showToast(`Item "${newItemForm.name}" added to inventory!`);
-                    setNewItemForm({ productId: '', name: '', category: '', quantity: '', unit: 'pcs', status: 'In Stock' });
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Add Item</Text>
+                  style={{
+                    backgroundColor: '#b07fa8',
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                  }}
+                  onPress={handleSaveCategory}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Save Category</Text>
                 </TouchableOpacity>
               </View>
             </View>

@@ -163,6 +163,18 @@ class ZunaFilePickerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    @ReactMethod
+    fun copyToClipboard(text: String, promise: Promise) {
+        try {
+            val clipboard = reactContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("Zuna Link", text)
+            clipboard.setPrimaryClip(clip)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("CLIPBOARD_ERROR", e.message, e)
+        }
+    }
+
     override fun onActivityResult(
         activity: Activity,
         requestCode: Int,
