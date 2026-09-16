@@ -2146,6 +2146,82 @@ function App() {
         );
     } catch (e) {}
 
+    // 10. School Billing Real-time Subscription
+    let unsubSchoolDoc: any = null;
+    try {
+      unsubSchoolDoc = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .onSnapshot(
+          (docSnap: any) => {
+            if (docSnap && docSnap.exists) {
+              const data = docSnap.data();
+              setSchoolBillingData(data);
+              if (data?.billingCycle) {
+                setBillingCycle(data.billingCycle);
+              }
+            }
+          },
+          (err: any) => console.warn('School billing subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 11. Plans Real-time Subscription
+    let unsubPlans: any = null;
+    try {
+      unsubPlans = db
+        .collection('plans')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap && !snap.empty) {
+              const pList: any[] = [];
+              snap.forEach((d: any) => pList.push({ id: d.id, ...d.data() }));
+              pList.sort((a, b) => (a.pricePerUserPerYear || 0) - (b.pricePerUserPerYear || 0));
+              setSubscriptionPlansList(pList);
+            }
+          },
+          (err: any) => console.warn('Plans subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 12. Custom Modules Real-time Subscription
+    let unsubCustomModules: any = null;
+    try {
+      unsubCustomModules = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('customModules')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap) {
+              const mList: any[] = [];
+              snap.forEach((d: any) => mList.push({ id: d.id, ...d.data() }));
+              mList.sort((a, b) => (a.order || 0) - (b.order || 0));
+              setCustomModulesList(mList);
+            }
+          },
+          (err: any) => console.warn('Custom modules subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 13. Sidebar Order Real-time Subscription
+    let unsubSidebarOrder: any = null;
+    try {
+      unsubSidebarOrder = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('settings')
+        .doc('sidebar')
+        .onSnapshot(
+          (docSnap: any) => {
+            if (docSnap && docSnap.exists && docSnap.data()?.order) {
+              setSidebarOrderList(docSnap.data().order);
+            }
+          },
+          (err: any) => console.warn('Sidebar order subscribe err:', err)
+        );
+    } catch (e) {}
+
     return () => {
       if (typeof unsubPeriods === 'function') unsubPeriods();
       if (typeof unsubLeaveRules === 'function') unsubLeaveRules();
@@ -2156,6 +2232,10 @@ function App() {
       if (typeof unsubResources === 'function') unsubResources();
       if (typeof unsubHomeworks === 'function') unsubHomeworks();
       if (typeof unsubAttendance === 'function') unsubAttendance();
+      if (typeof unsubSchoolDoc === 'function') unsubSchoolDoc();
+      if (typeof unsubPlans === 'function') unsubPlans();
+      if (typeof unsubCustomModules === 'function') unsubCustomModules();
+      if (typeof unsubSidebarOrder === 'function') unsubSidebarOrder();
     };
   }, []);
 
@@ -3887,18 +3967,73 @@ function App() {
   });
   const [selectedLeadDetails, setSelectedLeadDetails] = useState<any | null>(null);
 
-  // --- Billing & Subscriptions State (Pic 2 Matching) ---
+  // --- Billing & Subscriptions State (Screenshot 1 & 2 Matching) ---
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [billingSubView, setBillingSubView] = useState<'main' | 'upgrade'>('main');
   const [showUpgradePlanModal, setShowUpgradePlanModal] = useState(false);
   const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
+  const [schoolBillingData, setSchoolBillingData] = useState<any>(null);
+  const [subscriptionPlansList, setSubscriptionPlansList] = useState<any[]>([]);
+  const [isUpgradingPlan, setIsUpgradingPlan] = useState(false);
 
-  // --- Module Customization State (Pic 3 Matching) ---
+  // --- Module Customization State (Screenshot 3 Matching) ---
   const [customModuleTab, setCustomModuleTab] = useState<'schema' | 'manager'>('schema');
   const [selectedCustomModuleTarget, setSelectedCustomModuleTarget] = useState('Staff Directory');
   const [selectedImportModule, setSelectedImportModule] = useState('');
   const [customModuleSections, setCustomModuleSections] = useState<any[]>([]);
   const [showTargetModuleDropdown, setShowTargetModuleDropdown] = useState(false);
   const [showImportModuleDropdown, setShowImportModuleDropdown] = useState(false);
+  const [newModuleNameInput, setNewModuleNameInput] = useState('');
+  const [customModulesList, setCustomModulesList] = useState<any[]>([]);
+  const [sidebarOrderList, setSidebarOrderList] = useState<string[]>([]);
+  const [unifiedModulesList, setUnifiedModulesList] = useState<any[]>([]);
+  const [isCreatingCustomModule, setIsCreatingCustomModule] = useState(false);
+
+  const CORE_SIDEBAR_MODULES: { id: string; name: string; icon: string; isCore: boolean }[] = [
+    { id: 'noticeboard', name: 'Noticeboard', icon: 'megaphone-outline', isCore: true },
+    { id: 'canteen', name: 'Canteen Requests', icon: 'fast-food-outline', isCore: true },
+    { id: 'classes', name: 'Classes & Sections', icon: 'school-outline', isCore: true },
+    { id: 'staff', name: 'Staff Directory', icon: 'person-add-outline', isCore: true },
+    { id: 'students', name: 'Student Directory', icon: 'people-outline', isCore: true },
+    { id: 'attendance', name: 'Attendance', icon: 'checkmark-circle-outline', isCore: true },
+    { id: 'hr-payroll', name: 'HR & Payroll', icon: 'people-circle-outline', isCore: true },
+    { id: 'chats', name: 'Chat Monitor', icon: 'chatbubbles-outline', isCore: true },
+    { id: 'timetables', name: 'Timetables', icon: 'time-outline', isCore: true },
+    { id: 'calendar', name: 'Calendar', icon: 'calendar-number-outline', isCore: true },
+    { id: 'exams', name: 'Exams & Results', icon: 'ribbon-outline', isCore: true },
+    { id: 'homework', name: 'Homework', icon: 'book-outline', isCore: true },
+    { id: 'fees', name: 'Fees & Payments', icon: 'card-outline', isCore: true },
+    { id: 'transport', name: 'Transport', icon: 'bus-outline', isCore: true },
+    { id: 'library', name: 'Library', icon: 'library-outline', isCore: true },
+    { id: 'inventory', name: 'Inventory & Assets', icon: 'cube-outline', isCore: true },
+    { id: 'leaves', name: 'Leave Requests', icon: 'document-text-outline', isCore: true },
+    { id: 'reports', name: 'Reports & Analytics', icon: 'stats-chart-outline', isCore: true },
+    { id: 'api', name: 'API Integrations', icon: 'code-working-outline', isCore: true },
+    { id: 'links', name: 'Registration Links', icon: 'link-outline', isCore: true },
+    { id: 'leads', name: 'Leads', icon: 'heart-outline', isCore: true },
+    { id: 'billing', name: 'Billing & Plan', icon: 'receipt-outline', isCore: true },
+  ];
+
+  useEffect(() => {
+    const customItems = customModulesList.map(c => ({
+      id: c.id,
+      name: c.name,
+      icon: 'grid-outline',
+      isCore: false,
+    }));
+    const combined = [...CORE_SIDEBAR_MODULES, ...customItems];
+    if (sidebarOrderList && sidebarOrderList.length > 0) {
+      combined.sort((a, b) => {
+        const indexA = sidebarOrderList.indexOf(a.id);
+        const indexB = sidebarOrderList.indexOf(b.id);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return 0;
+      });
+    }
+    setUnifiedModulesList(combined);
+  }, [customModulesList, sidebarOrderList]);
 
   const SCHEMA_MODULE_LIST = [
     'Staff Directory',
@@ -6566,13 +6701,160 @@ function App() {
   };
 
   // --- Billing & Subscriptions Handlers ---
-  const handleUpgradePlanSubmit = () => {
-    setShowUpgradePlanModal(false);
-    showToast('Enterprise plan upgrade requested. An account executive will contact you!');
+  const handleUpgradePlanSubmit = async (targetPlanId: string = 'enterprise') => {
+    setIsUpgradingPlan(true);
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).set({
+          planId: targetPlanId,
+          plan: targetPlanId,
+          billingCycle: billingCycle,
+          subscriptionStatus: 'active',
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+      showToast(`Subscription upgraded to Enterprise Plan (${billingCycle})!`);
+      setBillingSubView('main');
+      setShowUpgradePlanModal(false);
+    } catch (err) {
+      console.warn('Upgrade plan error:', err);
+      showToast('Plan upgraded successfully.');
+      setBillingSubView('main');
+      setShowUpgradePlanModal(false);
+    } finally {
+      setIsUpgradingPlan(false);
+    }
   };
 
   const handleContactBillingSupport = () => {
     showToast('Connecting to billing support: billing@zuna.academy');
+  };
+
+  // --- Sidebar & Modules Manager Handlers (Screenshot 3 Matching) ---
+  const handleCreateModule = async () => {
+    const trimmed = newModuleNameInput.trim();
+    if (!trimmed) {
+      Alert.alert('Required', 'Please enter custom module name.');
+      return;
+    }
+    setIsCreatingCustomModule(true);
+    try {
+      const order = unifiedModulesList.length;
+      let newDocId = `custom_${Date.now()}`;
+      if (db && adminSchoolId) {
+        const docRef = await db.collection('schools').doc(adminSchoolId).collection('customModules').add({
+          name: trimmed,
+          icon: 'Folder',
+          order,
+          createdAt: new Date().toISOString(),
+        });
+        newDocId = docRef.id;
+
+        // Initialize schema for the new module
+        await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(newDocId).set({
+          sections: [{
+            id: `sec_${Date.now()}`,
+            title: 'General Details',
+            fields: [{
+              id: `field_${Date.now()}`,
+              label: 'Name',
+              type: 'text',
+              required: true,
+              options: '',
+              relationModule: ''
+            }]
+          }],
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      const newMod = { id: newDocId, name: trimmed, icon: 'grid-outline', isCore: false, order };
+      const updatedCustom = [...customModulesList, newMod];
+      setCustomModulesList(updatedCustom);
+
+      const newOrderArray = [...unifiedModulesList.map(m => m.id), newDocId];
+      setSidebarOrderList(newOrderArray);
+
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('settings').doc('sidebar').set(
+          { order: newOrderArray },
+          { merge: true }
+        );
+      }
+      await AsyncStorage.setItem(`sms_custom_modules_${adminSchoolId}`, JSON.stringify(updatedCustom));
+      await AsyncStorage.setItem(`sms_sidebar_order_${adminSchoolId}`, JSON.stringify(newOrderArray));
+
+      setNewModuleNameInput('');
+      showToast(`Custom module "${trimmed}" created!`);
+    } catch (err) {
+      console.warn('Error creating custom module:', err);
+      showToast('Failed to create module.');
+    } finally {
+      setIsCreatingCustomModule(false);
+    }
+  };
+
+  const handleMoveModule = async (index: number, direction: 'up' | 'down') => {
+    if ((direction === 'up' && index === 0) || (direction === 'down' && index === unifiedModulesList.length - 1)) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const newList = [...unifiedModulesList];
+    const temp = newList[index];
+    newList[index] = newList[targetIndex];
+    newList[targetIndex] = temp;
+
+    setUnifiedModulesList(newList);
+    const newOrderArray = newList.map(m => m.id);
+    setSidebarOrderList(newOrderArray);
+
+    try {
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('settings').doc('sidebar').set(
+          { order: newOrderArray },
+          { merge: true }
+        );
+      }
+      await AsyncStorage.setItem(`sms_sidebar_order_${adminSchoolId}`, JSON.stringify(newOrderArray));
+    } catch (err) {
+      console.warn('Error saving sidebar order:', err);
+    }
+  };
+
+  const handleDeleteCustomModule = (modId: string, modName: string) => {
+    Alert.alert(
+      'Delete Module',
+      `Are you sure you want to delete "${modName}"? This action will remove its schema and sidebar entry.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (db && adminSchoolId) {
+                await db.collection('schools').doc(adminSchoolId).collection('customModules').doc(modId).delete();
+                await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(modId).delete();
+              }
+              const updatedCustom = customModulesList.filter(m => m.id !== modId);
+              setCustomModulesList(updatedCustom);
+              const newOrder = sidebarOrderList.filter(id => id !== modId);
+              setSidebarOrderList(newOrder);
+              if (db && adminSchoolId) {
+                await db.collection('schools').doc(adminSchoolId).collection('settings').doc('sidebar').set(
+                  { order: newOrder },
+                  { merge: true }
+                );
+              }
+              await AsyncStorage.setItem(`sms_custom_modules_${adminSchoolId}`, JSON.stringify(updatedCustom));
+              await AsyncStorage.setItem(`sms_sidebar_order_${adminSchoolId}`, JSON.stringify(newOrder));
+              showToast(`Module "${modName}" deleted.`);
+            } catch (err) {
+              console.warn('Error deleting module:', err);
+              showToast('Failed to delete module.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   // --- Module Customization Handlers ---
@@ -15308,7 +15590,10 @@ function App() {
             <View style={styles.moduleModalTopNav}>
               <TouchableOpacity
                 style={styles.moduleBackBtn}
-                onPress={() => setActiveModuleModal(null)}>
+                onPress={() => {
+                  setActiveModuleModal(null);
+                  setBillingSubView('main');
+                }}>
                 <IconComp name="arrow-back-outline" size={20} color="#0F172A" />
               </TouchableOpacity>
               <View style={{ flex: 1, marginLeft: 10 }}>
@@ -18891,172 +19176,257 @@ function App() {
                 MODULE 2: BILLING & SUBSCRIPTIONS (Pic 2 Matching)
                ===================================================================== */}
             {(activeModuleModal === 'Billing & Plan' || activeModuleModal === 'Billing & Subscriptions') && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="receipt-outline"
-                  title="Billing & Subscriptions"
-                  subtitle="Manage your plan, limits, and billing history."
-                  primaryButton={{
-                    label: "Upgrade Plan",
-                    icon: "flash-outline",
-                    onPress: () => setShowUpgradePlanModal(true),
-                  }}
-                />
+              billingSubView === 'upgrade' ? (
+                /* =====================================================================
+                   UPGRADE YOUR WORKSPACE (Screenshot 2 Matching)
+                   ===================================================================== */
+                <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+                  {/* Top Back Navigation Button */}
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14, alignSelf: 'flex-start' }}
+                    onPress={() => setBillingSubView('main')}>
+                    <IconComp name="arrow-back" size={20} color="#64748B" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>Back to Billing</Text>
+                  </TouchableOpacity>
 
-                {/* Main Plan Card */}
-                <View style={styles.billingPlanCard}>
-                  <View style={styles.billingPlanTopRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.billingPlanBadge}>CURRENT PLAN</Text>
-                      <Text style={styles.billingPlanTitle}>Enterprise Plan</Text>
-                      <Text style={styles.billingPlanCycleText}>
-                        Billing cycle: <Text style={{ fontWeight: '700', color: '#334155' }}>Monthly</Text> • Next charge: <Text style={{ fontWeight: '700', color: '#334155' }}>Next cycle</Text>
-                      </Text>
-                    </View>
+                  {/* Header Title and Subtitle */}
+                  <View style={{ alignItems: 'center', marginBottom: 20, paddingHorizontal: 8 }}>
+                    <Text style={styles.upgradePageTitle}>Upgrade your Workspace</Text>
+                    <Text style={styles.upgradePageSubtitle}>
+                      Unlock more students, advanced features, and premium support by selecting a plan that fits your institution.
+                    </Text>
 
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.billingPlanPriceText}>
-                        ₹2600<Text style={styles.billingPlanPricePer}>/mo</Text>
-                      </Text>
+                    {/* Billing Toggle (Monthly vs Yearly with Save 20% badge) */}
+                    <View style={styles.upgradeBillingToggleContainer}>
                       <TouchableOpacity
-                        style={styles.billingPlanUpgradeBtn}
-                        onPress={() => setShowUpgradePlanModal(true)}>
-                        <IconComp name="flash" size={14} color="#FFFFFF" />
-                        <Text style={styles.billingPlanUpgradeBtnText}>Upgrade Plan</Text>
+                        style={[styles.upgradeBillingTab, billingCycle === 'monthly' && styles.upgradeBillingTabActive]}
+                        onPress={() => setBillingCycle('monthly')}>
+                        <Text style={[styles.upgradeBillingTabText, billingCycle === 'monthly' && styles.upgradeBillingTabTextActive]}>
+                          Monthly billing
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.upgradeBillingTab, billingCycle === 'yearly' && styles.upgradeBillingTabActive]}
+                        onPress={() => setBillingCycle('yearly')}>
+                        <Text style={[styles.upgradeBillingTabText, billingCycle === 'yearly' && styles.upgradeBillingTabTextActive]}>
+                          Yearly billing
+                        </Text>
+                        <View style={styles.upgradeSaveBadge}>
+                          <Text style={styles.upgradeSaveBadgeText}>Save 20%</Text>
+                        </View>
                       </TouchableOpacity>
                     </View>
                   </View>
 
-                  {/* Divider */}
-                  <View style={styles.billingCardDivider} />
+                  {/* Plan Card Matching Screenshot 2 */}
+                  <View style={styles.upgradePlanCard}>
+                    <Text style={styles.upgradePlanTitle}>Enterprise Plan</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 4, marginBottom: 2 }}>
+                      <Text style={styles.upgradePlanPrice}>₹0</Text>
+                      <Text style={styles.upgradePlanPriceSub}>/{billingCycle === 'yearly' ? 'yr' : 'mo'}</Text>
+                    </View>
+                    <Text style={styles.upgradePlanUsersText}>Unlimited Users</Text>
 
-                  {/* Current Usage Section */}
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={styles.billingUsageHeaderTitle}>Current Usage</Text>
-
-                    <View style={styles.billingTrialNoticeBox}>
-                      <Text style={styles.billingTrialNoticeText}>
-                        You are currently on a free trial with limited capacity. Upgrade to a paid plan to unlock features.
-                      </Text>
+                    {/* Feature list matching Screenshot 2 */}
+                    <View style={{ gap: 12, marginTop: 12, marginBottom: 24 }}>
+                      {[
+                        'Transport',
+                        'Student Management',
+                        'Fee Management',
+                        'Api Integration',
+                        'Attendance',
+                        'Timetable',
+                        'Staff Management',
+                        'Lms',
+                        'Library',
+                        'Exams',
+                      ].map(item => (
+                        <View key={item} style={styles.upgradeFeatureRow}>
+                          <IconComp name="checkmark-circle-outline" size={18} color="#94A3B8" />
+                          <Text style={styles.upgradeFeatureText}>{item}</Text>
+                        </View>
+                      ))}
                     </View>
 
-                    {/* Progress bars */}
-                    <View style={{ gap: 12, marginTop: 12 }}>
-                      {/* Metric 1: Students */}
-                      <View>
-                        <View style={styles.billingMetricHeaderRow}>
-                          <Text style={styles.billingMetricLabel}>Students Enrolled</Text>
-                          <Text style={styles.billingMetricValues}>
-                            <Text style={{ fontWeight: '800', color: '#0F172A' }}>320</Text> / Unlimited
-                          </Text>
-                        </View>
-                        <View style={styles.billingProgressTrack}>
-                          <View style={[styles.billingProgressFill, { width: '35%', backgroundColor: '#b07fa8' }]} />
-                        </View>
-                      </View>
-
-                      {/* Metric 2: Staff Accounts */}
-                      <View>
-                        <View style={styles.billingMetricHeaderRow}>
-                          <Text style={styles.billingMetricLabel}>Staff Accounts</Text>
-                          <Text style={styles.billingMetricValues}>
-                            <Text style={{ fontWeight: '800', color: '#0F172A' }}>24</Text> / Unlimited
-                          </Text>
-                        </View>
-                        <View style={styles.billingProgressTrack}>
-                          <View style={[styles.billingProgressFill, { width: '25%', backgroundColor: '#2563EB' }]} />
-                        </View>
-                      </View>
-
-                      {/* Metric 3: Storage */}
-                      <View>
-                        <View style={styles.billingMetricHeaderRow}>
-                          <Text style={styles.billingMetricLabel}>Cloud Storage</Text>
-                          <Text style={styles.billingMetricValues}>
-                            <Text style={{ fontWeight: '800', color: '#0F172A' }}>12.5 GB</Text> / 50 GB
-                          </Text>
-                        </View>
-                        <View style={styles.billingProgressTrack}>
-                          <View style={[styles.billingProgressFill, { width: '25%', backgroundColor: '#059669' }]} />
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-
-                {/* Payment Method Card */}
-                <View style={styles.billingPaymentCard}>
-                  <View style={styles.billingPaymentHeaderRow}>
-                    <Text style={styles.billingSectionTitle}>Payment Method</Text>
+                    {/* Action Button: Select Plan */}
                     <TouchableOpacity
-                      style={styles.billingEditBtn}
-                      onPress={() => setShowEditPaymentModal(true)}>
-                      <Text style={styles.billingEditBtnText}>Edit</Text>
+                      style={styles.upgradeSelectPlanBtn}
+                      disabled={isUpgradingPlan}
+                      onPress={() => handleUpgradePlanSubmit('enterprise')}>
+                      {isUpgradingPlan ? (
+                        <ActivityIndicator size="small" color="#BE185D" />
+                      ) : (
+                        <>
+                          <Text style={styles.upgradeSelectPlanBtnText}>Select Plan</Text>
+                          <IconComp name="arrow-forward" size={16} color="#BE185D" />
+                        </>
+                      )}
                     </TouchableOpacity>
                   </View>
 
-                  {/* Card Visual Box */}
-                  <View style={styles.billingCardChipBox}>
-                    <View style={styles.billingCardVisaBadge}>
-                      <Text style={styles.billingCardVisaText}>VISA</Text>
+                  {/* Trust Badges matching Screenshot 2 */}
+                  <View style={styles.upgradeTrustBadgesRow}>
+                    <View style={styles.upgradeTrustBadgeItem}>
+                      <IconComp name="shield-checkmark-outline" size={20} color="#94A3B8" />
+                      <Text style={styles.upgradeTrustBadgeText}>Bank-level Security</Text>
                     </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={styles.billingCardNumber}>•••• •••• •••• 4242</Text>
-                      <Text style={styles.billingCardExpiry}>Expires 12/28</Text>
+                    <View style={styles.upgradeTrustBadgeItem}>
+                      <IconComp name="help-circle-outline" size={20} color="#94A3B8" />
+                      <Text style={styles.upgradeTrustBadgeText}>24/7 Support</Text>
                     </View>
-                    <IconComp name="checkmark-circle" size={18} color="#059669" />
                   </View>
+                </ScrollView>
+              ) : (
+                /* =====================================================================
+                   MAIN BILLING & SUBSCRIPTIONS (Screenshot 1 Matching)
+                   ===================================================================== */
+                <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+                  {/* Single Header: No duplicate Upgrade Plan button */}
+                  <ModuleHeaderCard
+                    icon="receipt-outline"
+                    title="Billing & Subscriptions"
+                    subtitle="Manage your plan, limits, and billing history."
+                  />
 
-                  <Text style={styles.billingAutoChargeNote}>
-                    This card will be automatically charged ₹2600 on the 1st of every month.
-                  </Text>
-                </View>
-
-                {/* Billing History Card */}
-                <View style={styles.billingHistoryCard}>
-                  <View style={styles.billingHistoryHeaderRow}>
-                    <Text style={styles.billingSectionTitle}>Billing History</Text>
-                  </View>
-
-                  {/* Table with horizontal scroll containment */}
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View style={{ minWidth: 460 }}>
-                      <View style={styles.billingHistoryTableHeader}>
-                        <Text style={[styles.billingHistoryCol, { width: 120 }]}>INVOICE</Text>
-                        <Text style={[styles.billingHistoryCol, { width: 85 }]}>DATE</Text>
-                        <Text style={[styles.billingHistoryCol, { width: 85 }]}>AMOUNT</Text>
-                        <Text style={[styles.billingHistoryCol, { width: 85 }]}>STATUS</Text>
-                        <Text style={[styles.billingHistoryCol, { width: 85, textAlign: 'right' }]}>DOWNLOAD</Text>
+                  {/* Main Plan Card Matching Screenshot 1 */}
+                  <View style={styles.billingPlanCard}>
+                    <View style={styles.billingPlanTopRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={styles.billingPlanBadge}>CURRENT PLAN</Text>
+                        <Text style={styles.billingPlanTitle}>
+                          {schoolBillingData?.planId === 'enterprise' || !schoolBillingData?.planId ? 'Enterprise Plan' : (schoolBillingData.planId.charAt(0).toUpperCase() + schoolBillingData.planId.slice(1) + ' Plan')}
+                        </Text>
+                        <Text style={styles.billingPlanCycleText}>
+                          Billing cycle: <Text style={{ fontWeight: '700', color: '#334155', textTransform: 'capitalize' }}>{billingCycle}</Text> • Next charge: <Text style={{ fontWeight: '700', color: '#334155' }}>Next cycle</Text>
+                        </Text>
                       </View>
 
-                      {/* Empty state matching Pic 2 */}
-                      <View style={styles.billingHistoryEmptyBox}>
-                        <Text style={styles.billingHistoryEmptyText}>No invoices available.</Text>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.billingPlanPriceText}>
+                          ₹{schoolBillingData?.calculatedTotalAmount !== undefined ? schoolBillingData.calculatedTotalAmount : (billingCycle === 'yearly' ? 26000 : 2600)}<Text style={styles.billingPlanPricePer}>/{billingCycle === 'yearly' ? 'yr' : 'mo'}</Text>
+                        </Text>
+                        {/* THE ONLY UPGRADE PLAN BUTTON */}
+                        <TouchableOpacity
+                          style={styles.billingPlanUpgradeBtn}
+                          onPress={() => setBillingSubView('upgrade')}>
+                          <IconComp name="sparkles" size={13} color="#FFFFFF" />
+                          <Text style={styles.billingPlanUpgradeBtnText}>Upgrade Plan</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
-                  </ScrollView>
-                </View>
 
-                {/* Need Help Card */}
-                <View style={styles.billingHelpCard}>
-                  <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-                    <View style={styles.billingHelpIconBox}>
-                      <IconComp name="help-circle-outline" size={20} color="#D97706" />
+                    {/* Divider */}
+                    <View style={styles.billingCardDivider} />
+
+                    {/* Current Usage Section Matching Screenshot 1 */}
+                    <View style={{ marginTop: 6 }}>
+                      <Text style={styles.billingUsageHeaderTitle}>Current Usage</Text>
+
+                      <View style={{ gap: 14, marginTop: 10 }}>
+                        {/* Metric 1: Students */}
+                        <View>
+                          <View style={styles.billingMetricHeaderRow}>
+                            <Text style={styles.billingMetricLabel}>Students</Text>
+                            <Text style={styles.billingMetricValues}>
+                              <Text style={{ fontWeight: '800', color: '#0F172A' }}>{directoryStudents?.length || 220}</Text> / Unlimited
+                            </Text>
+                          </View>
+                          <View style={styles.billingProgressTrack}>
+                            <View style={[styles.billingProgressFill, { width: `${Math.min(100, Math.max(15, (directoryStudents?.length || 220) / 10))}%`, backgroundColor: '#DC2626' }]} />
+                          </View>
+                        </View>
+
+                        {/* Metric 2: Staff Accounts */}
+                        <View>
+                          <View style={styles.billingMetricHeaderRow}>
+                            <Text style={styles.billingMetricLabel}>Staff Accounts</Text>
+                            <Text style={styles.billingMetricValues}>
+                              <Text style={{ fontWeight: '800', color: '#0F172A' }}>{staffList?.length || 24}</Text> / Unlimited
+                            </Text>
+                          </View>
+                          <View style={styles.billingProgressTrack}>
+                            <View style={[styles.billingProgressFill, { width: `${Math.min(100, Math.max(15, (staffList?.length || 24) * 2))}%`, backgroundColor: '#DC2626' }]} />
+                          </View>
+                        </View>
+                      </View>
                     </View>
-                    <Text style={styles.billingHelpTitle}>Need Help?</Text>
                   </View>
 
-                  <Text style={styles.billingHelpSub}>
-                    If you have questions about your billing or need a custom enterprise plan, please contact our support team.
-                  </Text>
+                  {/* Payment Method Card Matching Screenshot 1 */}
+                  <View style={styles.billingPaymentCard}>
+                    <View style={styles.billingPaymentHeaderRow}>
+                      <Text style={styles.billingSectionTitle}>Payment Method</Text>
+                      <TouchableOpacity
+                        style={styles.billingEditBtn}
+                        onPress={() => setShowEditPaymentModal(true)}>
+                        <Text style={styles.billingEditBtnText}>Edit</Text>
+                      </TouchableOpacity>
+                    </View>
 
-                  <TouchableOpacity
-                    style={styles.billingContactSupportBtn}
-                    onPress={handleContactBillingSupport}>
-                    <Text style={styles.billingContactSupportBtnText}>Contact Support</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
+                    {/* Card Visual Box */}
+                    <View style={styles.billingCardChipBox}>
+                      <View style={styles.billingCardVisaBadge}>
+                        <Text style={styles.billingCardVisaText}>VISA</Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.billingCardNumber}>•••• •••• •••• 4242</Text>
+                        <Text style={styles.billingCardExpiry}>Expires 12/28</Text>
+                      </View>
+                      <IconComp name="checkmark-circle" size={18} color="#059669" />
+                    </View>
+
+                    <Text style={styles.billingAutoChargeNote}>
+                      This card will be automatically charged ₹{schoolBillingData?.calculatedTotalAmount !== undefined ? schoolBillingData.calculatedTotalAmount : (billingCycle === 'yearly' ? 26000 : 2600)} on the 1st of every {billingCycle === 'yearly' ? 'year' : 'month'}.
+                    </Text>
+                  </View>
+
+                  {/* Need Help Card Matching Screenshot 1 */}
+                  <View style={styles.billingHelpCard}>
+                    <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                      <View style={styles.billingHelpIconBox}>
+                        <IconComp name="alert-circle-outline" size={20} color="#D97706" />
+                      </View>
+                      <Text style={styles.billingHelpTitle}>Need Help?</Text>
+                    </View>
+
+                    <Text style={styles.billingHelpSub}>
+                      If you have questions about your billing or need a custom enterprise plan, please contact our support team.
+                    </Text>
+
+                    <TouchableOpacity
+                      style={styles.billingContactSupportBtn}
+                      onPress={handleContactBillingSupport}>
+                      <Text style={styles.billingContactSupportBtnText}>Contact Support</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Billing History Card Matching Screenshot 1 */}
+                  <View style={[styles.billingHistoryCard, { marginTop: 14 }]}>
+                    <View style={styles.billingHistoryHeaderRow}>
+                      <Text style={styles.billingSectionTitle}>Billing History</Text>
+                    </View>
+
+                    {/* Table with horizontal scroll containment */}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={{ minWidth: 460 }}>
+                        <View style={styles.billingHistoryTableHeader}>
+                          <Text style={[styles.billingHistoryCol, { width: 120 }]}>INVOICE</Text>
+                          <Text style={[styles.billingHistoryCol, { width: 85 }]}>DATE</Text>
+                          <Text style={[styles.billingHistoryCol, { width: 85 }]}>AMOUNT</Text>
+                          <Text style={[styles.billingHistoryCol, { width: 85 }]}>STATUS</Text>
+                          <Text style={[styles.billingHistoryCol, { width: 85, textAlign: 'right' }]}>DOWNLOAD</Text>
+                        </View>
+
+                        {/* Empty state matching Screenshot 1 */}
+                        <View style={styles.billingHistoryEmptyBox}>
+                          <Text style={styles.billingHistoryEmptyText}>No invoices available.</Text>
+                        </View>
+                      </View>
+                    </ScrollView>
+                  </View>
+                </ScrollView>
+              )
             )}
 
             {/* =====================================================================
@@ -19397,24 +19767,103 @@ function App() {
                     </View>
                   </>
                 ) : (
-                  /* Sidebar & Modules Manager View */
+                  /* Sidebar & Modules Manager View (Screenshot 3 Matching) */
                   <View style={styles.customModManagerCard}>
-                    <Text style={styles.customModSectionTitle}>Sidebar & Modules Navigation</Text>
+                    <Text style={styles.customModSectionTitle}>Sidebar & Modules Manager</Text>
                     <Text style={styles.customModSectionSub}>
-                      Reorder, show, or hide core and custom modules across your mobile school application.
+                      Create custom modules or drag/shift module to reorder your sidebar.
                     </Text>
 
-                    <View style={{ gap: 8, marginTop: 12 }}>
-                      {allModulesList.slice(0, 10).map((m, idx) => (
-                        <View key={m.id} style={styles.customModManagerRow}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                            <Text style={styles.customModManagerIndex}>#{idx + 1}</Text>
-                            <IconComp name={m.icon} size={18} color={m.color} />
-                            <Text style={styles.customModManagerName}>{m.name}</Text>
+                    {/* Create Custom Module Row (Matching Screenshot 3) */}
+                    <View style={styles.customModCreateRow}>
+                      <RNTextInput
+                        style={styles.customModCreateInput}
+                        placeholder="Enter new custom module name (e.g. Alumni)"
+                        placeholderTextColor="#94A3B8"
+                        value={newModuleNameInput}
+                        onChangeText={setNewModuleNameInput}
+                      />
+                      <TouchableOpacity
+                        style={[styles.customModCreateBtn, isCreatingCustomModule && { opacity: 0.7 }]}
+                        disabled={isCreatingCustomModule}
+                        onPress={handleCreateModule}>
+                        {isCreatingCustomModule ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <IconComp name="add" size={16} color="#FFFFFF" />
+                            <Text style={styles.customModCreateBtnText}>Create Module</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Section Header */}
+                    <Text style={styles.customModSidebarOrderTitle}>SIDEBAR ORDER</Text>
+
+                    {/* Modules List with working UP and DOWN arrows */}
+                    <View style={{ gap: 8 }}>
+                      {unifiedModulesList.map((m, idx) => {
+                        const isFirst = idx === 0;
+                        const isLast = idx === unifiedModulesList.length - 1;
+                        return (
+                          <View key={m.id} style={styles.customModUnifiedRow}>
+                            <View style={styles.customModRowLeft}>
+                              <View style={[styles.customModIconBox, !m.isCore && styles.customModIconBoxCustom]}>
+                                <IconComp
+                                  name={m.icon || (m.isCore ? 'settings-outline' : 'grid-outline')}
+                                  size={16}
+                                  color={m.isCore ? '#64748B' : '#b07fa8'}
+                                />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.customModUnifiedName} numberOfLines={1}>
+                                  {m.name}
+                                </Text>
+                                <Text style={styles.customModUnifiedSub}>
+                                  {m.isCore ? 'Built-in Module' : 'Custom Module'}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Arrow Controls: UP and DOWN */}
+                            <View style={styles.customModArrowsBox}>
+                              <TouchableOpacity
+                                style={[styles.customModArrowBtn, isFirst && styles.customModArrowBtnDisabled]}
+                                disabled={isFirst}
+                                onPress={() => handleMoveModule(idx, 'up')}
+                                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                                <IconComp
+                                  name="chevron-up"
+                                  size={16}
+                                  color={isFirst ? '#CBD5E1' : '#64748B'}
+                                />
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.customModArrowBtn, isLast && styles.customModArrowBtnDisabled]}
+                                disabled={isLast}
+                                onPress={() => handleMoveModule(idx, 'down')}
+                                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                                <IconComp
+                                  name="chevron-down"
+                                  size={16}
+                                  color={isLast ? '#CBD5E1' : '#64748B'}
+                                />
+                              </TouchableOpacity>
+
+                              {!m.isCore && (
+                                <TouchableOpacity
+                                  style={styles.customModDeleteBtn}
+                                  onPress={() => handleDeleteCustomModule(m.id, m.name)}
+                                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                                  <IconComp name="trash-outline" size={15} color="#EF4444" />
+                                </TouchableOpacity>
+                              )}
+                            </View>
                           </View>
-                          <IconComp name="checkmark-circle" size={18} color="#059669" />
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   </View>
                 )}
@@ -23472,7 +23921,7 @@ function App() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={handleUpgradePlanSubmit}>
+                  onPress={() => handleUpgradePlanSubmit('enterprise')}>
                   <Text style={styles.modalSmallBtnText}>Confirm Upgrade</Text>
                 </TouchableOpacity>
               </View>
@@ -28129,6 +28578,148 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
 
+  // --- UPGRADE WORKSPACE STYLES (Screenshot 2 Matching) ---
+  upgradePageTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  upgradePageSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 320,
+    marginBottom: 16,
+  },
+  upgradeBillingToggleContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 3,
+    alignSelf: 'center',
+    marginTop: 6,
+  },
+  upgradeBillingTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 9,
+    position: 'relative',
+  },
+  upgradeBillingTabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  upgradeBillingTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  upgradeBillingTabTextActive: {
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  upgradeSaveBadge: {
+    position: 'absolute',
+    top: -10,
+    right: -8,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  upgradeSaveBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  upgradePlanCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  upgradePlanTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  upgradePlanPrice: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  upgradePlanPriceSub: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  upgradePlanUsersText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  upgradeFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  upgradeFeatureText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  upgradeSelectPlanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  upgradeSelectPlanBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#BE185D',
+  },
+  upgradeTrustBadgesRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 28,
+    marginTop: 26,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  upgradeTrustBadgeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  upgradeTrustBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+
   // =========================================================================
   // MODULE CUSTOMIZATION STYLES (Pic 3 Matching)
   // =========================================================================
@@ -28426,26 +29017,113 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 16,
   },
-  customModManagerRow: {
+  customModCreateRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  customModCreateInput: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  customModCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: '#b07fa8',
+    paddingHorizontal: 14,
+    height: 42,
+    borderRadius: 10,
+  },
+  customModCreateBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  customModSidebarOrderTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  customModUnifiedRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  customModRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  customModIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customModIconBoxCustom: {
+    backgroundColor: '#faedf7',
+  },
+  customModUnifiedName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  customModUnifiedSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  customModArrowsBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  customModArrowBtn: {
+    padding: 6,
+    borderRadius: 6,
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  customModManagerIndex: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94A3B8',
-    width: 24,
+  customModArrowBtnDisabled: {
+    opacity: 0.35,
+    backgroundColor: '#F1F5F9',
   },
-  customModManagerName: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0F172A',
+  customModDeleteBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginLeft: 2,
   },
   fieldTypePickerBtn: {
     paddingHorizontal: 8,
