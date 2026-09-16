@@ -24,6 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import StudentPortal from './src/StudentPortal';
 import { StaffDirectoryScreen, StaffItem as StaffDirectoryItem, ALL_ROLES_LIST } from './src/StaffDirectoryModule';
+import { KeyboardAwareFormScrollView } from './src/KeyboardAwareFormScrollView';
 
 const { ZunaFilePicker } = NativeModules;
 
@@ -684,7 +685,7 @@ function App() {
   const [staffModulePage, setStaffModulePage] = useState<number>(1);
   const STAFF_MODULE_PAGE_SIZE = 10;
 
-  // --- Remaining Staff Modules for "All Modules" Screen (Excludes 5 floating homepage modules: Dashboard, Timetable, Attendance, Homework, All Modules) ---
+  // --- Teacher Modules for "All Modules" Screen ---
   const staffModulesList = [
     { id: 'sm1', name: 'Noticeboard', icon: 'megaphone-outline', color: '#D97706', badge: '3 Memos', desc: 'School announcements, circulars & staff memos' },
     { id: 'sm2', name: 'Academic Calendar', icon: 'calendar-number-outline', color: '#DC2626', badge: 'Term 1', desc: 'Academic calendar, holidays & exam dates' },
@@ -698,6 +699,9 @@ function App() {
     { id: 'sm9', name: 'My Salary', icon: 'cash-outline', color: '#059669', badge: 'Payslip', desc: 'Monthly payslips, salary slips & tax statements' },
     { id: 'sm10', name: 'Leave Requests', icon: 'document-text-outline', color: '#b07fa8', badge: '8 Days Left', desc: 'Apply for casual/sick leaves & track approval' },
     { id: 'sm11', name: 'Profile', icon: 'person-circle-outline', color: '#475569', badge: 'Verified', desc: 'Staff credentials, designation & personal info' },
+    { id: 'sm12', name: 'Attendance', icon: 'calendar-outline', color: '#059669', badge: 'Mark/View', desc: 'Mark student attendance for FN & AN sessions' },
+    { id: 'sm13', name: 'Homework', icon: 'book-outline', color: '#b07fa8', badge: 'Tasks', desc: 'Assign and grade class homework tasks' },
+    { id: 'sm14', name: 'Timetable', icon: 'time-outline', color: '#2563EB', badge: 'Weekly', desc: 'Weekly teaching timetable and class schedule' },
   ];
 
   // --- Mobile Date Picker Modal State (Used across all Teacher Portal date fields) ---
@@ -1043,6 +1047,7 @@ function App() {
   const [showAttViewDropdown, setShowAttViewDropdown] = useState<boolean>(false);
   const [attSelectedDate, setAttSelectedDate] = useState<string>('10-09-2026');
   const [attSelectedSession, setAttSelectedSession] = useState<'FN' | 'AN'>('FN');
+  const [showSessionDropdown, setShowSessionDropdown] = useState<boolean>(false);
   const [attSearchQuery, setAttSearchQuery] = useState<string>('');
   const [isPastCutoff, setIsPastCutoff] = useState<boolean>(true);
   const [attCutoffTime, setAttCutoffTime] = useState<string>('09:30');
@@ -3702,13 +3707,13 @@ function App() {
     photo: null as { name: string; size: string; uri?: string; base64?: string } | null,
     firstName: '',
     lastName: '',
-    dob: '12-05-2015',
-    age: '11',
+    dob: '',
+    age: '',
     gender: 'Male',
-    bloodGroup: 'O+',
-    nationality: 'Indian',
-    religion: 'Hindu',
-    motherTongue: 'English',
+    bloodGroup: '',
+    nationality: '',
+    religion: '',
+    motherTongue: '',
     aadharNumber: '',
     homeAddress: '',
     parentName: '',
@@ -3718,15 +3723,15 @@ function App() {
     emergencyContact: '',
     annualIncome: '',
     siblingName: '',
-    classId: 'PRE KG - A',
-    admissionNumber: 'ADM-006',
+    classId: '',
+    admissionNumber: '',
     previousSchool: '',
     previousRecords: '',
     subjectsChosen: '',
-    busRoute: 'Route A - Main Street',
-    tuitionFee: '25000',
+    busRoute: '',
+    tuitionFee: '',
     hostelFee: '',
-    bookFee: '3500',
+    bookFee: '',
     otherFee: '',
   });
 
@@ -5668,11 +5673,21 @@ function App() {
   };
 
 
-  const filteredStaffModules = staffModulesList.filter(m =>
-    (m.name || '').toLowerCase().includes((moduleSearchQuery || '').toLowerCase())
+  // Exclude modules already represented in Teacher floating bottom navigation ('Dashboard', 'Timetable', 'Attendance', 'Homework', 'All Modules')
+  const teacherFloatingBottomTabNames = ['Dashboard', 'Timetable', 'Attendance', 'Homework', 'All Modules'];
+  const teacherAllModulesUnique = staffModulesList
+    .filter(m => !teacherFloatingBottomTabNames.includes(m.name) && !teacherFloatingBottomTabNames.includes(m.id))
+    .filter((m, idx, self) => self.findIndex(t => t.id === m.id || t.name === m.name) === idx);
+
+  const filteredStaffModules = teacherAllModulesUnique.filter(m =>
+    (m.name || '').toLowerCase().includes((moduleSearchQuery || '').toLowerCase()) ||
+    (m.desc || '').toLowerCase().includes((moduleSearchQuery || '').toLowerCase())
   );
   const totalStaffModulePages = Math.ceil(filteredStaffModules.length / STAFF_MODULE_PAGE_SIZE) || 1;
-  const paginatedStaffModules = filteredStaffModules.slice((staffModulePage - 1) * STAFF_MODULE_PAGE_SIZE, staffModulePage * STAFF_MODULE_PAGE_SIZE);
+  const paginatedStaffModules = filteredStaffModules.slice(
+    (staffModulePage - 1) * STAFF_MODULE_PAGE_SIZE,
+    staffModulePage * STAFF_MODULE_PAGE_SIZE
+  );
 
 
   // --- Auth Handlers ---
@@ -7190,22 +7205,17 @@ function App() {
 
   const renderFeeManagementContent = () => (
     <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
-      {/* Fee Management Hero Header Card (Image 3 Matching) */}
-      <View style={styles.feeHeroCard}>
-        <View style={{ flex: 1, paddingRight: 8 }}>
-          <Text style={styles.feeHeroTitle}>Fee Management</Text>
-          <Text style={styles.feeHeroSubtitle}>
-            Track revenue, manage student payments, and monitor fee dues alerts.
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={styles.feeAssignNewBtn}
-          activeOpacity={0.8}
-          onPress={() => setShowAssignFeeModal(true)}>
-          <IconComp name="add" size={16} color="#FFFFFF" />
-          <Text style={styles.feeAssignNewBtnText}>+ Assign New Fee</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Module Header Card matching common Admin design */}
+      <ModuleHeaderCard
+        icon="card-outline"
+        title="Fee Management"
+        subtitle="Track revenue, manage student payments, and monitor fee dues alerts."
+        primaryButton={{
+          label: "+ Assign New Fee",
+          icon: "add-outline",
+          onPress: () => setShowAssignFeeModal(true),
+        }}
+      />
 
       {/* 3 Metric Summary Cards Row (Image 3 Matching) */}
       <View style={styles.feeMetricsRow}>
@@ -7267,16 +7277,17 @@ function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Invoices List / Table (Image 3 Matching) */}
-      <View style={styles.feeTableWrapper}>
-        <View style={styles.feeTableHeader}>
-          <Text style={[styles.feeTableColText, { flex: 1.2 }]}>STUDENT</Text>
-          <Text style={[styles.feeTableColText, { flex: 1.1 }]}>FEE DETAILS</Text>
-          <Text style={[styles.feeTableColText, { flex: 1 }]}>COLLECTION PERIOD</Text>
-          <Text style={[styles.feeTableColText, { flex: 0.9 }]}>AMOUNT</Text>
-          <Text style={[styles.feeTableColText, { flex: 0.8 }]}>STATUS</Text>
-          <Text style={[styles.feeTableColText, { flex: 0.8, textAlign: 'right' }]}>ACTION</Text>
-        </View>
+      {/* Invoices List / Table with isolated horizontal scrolling */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ marginBottom: 24 }}>
+        <View style={[styles.feeTableWrapper, { minWidth: 680 }]}>
+          <View style={styles.feeTableHeader}>
+            <Text style={[styles.feeTableColText, { width: 130, paddingHorizontal: 6 }]}>STUDENT</Text>
+            <Text style={[styles.feeTableColText, { width: 130, paddingHorizontal: 6 }]}>FEE DETAILS</Text>
+            <Text style={[styles.feeTableColText, { width: 140, paddingHorizontal: 6 }]}>COLLECTION PERIOD</Text>
+            <Text style={[styles.feeTableColText, { width: 95, paddingHorizontal: 6 }]}>AMOUNT</Text>
+            <Text style={[styles.feeTableColText, { width: 90, paddingHorizontal: 6 }]}>STATUS</Text>
+            <Text style={[styles.feeTableColText, { width: 95, paddingHorizontal: 6, textAlign: 'right' }]}>ACTION</Text>
+          </View>
 
         {filteredFeeInvoices.length === 0 ? (
           <View style={styles.feeEmptyBox}>
@@ -7291,50 +7302,49 @@ function App() {
         ) : (
           <View style={{ gap: 8, padding: 10 }}>
             {filteredFeeInvoices.map((inv: any) => (
-              <View key={inv.id} style={styles.feeInvoiceCard}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{ flex: 1.2 }}>
-                    <Text style={styles.feeInvStudentName}>{inv.studentName}</Text>
-                    <Text style={styles.feeInvSubText}>{inv.admissionNumber || inv.rollNo || 'ADM-001'}</Text>
+              <View key={inv.id} style={[styles.feeInvoiceCard, { flexDirection: 'row', alignItems: 'center' }]}>
+                <View style={{ width: 130, paddingHorizontal: 6 }}>
+                  <Text style={styles.feeInvStudentName} numberOfLines={1}>{inv.studentName}</Text>
+                  <Text style={styles.feeInvSubText} numberOfLines={1}>{inv.admissionNumber || inv.rollNo || 'ADM-001'}</Text>
+                </View>
+                <View style={{ width: 130, paddingHorizontal: 6 }}>
+                  <Text style={styles.feeInvTitleText} numberOfLines={1}>{inv.feeName}</Text>
+                  <Text style={styles.feeInvSubText} numberOfLines={1}>{inv.className || 'Class'}</Text>
+                </View>
+                <View style={{ width: 140, paddingHorizontal: 6 }}>
+                  <Text style={styles.feeInvPeriodText} numberOfLines={2}>{inv.collectionPeriod || 'General'}</Text>
+                </View>
+                <View style={{ width: 95, paddingHorizontal: 6 }}>
+                  <Text style={styles.feeInvAmountText}>₹{Number(inv.amount || 0).toLocaleString()}</Text>
+                </View>
+                <View style={{ width: 90, paddingHorizontal: 6 }}>
+                  <View style={[styles.feeInvStatusBadge, inv.status === 'Paid' ? styles.feePaidBadge : styles.feeUnpaidBadge]}>
+                    <Text style={[styles.feeInvStatusText, inv.status === 'Paid' ? styles.feePaidText : styles.feeUnpaidText]}>
+                      {inv.status || 'Unpaid'}
+                    </Text>
                   </View>
-                  <View style={{ flex: 1.1 }}>
-                    <Text style={styles.feeInvTitleText}>{inv.feeName}</Text>
-                    <Text style={styles.feeInvSubText}>{inv.className || 'Class'}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.feeInvPeriodText}>{inv.collectionPeriod || 'General'}</Text>
-                  </View>
-                  <View style={{ flex: 0.9 }}>
-                    <Text style={styles.feeInvAmountText}>₹{Number(inv.amount || 0).toLocaleString()}</Text>
-                  </View>
-                  <View style={{ flex: 0.8 }}>
-                    <View style={[styles.feeInvStatusBadge, inv.status === 'Paid' ? styles.feePaidBadge : styles.feeUnpaidBadge]}>
-                      <Text style={[styles.feeInvStatusText, inv.status === 'Paid' ? styles.feePaidText : styles.feeUnpaidText]}>
-                        {inv.status || 'Unpaid'}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={{ flex: 0.8, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
-                    {inv.status !== 'Paid' ? (
-                      <TouchableOpacity
-                        style={styles.feeActionPayBtn}
-                        onPress={() => handleMarkInvoicePaid(inv.id)}>
-                        <IconComp name="checkmark" size={12} color="#FFFFFF" />
-                        <Text style={styles.feeActionPayText}>Pay</Text>
-                      </TouchableOpacity>
-                    ) : null}
+                </View>
+                <View style={{ width: 95, paddingHorizontal: 6, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+                  {inv.status !== 'Paid' ? (
                     <TouchableOpacity
-                      style={styles.feeActionDeleteBtn}
-                      onPress={() => handleDeleteInvoice(inv.id)}>
-                      <IconComp name="trash-outline" size={14} color="#DC2626" />
+                      style={styles.feeActionPayBtn}
+                      onPress={() => handleMarkInvoicePaid(inv.id)}>
+                      <IconComp name="checkmark" size={12} color="#FFFFFF" />
+                      <Text style={styles.feeActionPayText}>Pay</Text>
                     </TouchableOpacity>
-                  </View>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.feeActionDeleteBtn}
+                    onPress={() => handleDeleteInvoice(inv.id)}>
+                    <IconComp name="trash-outline" size={14} color="#DC2626" />
+                  </TouchableOpacity>
                 </View>
               </View>
             ))}
           </View>
         )}
-      </View>
+        </View>
+      </ScrollView>
     </ScrollView>
   );
 
@@ -7581,7 +7591,7 @@ function App() {
 
           {/* Forgot Password Modal */}
           <Modal visible={showForgotModal} transparent animationType="fade">
-            <View style={styles.modalOverlayDark}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlayDark}>
               <View style={styles.modalCardContainer}>
                 <View style={styles.modalHeaderTitleRow}>
                   <IconComp name="key-outline" size={20} color="#b07fa8" />
@@ -7613,7 +7623,7 @@ function App() {
                   </TouchableOpacity>
                 </View>
               </View>
-            </View>
+            </KeyboardAvoidingView>
           </Modal>
         </SafeAreaView>
       </SafeAreaProvider>
@@ -7681,7 +7691,7 @@ function App() {
             <View style={{ flex: 1 }}>
               {/* --- STAFF TAB 1: DASHBOARD --- */}
               {activeStaffTab === 'Dashboard' && (
-                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                   {/* Complete Your Profile Orange Banner */}
                   <TouchableOpacity
                     style={{ backgroundColor: '#F97316', borderRadius: 16, padding: 16, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', elevation: 2 }}
@@ -7707,54 +7717,62 @@ function App() {
                     <Text style={{ fontSize: 12, fontWeight: '600', color: '#94A3B8', marginTop: 2 }}>PRE KG - Section A</Text>
                   </View>
 
-                  {/* Summary Stats Row */}
-                  <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14 }}>
-                    <View style={{ flex: 1, minHeight: 68, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 10, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, overflow: 'hidden', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
-                        <Text style={{ fontSize: 9.5, color: '#64748B', fontWeight: '700', flex: 1, flexShrink: 1, paddingRight: 2 }} numberOfLines={2}>Class Strength</Text>
-                        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
-                          <IconComp name="people-outline" size={11} color="#2563EB" />
+                  {/* Summary Stats 2x2 Grid: Row 1 (Card 1 + Card 2), Row 2 (Card 3 + Card 4) */}
+                  <View style={{ gap: 10, marginBottom: 14 }}>
+                    {/* Row 1: Card 1 + Card 2 */}
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <View style={{ flex: 1, minHeight: 76, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '700' }}>Class Strength</Text>
+                          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+                            <IconComp name="people-outline" size={13} color="#2563EB" />
+                          </View>
                         </View>
+                        <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>{directoryStudents.length || 3}</Text>
                       </View>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>3</Text>
+
+                      <View style={{ flex: 1, minHeight: 76, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '700' }}>Boys</Text>
+                          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#faedf7', alignItems: 'center', justifyContent: 'center' }}>
+                            <IconComp name="person-outline" size={13} color="#b07fa8" />
+                          </View>
+                        </View>
+                        <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>2</Text>
+                      </View>
                     </View>
 
-                    <View style={{ flex: 1, minHeight: 68, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 10, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, overflow: 'hidden', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
-                        <Text style={{ fontSize: 9.5, color: '#64748B', fontWeight: '700', flex: 1, flexShrink: 1, paddingRight: 2 }} numberOfLines={1}>Boys</Text>
-                        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#faedf7', alignItems: 'center', justifyContent: 'center' }}>
-                          <IconComp name="person-outline" size={11} color="#b07fa8" />
+                    {/* Row 2: Card 3 + Card 4 */}
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <View style={{ flex: 1, minHeight: 76, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '700' }}>Girls</Text>
+                          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#FCE7F3', alignItems: 'center', justifyContent: 'center' }}>
+                            <IconComp name="person-circle-outline" size={13} color="#DB2777" />
+                          </View>
                         </View>
+                        <Text style={{ fontSize: 22, fontWeight: '900', color: '#0F172A' }}>1</Text>
                       </View>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>2</Text>
-                    </View>
 
-                    <View style={{ flex: 1, minHeight: 68, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 10, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, overflow: 'hidden', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
-                        <Text style={{ fontSize: 9.5, color: '#64748B', fontWeight: '700', flex: 1, flexShrink: 1, paddingRight: 2 }} numberOfLines={1}>Girls</Text>
-                        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#FCE7F3', alignItems: 'center', justifyContent: 'center' }}>
-                          <IconComp name="person-circle-outline" size={12} color="#DB2777" />
+                      <View style={{ flex: 1, minHeight: 76, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '700' }}>Today's Att.</Text>
+                          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#faedf7', alignItems: 'center', justifyContent: 'center' }}>
+                            <IconComp name="calendar-outline" size={13} color="#b07fa8" />
+                          </View>
                         </View>
+                        <Text style={{ fontSize: 18, fontWeight: '900', color: '#b07fa8' }}>0 / 0</Text>
                       </View>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0F172A' }}>1</Text>
-                    </View>
-
-                    <View style={{ flex: 1, minHeight: 68, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 10, borderWidth: 1, borderColor: '#F1F5F9', elevation: 1, overflow: 'hidden', justifyContent: 'space-between' }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
-                        <Text style={{ fontSize: 9.5, color: '#64748B', fontWeight: '700', flex: 1, flexShrink: 1, paddingRight: 2 }} numberOfLines={1}>Today's Att.</Text>
-                        <IconComp name="calendar-outline" size={12} color="#b07fa8" />
-                      </View>
-                      <Text style={{ fontSize: 15, fontWeight: '900', color: '#b07fa8' }}>0 / 0</Text>
                     </View>
                   </View>
 
-                  {/* Student Roster Section */}
+                  {/* Search and Student Roster / Module Results Section */}
                   <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 14 }}>
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                       <SearchInputBox
                         wrapperStyle={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, height: 38 }}
                         style={{ flex: 1, fontSize: 12, color: '#0F172A', marginLeft: 6 }}
-                        placeholder="Search students by name or admission number..."
+                        placeholder="Search students, modules, or items..."
                         value={studentSearchQuery}
                         onChangeText={setStudentSearchQuery}
                         iconSize={16}
@@ -7765,91 +7783,128 @@ function App() {
                       </TouchableOpacity>
                     </View>
 
-                    {[
-                      { id: 'st1', name: 'Ana K', admNo: 'ADM-7', gender: 'Female', route: '03', busNo: '--', status: 'Active', avatar: 'AK' },
-                      { id: 'st2', name: 'pavithran a', admNo: '002', gender: 'Male', route: '03', busNo: '--', status: 'Active', avatar: 'pa' },
-                      { id: 'st3', name: 'raja a', admNo: 'ADM-2025-003', gender: 'Male', route: '03', busNo: '--', status: 'Active', avatar: 'ra' },
-                    ].map(st => (
-                      <View key={st.id} style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#F1F5F9' }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCE7F3', justifyContent: 'center', alignItems: 'center' }}>
-                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#DB2777' }}>{st.avatar}</Text>
-                            </View>
-                            <View>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{st.name}</Text>
-                                <Text style={{ fontSize: 10, color: '#b07fa8', fontWeight: '700' }}>● {st.status}</Text>
+                    {/* Matching Modules Results (when query is entered) */}
+                    {studentSearchQuery.trim() !== '' && (() => {
+                      const allSearchableModules = [
+                        { name: 'Timetable', icon: 'time-outline', color: '#2563EB', isTab: true, tab: 'Timetable' as StaffTab },
+                        { name: 'Attendance', icon: 'calendar-outline', color: '#059669', isTab: true, tab: 'Attendance' as StaffTab },
+                        { name: 'Homework', icon: 'book-outline', color: '#b07fa8', isTab: true, tab: 'Homework' as StaffTab },
+                        ...staffModulesList.map(m => ({ name: m.name, icon: m.icon, color: m.color, isTab: false, modal: m.name })),
+                      ];
+                      const matchedMods = allSearchableModules.filter(m =>
+                        m.name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())
+                      );
+                      if (matchedMods.length === 0) return null;
+                      return (
+                        <View style={{ marginBottom: 14, backgroundColor: '#F8FAFC', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', marginBottom: 8 }}>
+                            Matching Modules ({matchedMods.length})
+                          </Text>
+                          {matchedMods.map(m => (
+                            <TouchableOpacity
+                              key={m.name}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                backgroundColor: '#FFFFFF',
+                                borderRadius: 10,
+                                padding: 10,
+                                marginBottom: 6,
+                                borderWidth: 1,
+                                borderColor: '#F1F5F9',
+                                gap: 10,
+                              }}
+                              onPress={() => {
+                                if ((m as any).isTab && (m as any).tab) {
+                                  setActiveStaffTab((m as any).tab);
+                                  setActiveStaffModuleModal(null);
+                                } else {
+                                  setActiveStaffTab('All Modules');
+                                  setActiveStaffModuleModal((m as any).modal);
+                                }
+                                showToast(`Opened ${m.name} Module`);
+                              }}
+                              activeOpacity={0.8}>
+                              <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: `${m.color}15`, justifyContent: 'center', alignItems: 'center' }}>
+                                <IconComp name={m.icon} size={18} color={m.color} />
                               </View>
-                              <Text style={{ fontSize: 11, color: '#64748B' }}>Adm: {st.admNo} • {st.gender}</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{m.name}</Text>
+                                <Text style={{ fontSize: 11, color: '#64748B' }}>Tap to open {m.name} screen</Text>
+                              </View>
+                              <IconComp name="chevron-forward-outline" size={14} color="#94A3B8" />
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      );
+                    })()}
+
+                    {/* Matching Students List */}
+                    {directoryStudents
+                      .filter(st =>
+                        !studentSearchQuery.trim() ||
+                        (st.name || '').toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+                        (st.admissionNo || '').toLowerCase().includes(studentSearchQuery.toLowerCase())
+                      )
+                      .map(st => {
+                        const initials = (st.name || 'S').split(' ').map((p: string) => p[0]).join('').toUpperCase().slice(0, 2);
+                        return (
+                          <View key={st.id} style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#F1F5F9' }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#FCE7F3', justifyContent: 'center', alignItems: 'center' }}>
+                                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#DB2777' }}>{initials}</Text>
+                                </View>
+                                <View>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{st.name}</Text>
+                                    <Text style={{ fontSize: 10, color: '#b07fa8', fontWeight: '700' }}>● Active</Text>
+                                  </View>
+                                  <Text style={{ fontSize: 11, color: '#64748B' }}>Adm: {st.admissionNo} • {st.gender || 'N/A'}</Text>
+                                </View>
+                              </View>
+                              <Text style={{ fontSize: 11, color: '#475569', fontWeight: '600' }}>{st.gradeClass}</Text>
+                            </View>
+
+                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                              <TouchableOpacity
+                                style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
+                                onPress={() => {
+                                  setActiveStaffTab('All Modules');
+                                  setActiveStaffModuleModal('Grades & Exams');
+                                  showToast(`Opening Grades & Exams for ${st.name}`);
+                                }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Add Grade</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
+                                onPress={() => {
+                                  setActiveStaffTab('Attendance');
+                                  setActiveStaffModuleModal(null);
+                                  showToast(`Opening Attendance for ${st.name}`);
+                                }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Attendance</Text>
+                              </TouchableOpacity>
                             </View>
                           </View>
-                          <Text style={{ fontSize: 11, color: '#475569', fontWeight: '600' }}>Bus: Route {st.route}</Text>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                          <TouchableOpacity
-                            style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
-                            onPress={() => {
-                              setActiveStaffTab('All Modules');
-                              setActiveStaffModuleModal('Grades & Exams');
-                              showToast(`Opening Grades & Exams for ${st.name}`);
-                            }}>
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Add Grade</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={{ flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
-                            onPress={() => {
-                              setActiveStaffTab('Attendance');
-                              setActiveStaffModuleModal(null);
-                              showToast(`Opening Attendance for ${st.name}`);
-                            }}>
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Attendance</Text>
-                          </TouchableOpacity>
-                        </View>
+                        );
+                      })
+                    }
+                    {directoryStudents.length > 0 && studentSearchQuery.trim() !== '' &&
+                      directoryStudents.filter(st =>
+                        (st.name || '').toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+                        (st.admissionNo || '').toLowerCase().includes(studentSearchQuery.toLowerCase())
+                      ).length === 0 &&
+                      [
+                        { name: 'Timetable' },
+                        { name: 'Attendance' },
+                        { name: 'Homework' },
+                        ...staffModulesList,
+                      ].filter(m => m.name.toLowerCase().includes(studentSearchQuery.trim().toLowerCase())).length === 0 && (
+                      <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                        <Text style={{ color: '#94A3B8', fontSize: 13 }}>No students or modules match "{studentSearchQuery}"</Text>
                       </View>
-                    ))}
-                  </View>
-
-                  {/* Recommended Quick Access Modules */}
-                  <View style={styles.sectionCardBox}>
-                    <Text style={styles.sectionCardTitle}>Recommended Quick Access</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 10, paddingTop: 6 }}>
-                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Timetable')}>
-                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#EFF6FF' }]}>
-                          <IconComp name="time-outline" size={18} color="#2563EB" />
-                        </View>
-                        <Text style={styles.staffQuickPillText}>Timetable</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Attendance')}>
-                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#ECFDF5' }]}>
-                          <IconComp name="calendar-outline" size={18} color="#059669" />
-                        </View>
-                        <Text style={styles.staffQuickPillText}>Attendance</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('Homework')}>
-                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#faedf7' }]}>
-                          <IconComp name="book-outline" size={18} color="#b07fa8" />
-                        </View>
-                        <Text style={styles.staffQuickPillText}>Homework</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => { setActiveStaffTab('All Modules'); setActiveStaffModuleModal('Messages'); }}>
-                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#FFF7ED' }]}>
-                          <IconComp name="chatbubbles-outline" size={18} color="#D97706" />
-                        </View>
-                        <Text style={styles.staffQuickPillText}>Messages</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity style={styles.staffQuickPillCard} onPress={() => setActiveStaffTab('All Modules')}>
-                        <View style={[styles.staffQuickIconBox, { backgroundColor: '#F1F5F9' }]}>
-                          <IconComp name="apps-outline" size={18} color="#475569" />
-                        </View>
-                        <Text style={styles.staffQuickPillText}>📂 All Modules</Text>
-                      </TouchableOpacity>
-                    </ScrollView>
+                    )}
                   </View>
                 </ScrollView>
               )}
@@ -8009,7 +8064,8 @@ function App() {
 
               {/* --- STAFF TAB 3: ATTENDANCE (Matching Screenshots 1 & 2) --- */}
               {activeStaffTab === 'Attendance' && (
-                <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+                <ScrollView contentContainerStyle={[styles.tabScrollContentWithFloatingNav, { paddingBottom: 160 }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                   {/* Complete Your Profile Orange Banner */}
                   <TouchableOpacity
                     style={{ backgroundColor: '#F97316', borderRadius: 16, padding: 16, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', elevation: 2 }}
@@ -8145,7 +8201,7 @@ function App() {
                             </Text>
                           </TouchableOpacity>
 
-                          {/* Session Selector */}
+                          {/* Session Selector — Proper Dropdown with Arrow (AN / FN) */}
                           <TouchableOpacity
                             style={{
                               flexDirection: 'row',
@@ -8158,12 +8214,50 @@ function App() {
                               paddingHorizontal: 12,
                               paddingVertical: 8,
                             }}
-                            onPress={() => setAttSelectedSession(attSelectedSession === 'FN' ? 'AN' : 'FN')}>
-                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
-                              {attSelectedSession === 'FN' ? 'FN (Forenoon)' : 'AN (Afternoon)'}
+                            onPress={() => setShowSessionDropdown(true)}
+                            activeOpacity={0.8}>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                              {attSelectedSession}
                             </Text>
                             <IconComp name="chevron-down-outline" size={14} color="#64748B" />
                           </TouchableOpacity>
+
+                          {/* Session Dropdown Modal with exact options AN and FN */}
+                          <Modal visible={showSessionDropdown} transparent animationType="fade">
+                            <TouchableOpacity
+                              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+                              activeOpacity={1}
+                              onPress={() => setShowSessionDropdown(false)}>
+                              <View style={{ width: 220, backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8 }}>
+                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', marginBottom: 10 }}>Select Session</Text>
+                                {(['AN', 'FN'] as const).map(s => (
+                                  <TouchableOpacity
+                                    key={s}
+                                    style={{
+                                      flexDirection: 'row',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      paddingVertical: 12,
+                                      paddingHorizontal: 12,
+                                      borderRadius: 10,
+                                      backgroundColor: attSelectedSession === s ? '#faedf7' : 'transparent',
+                                      marginBottom: 4,
+                                    }}
+                                    onPress={() => {
+                                      setAttSelectedSession(s);
+                                      setShowSessionDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 14, fontWeight: '700', color: attSelectedSession === s ? '#b07fa8' : '#0F172A' }}>
+                                      {s}
+                                    </Text>
+                                    {attSelectedSession === s && (
+                                      <IconComp name="checkmark" size={16} color="#b07fa8" />
+                                    )}
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                            </TouchableOpacity>
+                          </Modal>
                         </>
                       )}
                     </View>
@@ -8413,6 +8507,7 @@ function App() {
                       })}
                   </View>
                 </ScrollView>
+                </KeyboardAvoidingView>
               )}
 
               {/* --- STAFF TAB 4: HOMEWORK (Matching Screenshots 3, 4 & 5) --- */}
@@ -8587,7 +8682,7 @@ function App() {
                 <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
                   <View style={styles.screenHeaderRow}>
                     <Text style={styles.screenTitleText}>All Modules</Text>
-                    <Text style={{ color: '#64748B', fontSize: 13 }}>12 Available Modules</Text>
+                    <Text style={{ color: '#64748B', fontSize: 13 }}>{filteredStaffModules.length} Available Modules</Text>
                   </View>
 
                   {/* Search Bar for Staff Modules */}
@@ -8597,11 +8692,18 @@ function App() {
                       style={styles.searchTextInput}
                       placeholder="Search modules..."
                       value={moduleSearchQuery}
-                      onChangeText={setModuleSearchQuery}
+                      onChangeText={(txt: string) => {
+                        setModuleSearchQuery(txt);
+                        setStaffModulePage(1);
+                      }}
+                      onClear={() => {
+                        setModuleSearchQuery('');
+                        setStaffModulePage(1);
+                      }}
                     />
                   </View>
 
-                  {/* 12 Staff Modules Grid (2-Column Cards matching Reference Design) */}
+                  {/* Staff Modules Grid (2-Column Cards matching Reference Design) */}
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, marginTop: 12 }}>
                     {paginatedStaffModules.map(mod => (
                       <TouchableOpacity
@@ -8623,8 +8725,13 @@ function App() {
                         onPress={() => {
                           if (mod.name === 'Attendance') {
                             setActiveStaffTab('Attendance');
+                            setActiveStaffModuleModal(null);
                           } else if (mod.name === 'Homework') {
                             setActiveStaffTab('Homework');
+                            setActiveStaffModuleModal(null);
+                          } else if (mod.name === 'Timetable') {
+                            setActiveStaffTab('Timetable');
+                            setActiveStaffModuleModal(null);
                           } else {
                             setActiveStaffModuleModal(mod.name);
                           }
@@ -8644,14 +8751,57 @@ function App() {
                     ))}
                   </View>
 
-                  {/* Pagination Controls for Staff All Modules */}
-                  <PaginationControls
-                    currentPage={staffModulePage}
-                    totalPages={totalStaffModulePages}
-                    totalItems={filteredStaffModules.length}
-                    pageSize={STAFF_MODULE_PAGE_SIZE}
-                    onPageChange={setStaffModulePage}
-                  />
+                  {/* Simple Pagination Controls for Staff All Modules: Previous | 1 | 2 | ... | Next */}
+                  {totalStaffModulePages > 1 && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 18, marginBottom: 12 }}>
+                      <TouchableOpacity
+                        style={[
+                          styles.arrowIconButton,
+                          staffModulePage === 1 && styles.arrowIconButtonDisabled,
+                          { paddingHorizontal: 12, width: 'auto', height: 36 },
+                        ]}
+                        onPress={() => setStaffModulePage(prev => Math.max(1, prev - 1))}
+                        disabled={staffModulePage === 1}
+                        activeOpacity={0.7}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: staffModulePage === 1 ? '#94A3B8' : '#334155' }}>
+                          Previous
+                        </Text>
+                      </TouchableOpacity>
+
+                      {Array.from({ length: totalStaffModulePages }, (_, idx) => idx + 1).map(p => {
+                        const isActive = p === staffModulePage;
+                        return (
+                          <TouchableOpacity
+                            key={p}
+                            style={[
+                              styles.pageSquarePill,
+                              { width: 36, height: 36, borderRadius: 8 },
+                              isActive && { backgroundColor: '#b07fa8', borderColor: '#b07fa8' },
+                            ]}
+                            onPress={() => setStaffModulePage(p)}
+                            activeOpacity={0.8}>
+                            <Text style={[styles.pageSquareText, isActive && { color: '#FFFFFF', fontWeight: '800' }]}>
+                              {p}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                      <TouchableOpacity
+                        style={[
+                          styles.arrowIconButton,
+                          staffModulePage === totalStaffModulePages && styles.arrowIconButtonDisabled,
+                          { paddingHorizontal: 12, width: 'auto', height: 36 },
+                        ]}
+                        onPress={() => setStaffModulePage(prev => Math.min(totalStaffModulePages, prev + 1))}
+                        disabled={staffModulePage === totalStaffModulePages}
+                        activeOpacity={0.7}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: staffModulePage === totalStaffModulePages ? '#94A3B8' : '#334155' }}>
+                          Next
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </ScrollView>
               )}
             </View>
@@ -9970,7 +10120,7 @@ function App() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+              <KeyboardAwareFormScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingBottom: 20 }}>
                 {/* Notice Title */}
                 <View>
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Notice Title</Text>
@@ -10187,7 +10337,7 @@ function App() {
                     })}
                   </View>
                 )}
-              </ScrollView>
+              </KeyboardAwareFormScrollView>
 
               {/* Action Buttons (Cancel & Broadcast) */}
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 14, marginTop: 18, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
@@ -14816,7 +14966,7 @@ function App() {
                     },
                   },
                   {
-                    label: "09/09/2026",
+                    label: new Date().toLocaleDateString('en-GB'),
                     icon: "calendar-outline",
                   },
                 ]}
@@ -15070,7 +15220,8 @@ function App() {
 
           {/* ==================== TAB 2: STUDENT DIRECTORY & ADMISSIONS (Screenshot 4 Matching) ==================== */}
           {activeAdminTab === 'Students' && (
-            <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               
               {/* Purple Hero Header Card */}
               <ModuleHeaderCard
@@ -15311,6 +15462,7 @@ function App() {
               )}
 
             </ScrollView>
+            </KeyboardAvoidingView>
           )}
 
           {/* ==================== TAB 3: ATTENDANCE MANAGEMENT (Screenshot 5 Matching) ==================== */}
@@ -20535,7 +20687,9 @@ function App() {
             )}
 
             {/* Fallback for other modules */}
-            {activeModuleModal !== 'Staff Directory' &&
+            {activeModuleModal !== 'Canteen Requests' &&
+             activeModuleModal !== 'Canteen' &&
+             activeModuleModal !== 'Staff Directory' &&
              activeModuleModal !== 'Classes & Sections' &&
              activeModuleModal !== 'Subject Management' &&
              activeModuleModal !== 'Noticeboard' &&
@@ -23272,7 +23426,7 @@ function App() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+            <KeyboardAwareFormScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
               {/* Header Hero Card */}
               <ModuleHeaderCard
                 icon="person-add-outline"
@@ -23700,180 +23854,184 @@ function App() {
                   <Text style={styles.admitSubmitBtnText}>Admit Student</Text>
                 </TouchableOpacity>
               </View>
-            </ScrollView>
+            </KeyboardAwareFormScrollView>
           </SafeAreaView>
         </Modal>
 
         {/* ===== MODAL: CREATE LEAVE REQUEST ===== */}
         <Modal visible={showCreateLeaveModal} transparent animationType="slide">
-          <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', padding: 20 }]}>
               <View style={styles.modalHeaderTitleRow}>
                 <IconComp name="calendar-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Submit Leave Request</Text>
               </View>
 
-              <Text style={styles.fieldLabelText}>Applicant Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="Full Name"
-                placeholderTextColor="#94A3B8"
-                value={newLeaveForm.applicantName}
-                onChangeText={v => setNewLeaveForm(p => ({ ...p, applicantName: sanitizeName(v) }))}
-              />
+              <KeyboardAwareFormScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.fieldLabelText}>Applicant Name *</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="Full Name"
+                  placeholderTextColor="#94A3B8"
+                  value={newLeaveForm.applicantName}
+                  onChangeText={v => setNewLeaveForm(p => ({ ...p, applicantName: sanitizeName(v) }))}
+                />
 
-              <Text style={styles.fieldLabelText}>Applicant Role</Text>
-              <View style={styles.segmentedPillsRow}>
-                {(['teacher', 'student'] as const).map(r => (
+                <Text style={styles.fieldLabelText}>Applicant Role</Text>
+                <View style={styles.segmentedPillsRow}>
+                  {(['teacher', 'student'] as const).map(r => (
+                    <TouchableOpacity
+                      key={r}
+                      style={[styles.segmentedPillBtn, newLeaveForm.applicantRole === r && styles.segmentedPillBtnActive]}
+                      onPress={() => setNewLeaveForm(p => ({ ...p, applicantRole: r }))}>
+                      <Text style={[styles.segmentedPillText, newLeaveForm.applicantRole === r && styles.segmentedPillTextActive]}>
+                        {r.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.fieldLabelText}>Leave Type</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="Casual Leave / Sick Leave / Medical Leave"
+                  placeholderTextColor="#94A3B8"
+                  value={newLeaveForm.leaveType}
+                  onChangeText={v => setNewLeaveForm(p => ({ ...p, leaveType: v }))}
+                />
+
+                <View style={styles.inputTwoColRow}>
+                  <View style={styles.inputCol}>
+                    <Text style={styles.fieldLabelText}>Start Date</Text>
+                    <TouchableOpacity
+                      style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                      onPress={() => openDatePicker('adminLeaveStart', newLeaveForm.startDate || '08-09-2026', 'Select Start Date')}
+                      activeOpacity={0.8}>
+                      <Text style={{ fontSize: 13, color: newLeaveForm.startDate ? '#0F172A' : '#94A3B8' }}>
+                        {newLeaveForm.startDate || 'DD-MM-YYYY'}
+                      </Text>
+                      <IconComp name="calendar-outline" size={16} color="#B07FA8" />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.inputCol}>
+                    <Text style={styles.fieldLabelText}>End Date</Text>
+                    <TouchableOpacity
+                      style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                      onPress={() => openDatePicker('adminLeaveEnd', newLeaveForm.endDate || '08-09-2026', 'Select End Date')}
+                      activeOpacity={0.8}>
+                      <Text style={{ fontSize: 13, color: newLeaveForm.endDate ? '#0F172A' : '#94A3B8' }}>
+                        {newLeaveForm.endDate || 'DD-MM-YYYY'}
+                      </Text>
+                      <IconComp name="calendar-outline" size={16} color="#B07FA8" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <Text style={styles.fieldLabelText}>Reason *</Text>
+                <TextInput
+                  style={[styles.modalInputBox, { minHeight: 60, textAlignVertical: 'top' }]}
+                  placeholder="Explain the reason for leave..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  value={newLeaveForm.reason}
+                  onChangeText={v => setNewLeaveForm(p => ({ ...p, reason: v }))}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, paddingBottom: 10 }}>
                   <TouchableOpacity
-                    key={r}
-                    style={[styles.segmentedPillBtn, newLeaveForm.applicantRole === r && styles.segmentedPillBtnActive]}
-                    onPress={() => setNewLeaveForm(p => ({ ...p, applicantRole: r }))}>
-                    <Text style={[styles.segmentedPillText, newLeaveForm.applicantRole === r && styles.segmentedPillTextActive]}>
-                      {r.toUpperCase()}
-                    </Text>
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                    onPress={() => setShowCreateLeaveModal(false)}>
+                    <Text style={styles.modalSmallBtnText}>Cancel</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.fieldLabelText}>Leave Type</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="Casual Leave / Sick Leave / Medical Leave"
-                placeholderTextColor="#94A3B8"
-                value={newLeaveForm.leaveType}
-                onChangeText={v => setNewLeaveForm(p => ({ ...p, leaveType: v }))}
-              />
-
-              <View style={styles.inputTwoColRow}>
-                <View style={styles.inputCol}>
-                  <Text style={styles.fieldLabelText}>Start Date</Text>
                   <TouchableOpacity
-                    style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                    onPress={() => openDatePicker('adminLeaveStart', newLeaveForm.startDate || '08-09-2026', 'Select Start Date')}
-                    activeOpacity={0.8}>
-                    <Text style={{ fontSize: 13, color: newLeaveForm.startDate ? '#0F172A' : '#94A3B8' }}>
-                      {newLeaveForm.startDate || 'DD-MM-YYYY'}
-                    </Text>
-                    <IconComp name="calendar-outline" size={16} color="#B07FA8" />
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                    onPress={handleCreateLeaveSubmit}>
+                    <Text style={styles.modalSmallBtnText}>Submit Request</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.inputCol}>
-                  <Text style={styles.fieldLabelText}>End Date</Text>
-                  <TouchableOpacity
-                    style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                    onPress={() => openDatePicker('adminLeaveEnd', newLeaveForm.endDate || '08-09-2026', 'Select End Date')}
-                    activeOpacity={0.8}>
-                    <Text style={{ fontSize: 13, color: newLeaveForm.endDate ? '#0F172A' : '#94A3B8' }}>
-                      {newLeaveForm.endDate || 'DD-MM-YYYY'}
-                    </Text>
-                    <IconComp name="calendar-outline" size={16} color="#B07FA8" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <Text style={styles.fieldLabelText}>Reason *</Text>
-              <TextInput
-                style={[styles.modalInputBox, { minHeight: 60, textAlignVertical: 'top' }]}
-                placeholder="Explain the reason for leave..."
-                placeholderTextColor="#94A3B8"
-                multiline
-                value={newLeaveForm.reason}
-                onChangeText={v => setNewLeaveForm(p => ({ ...p, reason: v }))}
-              />
-
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowCreateLeaveModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={handleCreateLeaveSubmit}>
-                  <Text style={styles.modalSmallBtnText}>Submit Request</Text>
-                </TouchableOpacity>
-              </View>
+              </KeyboardAwareFormScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* ===== MODAL: ADD NEW LEAD (Pic 1 Matching) ===== */}
         <Modal visible={showAddLeadModal} transparent animationType="slide">
-          <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', padding: 20 }]}>
               <View style={styles.modalHeaderTitleRow}>
                 <IconComp name="heart-outline" size={20} color="#b07fa8" />
                 <Text style={styles.modalCardTitle}>Log Admission Enquiry / Lead</Text>
               </View>
 
-              <Text style={styles.fieldLabelText}>Parent / Student Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Anand Mahindra"
-                placeholderTextColor="#94A3B8"
-                value={newLeadForm.name}
-                onChangeText={v => setNewLeadForm(p => ({ ...p, name: sanitizeName(v) }))}
-              />
+              <KeyboardAwareFormScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.fieldLabelText}>Parent / Student Name *</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. Anand Mahindra"
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadForm.name}
+                  onChangeText={v => setNewLeadForm(p => ({ ...p, name: sanitizeName(v) }))}
+                />
 
-              <View style={styles.inputTwoColRow}>
-                <View style={styles.inputCol}>
-                  <Text style={styles.fieldLabelText}>Phone Number</Text>
-                  <TextInput
-                    style={styles.modalInputBox}
-                    placeholder="9876543210"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="phone-pad"
-                    value={newLeadForm.phone}
-                    onChangeText={v => setNewLeadForm(p => ({ ...p, phone: sanitizePhone(v) }))}
-                  />
+                <View style={styles.inputTwoColRow}>
+                  <View style={styles.inputCol}>
+                    <Text style={styles.fieldLabelText}>Phone Number</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="9876543210"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                      value={newLeadForm.phone}
+                      onChangeText={v => setNewLeadForm(p => ({ ...p, phone: sanitizePhone(v) }))}
+                    />
+                  </View>
+                  <View style={styles.inputCol}>
+                    <Text style={styles.fieldLabelText}>Email Address</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      placeholder="parent@gmail.com"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="email-address"
+                      value={newLeadForm.email}
+                      onChangeText={v => setNewLeadForm(p => ({ ...p, email: v }))}
+                    />
+                  </View>
                 </View>
-                <View style={styles.inputCol}>
-                  <Text style={styles.fieldLabelText}>Email Address</Text>
-                  <TextInput
-                    style={styles.modalInputBox}
-                    placeholder="parent@gmail.com"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="email-address"
-                    value={newLeadForm.email}
-                    onChangeText={v => setNewLeadForm(p => ({ ...p, email: v }))}
-                  />
+
+                <Text style={styles.fieldLabelText}>Lead Source Form</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. General Admissions 2026-27"
+                  placeholderTextColor="#94A3B8"
+                  value={newLeadForm.sourceForm}
+                  onChangeText={v => setNewLeadForm(p => ({ ...p, sourceForm: v }))}
+                />
+
+                <Text style={styles.fieldLabelText}>Enquiry Notes</Text>
+                <TextInput
+                  style={[styles.modalInputBox, { minHeight: 60, textAlignVertical: 'top' }]}
+                  placeholder="Enquiry details, class requested, discussion notes..."
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  value={newLeadForm.notes}
+                  onChangeText={v => setNewLeadForm(p => ({ ...p, notes: v }))}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, paddingBottom: 10 }}>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                    onPress={() => setShowAddLeadModal(false)}>
+                    <Text style={styles.modalSmallBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                    onPress={handleCreateLeadSubmit}>
+                    <Text style={styles.modalSmallBtnText}>Save Lead</Text>
+                  </TouchableOpacity>
                 </View>
-              </View>
-
-              <Text style={styles.fieldLabelText}>Lead Source Form</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. General Admissions 2026-27"
-                placeholderTextColor="#94A3B8"
-                value={newLeadForm.sourceForm}
-                onChangeText={v => setNewLeadForm(p => ({ ...p, sourceForm: v }))}
-              />
-
-              <Text style={styles.fieldLabelText}>Enquiry Notes</Text>
-              <TextInput
-                style={[styles.modalInputBox, { minHeight: 60, textAlignVertical: 'top' }]}
-                placeholder="Enquiry details, class requested, discussion notes..."
-                placeholderTextColor="#94A3B8"
-                multiline
-                value={newLeadForm.notes}
-                onChangeText={v => setNewLeadForm(p => ({ ...p, notes: v }))}
-              />
-
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddLeadModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={handleCreateLeadSubmit}>
-                  <Text style={styles.modalSmallBtnText}>Save Lead</Text>
-                </TouchableOpacity>
-              </View>
+              </KeyboardAwareFormScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* ===== MODAL: UPGRADE PLAN (Pic 2 Matching) ===== */}

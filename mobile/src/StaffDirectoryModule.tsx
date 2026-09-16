@@ -18,6 +18,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import * as XLSX from 'xlsx';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { KeyboardAwareFormScrollView } from './KeyboardAwareFormScrollView';
 
 // Native Bridge for File Picking & Opening
 const { NativeModules } = require('react-native');
@@ -1194,7 +1195,7 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
             </View>
 
             {/* Scrollable Tab Body Content */}
-            <ScrollView
+            <KeyboardAwareFormScrollView
               style={styles.addStaffScrollBody}
               contentContainerStyle={styles.addStaffScrollContent}
               keyboardShouldPersistTaps="handled"
@@ -1780,7 +1781,7 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
                   ))}
                 </View>
               )}
-            </ScrollView>
+            </KeyboardAwareFormScrollView>
 
             {/* Fixed Bottom Actions Bar */}
             <View style={styles.addStaffFooter}>

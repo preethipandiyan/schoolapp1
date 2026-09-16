@@ -404,26 +404,26 @@ export default function MobileAppPreview() {
                 ))}
               </div>
 
-              {/* Recommended 4 Modules + All Modules Bar */}
+              {/* Quick Access Single Row (Attendance, Fees, Homework, Timetable) */}
               <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
-                <h4 className="text-xs font-bold text-slate-800 mb-2.5">Recommended Quick Access</h4>
-                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                <h4 className="text-xs font-bold text-slate-800 mb-2.5">Quick Access</h4>
+                <div className="grid grid-cols-4 gap-2">
                   {[
-                    { label: 'Attendance', tab: 'Attendance', icon: Calendar, bg: 'bg-emerald-50 text-emerald-600' },
-                    { label: 'Homework', tab: 'Homework', icon: BookOpen, bg: 'bg-purple-50 text-purple-600' },
-                    { label: 'Messages', tab: 'Messages', icon: MessageSquare, bg: 'bg-amber-50 text-amber-600' },
-                    { label: '📂 All Modules', tab: 'All Modules', icon: Grid, bg: 'bg-slate-100 text-slate-700' },
+                    { label: 'Attendance', action: () => setActiveTab('Attendance'), icon: Calendar, bg: 'bg-emerald-50 text-emerald-600' },
+                    { label: 'Fees', action: () => { setActiveTab('All Modules'); setActiveModuleModal('My Salary'); showToast('Opened Fees'); }, icon: DollarSign, bg: 'bg-teal-50 text-teal-600' },
+                    { label: 'Homework', action: () => setActiveTab('Homework'), icon: BookOpen, bg: 'bg-purple-50 text-purple-600' },
+                    { label: 'Timetable', action: () => { setActiveTab('All Modules'); setActiveModuleModal('Timetable'); }, icon: Clock, bg: 'bg-blue-50 text-blue-600' },
                   ].map((m, idx) => {
                     const IconComponent = m.icon;
                     return (
                       <button
                         key={idx}
-                        onClick={() => setActiveTab(m.tab)}
-                        className="flex-shrink-0 flex flex-col items-center p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 min-w-[76px]">
+                        onClick={m.action}
+                        className="flex flex-col items-center justify-center p-2 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100 transition-colors">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center ${m.bg} mb-1`}>
                           <IconComponent className="w-4 h-4" />
                         </div>
-                        <span className="text-[10px] font-bold text-slate-800 leading-tight">{m.label}</span>
+                        <span className="text-[10px] font-bold text-slate-800 leading-tight text-center">{m.label}</span>
                       </button>
                     );
                   })}
