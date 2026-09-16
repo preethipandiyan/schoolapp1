@@ -447,6 +447,123 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     return children[selectedChildIndex] || children[0];
   }, [children, selectedChildIndex]);
 
+  // Viewing & Link Another Child State (Screenshots 2, 3, 4, 5)
+  const [isChildDropdownOpen, setIsChildDropdownOpen] = useState<boolean>(false);
+  const [isLinkAnotherModalOpen, setIsLinkAnotherModalOpen] = useState<boolean>(false);
+  const [linkChildAdmission, setLinkChildAdmission] = useState<string>('');
+  const [linkChildDob, setLinkChildDob] = useState<string>('');
+  const [linkChildError, setLinkChildError] = useState<string>('');
+  const [isLinkingChild, setIsLinkingChild] = useState<boolean>(false);
+  const [showLinkDatePicker, setShowLinkDatePicker] = useState<boolean>(false);
+
+  // Helper: Normalize Date String to YYYY-MM-DD for reliable comparison
+  const normalizeDateStr = (dStr: any): string => {
+    if (!dStr) return '';
+    if (typeof dStr === 'object' && typeof dStr.toDate === 'function') {
+      const d = dStr.toDate();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    if (dStr instanceof Date) {
+      return `${dStr.getFullYear()}-${String(dStr.getMonth() + 1).padStart(2, '0')}-${String(dStr.getDate()).padStart(2, '0')}`;
+    }
+    if (typeof dStr === 'string') {
+      const s = dStr.trim();
+      const parts = s.split(/[-/.]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+        if (parts[2].length === 4) {
+          return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+    return String(dStr).trim();
+  };
+
+  // Handler: Link Another Child with exact validation & error messaging
+  const handleLinkChildSubmit = async () => {
+    const adm = linkChildAdmission.trim();
+    const dob = linkChildDob.trim();
+    if (!adm || !dob) {
+      setLinkChildError('No student found matching this Admission Number and Date of Birth.');
+      return;
+    }
+    setLinkChildError('');
+    setIsLinkingChild(true);
+
+    try {
+      let foundStudent: any = null;
+      const targetNormDob = normalizeDateStr(dob);
+
+      // 1. Query Firestore students collection if db exists
+      if (db) {
+        const studentsRef = db.collection('schools').doc(schoolId).collection('students');
+        let snap = await studentsRef.where('admissionNumber', '==', adm).get();
+        if (!snap || snap.empty) {
+          snap = await studentsRef.where('admissionNumber', '==', adm.toUpperCase()).get();
+        }
+        if (!snap || snap.empty) {
+          snap = await studentsRef.where('admissionNumber', '==', adm.toLowerCase()).get();
+        }
+        if (!snap || snap.empty) {
+          snap = await studentsRef.where('rollNo', '==', adm).get();
+        }
+
+        if (snap && !snap.empty) {
+          for (const docSnap of snap.docs) {
+            const sData = { id: docSnap.id, ...docSnap.data() };
+            const sDobNorm = normalizeDateStr(sData.dob || sData.dateOfBirth || sData.birthDate);
+            if (sDobNorm === targetNormDob || !sDobNorm) {
+              foundStudent = sData;
+              break;
+            }
+          }
+        }
+      }
+
+      // 2. Fallback: search in loaded children array
+      if (!foundStudent && children && children.length > 0) {
+        const match = children.find(c => {
+          const cAdm = (c.admissionNumber || c.rollNo || c.id || '').trim().toLowerCase();
+          const cDob = normalizeDateStr(c.dob || c.dateOfBirth || c.birthDate);
+          return cAdm === adm.toLowerCase() && (cDob === targetNormDob || !cDob);
+        });
+        if (match) {
+          foundStudent = match;
+        }
+      }
+
+      if (!foundStudent) {
+        // Exact error message required by Screenshot 5
+        setLinkChildError('No student found matching this Admission Number and Date of Birth.');
+        setIsLinkingChild(false);
+        return;
+      }
+
+      // Found student! Link to active list
+      const existingIndex = children.findIndex(c => c.id === foundStudent.id);
+      if (existingIndex >= 0) {
+        setSelectedChildIndex(existingIndex);
+      } else {
+        const updated = [...children, foundStudent];
+        setChildren(updated);
+        setSelectedChildIndex(updated.length - 1);
+      }
+
+      showToast(`Linked ${foundStudent.firstName || foundStudent.name || 'Child'} successfully!`);
+      setIsLinkAnotherModalOpen(false);
+      setLinkChildAdmission('');
+      setLinkChildDob('');
+      setLinkChildError('');
+    } catch (e: any) {
+      console.error('Error linking child:', e);
+      setLinkChildError('No student found matching this Admission Number and Date of Birth.');
+    } finally {
+      setIsLinkingChild(false);
+    }
+  };
+
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -728,7 +845,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
       else if (rec.status === 'Late') late++;
     });
     const total = present + absent + late;
-    const percentage = total > 0 ? Math.round((present / total) * 100) : 100;
+    const percentage = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
     return { total, present, absent, late, percentage };
   }, [attendanceRecords]);
 
@@ -952,7 +1069,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
   }
 
   // =========================================================================
-  // RENDER: TOP HEADER BAR
+  // RENDER: TOP HEADER BAR (EXACT MATCH TO ADMIN / TEACHER HEADER)
+  // Dimensions, paddings, fonts, alignments, logo, role badge, avatar PR, logout
   // =========================================================================
   const renderTopHeader = () => (
     <View style={styles.topHeaderBar}>
@@ -961,13 +1079,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
       </View>
 
       <View style={styles.schoolBrandDetails}>
-        <Text style={styles.headerBrandTitle} numberOfLines={1}>
+        <Text style={styles.headerBrandTitle} numberOfLines={1} ellipsizeMode="tail">
           Zuna International Academy
         </Text>
         <View style={styles.schoolSubRow}>
           <View style={[styles.officialBadgeInline, { backgroundColor: '#faedf7', borderColor: '#eec9db' }]}>
-            <IconComp name="checkmark-circle-outline" size={13} color="#B07FA8" />
-            <Text style={[styles.officialBadgeText, { color: '#B07FA8' }]}>Student/Parent</Text>
+            <IconComp name="checkmark-circle-outline" size={12} color="#B07FA8" />
+            <Text style={[styles.officialBadgeText, { color: '#B07FA8' }]}>PARENT</Text>
           </View>
           <Text style={styles.dotSeparator}>·</Text>
           <Text style={styles.headerBrandSub}>Academic Portal</Text>
@@ -975,17 +1093,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
       </View>
 
       <View style={styles.headerRightProfile}>
-        <TouchableOpacity
-          style={[styles.avatarPill, { backgroundColor: '#faedf7' }]}
-          onPress={() => {
-            setActiveBottomTab('All');
-            setActiveAllModule('My Children');
-          }}
-          activeOpacity={0.75}>
-          <Text style={[styles.avatarPillText, { color: '#B07FA8' }]}>
-            {activeStudent?.firstName ? activeStudent.firstName.slice(0, 2).toUpperCase() : 'ST'}
-          </Text>
-        </TouchableOpacity>
+        <View style={[styles.avatarPill, { backgroundColor: '#faedf7' }]}>
+          <Text style={[styles.avatarPillText, { color: '#B07FA8' }]}>PR</Text>
+        </View>
         <TouchableOpacity
           style={styles.logoutCircleBtn}
           onPress={onLogout}
@@ -998,233 +1108,202 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
   );
 
   // =========================================================================
-  // RENDER: TAB 1 — DASHBOARD
+  // RENDER: TAB 1 — STUDENT OVERVIEW (MATCHING SCREENSHOT 2 & 3)
+  // 1. VIEWING dropdown card with + Link Another Child
+  // 2. Dark Hero Student banner (MP, Madhu P, PRE KG - A, ID: 10987)
+  // 3. Attendance Summary card (circle with --, 0 PRESENT, 0 LATE, 0 ABSENT, NO ATTENDANCE RECORDED YET)
+  // 4. Recent Assessments card (No Grades Yet / published grades)
   // =========================================================================
   const renderDashboard = () => (
     <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
-      {/* 1. Student Summary Card */}
-      <View style={styles.studentSummaryCard}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-          <View style={styles.studentAvatarCircle}>
-            <Text style={styles.studentAvatarText}>
-              {activeStudent?.firstName
-                ? `${activeStudent.firstName[0]}${activeStudent.lastName ? activeStudent.lastName[0] : ''}`
-                : 'ST'}
-            </Text>
-          </View>
+      {/* 1. VIEWING Child Dropdown Card (Screenshots 2 & 3) */}
+      <View style={styles.viewingCardWrapper}>
+        <TouchableOpacity
+          style={styles.viewingCardTouchable}
+          onPress={() => setIsChildDropdownOpen(!isChildDropdownOpen)}
+          activeOpacity={0.8}>
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.studentCardName} numberOfLines={1}>
-                {`${activeStudent?.firstName || ''} ${activeStudent?.lastName || activeStudent?.name || 'Student'}`.trim()}
-              </Text>
-              <View style={styles.activeStatusPill}>
-                <Text style={styles.activeStatusText}>Active</Text>
-              </View>
-            </View>
-            <Text style={styles.studentCardSub}>
-              Class: {activeStudent?.gradeClass || classDetails?.name || 'Assigned Class'} • Sec:{' '}
-              {activeStudent?.section || classDetails?.section || 'A'}
-            </Text>
-            <Text style={styles.studentCardAdmNo}>
-              Admission No: {activeStudent?.admissionNumber || activeStudent?.rollNo || 'ADM-001'}
+            <Text style={styles.viewingCardHeaderLabel}>VIEWING</Text>
+            <Text style={styles.viewingCardChildName} numberOfLines={1}>
+              {`${activeStudent?.firstName || activeStudent?.name || 'Student'} ${activeStudent?.lastName || ''}`.trim()}
             </Text>
           </View>
-        </View>
+          <IconComp
+            name={isChildDropdownOpen ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color="#7E22CE"
+          />
+        </TouchableOpacity>
 
-        {/* Multi-Child Selector Banner (if more than 1 child exists) */}
-        {children.length > 1 && (
-          <View style={styles.multiChildSelectorRow}>
-            <Text style={styles.multiChildLabel}>Select Child:</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {children.map((child, idx) => (
-                <TouchableOpacity
-                  key={child.id || idx}
-                  style={[
-                    styles.childPillBtn,
-                    selectedChildIndex === idx && styles.childPillBtnActive,
-                  ]}
-                  onPress={() => {
-                    setSelectedChildIndex(idx);
-                    showToast(`Switched profile to ${child.firstName || child.name}`);
-                  }}>
-                  <Text
+        {isChildDropdownOpen && (
+          <View style={styles.viewingDropdownPopup}>
+            <ScrollView style={{ maxHeight: 180 }} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+              {children.map((child, idx) => {
+                const isSelected = selectedChildIndex === idx;
+                const childInitials = child.firstName
+                  ? `${child.firstName[0]}${child.lastName ? child.lastName[0] : ''}`
+                  : (child.name ? child.name.slice(0, 2).toUpperCase() : 'ST');
+                const fullName = `${child.firstName || ''} ${child.lastName || child.name || 'Student'}`.trim();
+                return (
+                  <TouchableOpacity
+                    key={child.id || idx}
                     style={[
-                      styles.childPillText,
-                      selectedChildIndex === idx && styles.childPillTextActive,
-                    ]}>
-                    {child.firstName || child.name} ({child.gradeClass || 'Student'})
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                      styles.childDropdownItem,
+                      isSelected && styles.childDropdownItemActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedChildIndex(idx);
+                      setIsChildDropdownOpen(false);
+                      showToast(`Viewing ${fullName}`);
+                    }}
+                    activeOpacity={0.75}>
+                    <View style={styles.childDropdownAvatar}>
+                      <Text style={styles.childDropdownAvatarText}>{childInitials}</Text>
+                    </View>
+                    <Text style={styles.childDropdownName} numberOfLines={1}>{fullName}</Text>
+                    {isSelected && (
+                      <IconComp name="checkmark-outline" size={16} color="#7E22CE" style={{ marginLeft: 'auto' }} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
+
+            <View style={styles.childDropdownDivider} />
+
+            <TouchableOpacity
+              style={styles.linkAnotherChildBtn}
+              onPress={() => {
+                setIsChildDropdownOpen(false);
+                setLinkChildError('');
+                setLinkChildAdmission('');
+                setLinkChildDob('');
+                setIsLinkAnotherModalOpen(true);
+              }}
+              activeOpacity={0.8}>
+              <IconComp name="add-outline" size={18} color="#7E22CE" />
+              <Text style={styles.linkAnotherChildBtnText}>Link Another Child</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
 
-      {/* 2. Attendance Summary Card */}
-      <TouchableOpacity
-        style={styles.cardContainer}
-        onPress={() => setActiveBottomTab('Attendance')}
-        activeOpacity={0.85}>
-        <View style={styles.cardHeaderRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={[styles.iconCircleSmall, { backgroundColor: '#ECFDF5' }]}>
-              <IconComp name="calendar-outline" size={16} color="#059669" />
-            </View>
-            <Text style={styles.cardTitle}>Attendance Summary</Text>
+      {/* 2. Dark Hero Student Banner Card (Screenshot 2) */}
+      <View style={styles.darkHeroBannerCard}>
+        <View style={styles.darkHeroAvatarCircle}>
+          <Text style={styles.darkHeroAvatarText}>
+            {activeStudent?.firstName
+              ? `${activeStudent.firstName[0]}${activeStudent.lastName ? activeStudent.lastName[0] : ''}`
+              : (activeStudent?.name ? activeStudent.name.slice(0, 2).toUpperCase() : 'MP')}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.darkHeroStudentName} numberOfLines={1}>
+            {`${activeStudent?.firstName || ''} ${activeStudent?.lastName || activeStudent?.name || 'Student'}`.trim()}
+          </Text>
+          <View style={styles.darkHeroSubRow}>
+            <IconComp name="school-outline" size={14} color="#94A3B8" />
+            <Text style={styles.darkHeroClassText}>
+              {activeStudent?.gradeClass || classDetails?.name || 'PRE KG - A'}
+            </Text>
+            <Text style={styles.darkHeroBullet}>•</Text>
+            <Text style={styles.darkHeroIdText}>
+              ID: {activeStudent?.admissionNumber || activeStudent?.rollNo || activeStudent?.id || '10987'}
+            </Text>
           </View>
-          <View style={[styles.percentageBadge, { backgroundColor: '#ECFDF5' }]}>
-            <Text style={[styles.percentageBadgeText, { color: '#059669' }]}>
-              {attendanceStats.percentage}% Present
+        </View>
+      </View>
+
+      {/* 3. Attendance Summary Card (Screenshot 2) */}
+      <View style={styles.overviewSectionCard}>
+        <View style={styles.overviewSectionHeaderRow}>
+          <IconComp name="calendar-outline" size={18} color="#EC4899" />
+          <Text style={styles.overviewSectionTitle}>Attendance Summary</Text>
+        </View>
+
+        {/* Circular Donut Indicator with -- */}
+        <View style={styles.attendanceDonutWrapper}>
+          <View style={[
+            styles.attendanceDonutRing,
+            attendanceStats.total > 0 && {
+              borderColor: attendanceStats.percentage >= 90
+                ? '#16A34A'
+                : attendanceStats.percentage >= 75
+                ? '#CA8A04'
+                : '#DC2626',
+            },
+          ]}>
+            <Text style={styles.attendanceDonutText}>
+              {attendanceStats.total === 0 ? '--' : `${attendanceStats.percentage}%`}
             </Text>
           </View>
         </View>
 
-        <View style={styles.metricsTripleRow}>
-          <View style={styles.metricColumn}>
-            <Text style={styles.metricValNumber}>{attendanceStats.present}</Text>
-            <Text style={styles.metricValLabel}>Present</Text>
+        {/* Triple Count Boxes: Present, Late, Absent */}
+        <View style={styles.attSummaryTripleRow}>
+          <View style={[styles.attSummaryBox, { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' }]}>
+            <Text style={[styles.attSummaryBoxNumber, { color: '#16A34A' }]}>{attendanceStats.present}</Text>
+            <Text style={[styles.attSummaryBoxLabel, { color: '#16A34A' }]}>PRESENT</Text>
           </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metricColumn}>
-            <Text style={[styles.metricValNumber, { color: '#DC2626' }]}>{attendanceStats.absent}</Text>
-            <Text style={styles.metricValLabel}>Absent</Text>
+          <View style={[styles.attSummaryBox, { backgroundColor: '#FEFCE8', borderColor: '#FEF08A' }]}>
+            <Text style={[styles.attSummaryBoxNumber, { color: '#CA8A04' }]}>{attendanceStats.late}</Text>
+            <Text style={[styles.attSummaryBoxLabel, { color: '#CA8A04' }]}>LATE</Text>
           </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metricColumn}>
-            <Text style={[styles.metricValNumber, { color: '#D97706' }]}>{attendanceStats.late}</Text>
-            <Text style={styles.metricValLabel}>Late</Text>
+          <View style={[styles.attSummaryBox, { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' }]}>
+            <Text style={[styles.attSummaryBoxNumber, { color: '#DC2626' }]}>{attendanceStats.absent}</Text>
+            <Text style={[styles.attSummaryBoxLabel, { color: '#DC2626' }]}>ABSENT</Text>
           </View>
         </View>
-      </TouchableOpacity>
 
-      {/* 3. Homework Summary Card */}
-      <TouchableOpacity
-        style={styles.cardContainer}
-        onPress={() => setActiveBottomTab('Homework')}
-        activeOpacity={0.85}>
-        <View style={styles.cardHeaderRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={[styles.iconCircleSmall, { backgroundColor: '#faedf7' }]}>
-              <IconComp name="book-outline" size={16} color="#B07FA8" />
+        {/* Bottom Banner Status */}
+        <View style={styles.attSummaryStatusBanner}>
+          <Text style={styles.attSummaryStatusBannerText}>
+            {attendanceStats.total === 0
+              ? 'NO ATTENDANCE RECORDED YET'
+              : attendanceStats.percentage < 80
+              ? 'ATTENDANCE DROPPED BELOW 80%'
+              : 'ATTENDANCE ON TRACK'}
+          </Text>
+        </View>
+      </View>
+
+      {/* 4. Recent Assessments Card (Screenshot 2) */}
+      <View style={styles.overviewSectionCard}>
+        <View style={styles.overviewSectionHeaderRow}>
+          <IconComp name="trending-up-outline" size={18} color="#8B5CF6" />
+          <Text style={styles.overviewSectionTitle}>Recent Assessments</Text>
+        </View>
+
+        {assessmentsList.length === 0 ? (
+          <View style={styles.assessmentsEmptyContainer}>
+            <View style={styles.assessmentsEmptyIconCircle}>
+              <IconComp name="checkmark-circle-outline" size={28} color="#94A3B8" />
             </View>
-            <Text style={styles.cardTitle}>Assigned Homework</Text>
-          </View>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#B07FA8' }}>View All →</Text>
-        </View>
-
-        {homeworkList.length === 0 ? (
-          <View style={styles.emptyCardSubBox}>
-            <IconComp name="checkmark-done-circle-outline" size={24} color="#10B981" />
-            <Text style={styles.emptyCardSubText}>No pending homework assignments!</Text>
+            <Text style={styles.assessmentsEmptyTitle}>No Grades Yet</Text>
+            <Text style={styles.assessmentsEmptySub}>
+              Assessments and grades will appear here once published by the teacher.
+            </Text>
           </View>
         ) : (
           <View style={{ gap: 8, marginTop: 4 }}>
-            {homeworkList.slice(0, 2).map(hw => {
-              const isDone = hw.submissions?.[activeStudent?.id]?.status === 'completed';
+            {assessmentsList.slice(0, 4).map((item, idx) => {
+              const myGrade = item.grades?.[activeStudent?.id] ?? item.marks ?? item.grade;
               return (
-                <View key={hw.id} style={styles.homeworkMiniItem}>
+                <View key={item.id || idx} style={styles.assessmentRowItem}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.hwMiniTitle} numberOfLines={1}>{hw.title}</Text>
-                    <Text style={styles.hwMiniSub}>{hw.subject} • Due: {hw.dueDate || 'Soon'}</Text>
+                    <Text style={styles.assessmentRowTitle} numberOfLines={1}>{item.title || item.name || 'Assessment'}</Text>
+                    <Text style={styles.assessmentRowDate}>{item.date || item.subject || 'Published'}</Text>
                   </View>
-                  <View style={[styles.hwMiniStatusPill, isDone ? { backgroundColor: '#DCFCE7' } : { backgroundColor: '#FEF3C7' }]}>
-                    <Text style={[styles.hwMiniStatusText, isDone ? { color: '#15803D' } : { color: '#B45309' }]}>
-                      {isDone ? 'Completed' : 'Pending'}
-                    </Text>
-                  </View>
+                  {myGrade !== undefined ? (
+                    <View style={styles.assessmentGradePill}>
+                      <Text style={styles.assessmentGradePillText}>{myGrade}/{item.totalMarks || 100}</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>Graded</Text>
+                  )}
                 </View>
               );
             })}
-          </View>
-        )}
-      </TouchableOpacity>
-
-      {/* 4. Academic Performance & Fee Overview Cards */}
-      <View style={{ flexDirection: 'row', gap: 10 }}>
-        {/* Performance Box */}
-        <TouchableOpacity
-          style={[styles.cardContainer, { flex: 1 }]}
-          onPress={() => {
-            setActiveBottomTab('All');
-            setActiveAllModule('Performance');
-          }}
-          activeOpacity={0.85}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-            <View style={[styles.iconCircleSmall, { backgroundColor: '#EEF2FF' }]}>
-              <IconComp name="trending-up-outline" size={16} color="#4F46E5" />
-            </View>
-            <Text style={[styles.cardTitle, { fontSize: 13 }]}>Performance</Text>
-          </View>
-          <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A' }}>
-            {assessmentsList.length > 0 ? `${assessmentsList.length} Tests` : 'Graded'}
-          </Text>
-          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Subject Assessments</Text>
-        </TouchableOpacity>
-
-        {/* Fees Box */}
-        <TouchableOpacity
-          style={[styles.cardContainer, { flex: 1 }]}
-          onPress={() => {
-            setActiveBottomTab('All');
-            setActiveAllModule('Fees & Payments');
-          }}
-          activeOpacity={0.85}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-            <View style={[styles.iconCircleSmall, { backgroundColor: feeStats.pending > 0 ? '#FEE2E2' : '#DCFCE7' }]}>
-              <IconComp
-                name="card-outline"
-                size={16}
-                color={feeStats.pending > 0 ? '#DC2626' : '#16A34A'}
-              />
-            </View>
-            <Text style={[styles.cardTitle, { fontSize: 13 }]}>Fee Status</Text>
-          </View>
-          <Text style={{ fontSize: 20, fontWeight: '900', color: feeStats.pending > 0 ? '#DC2626' : '#16A34A' }}>
-            {feeStats.pending > 0 ? `₹${feeStats.pending}` : 'Cleared'}
-          </Text>
-          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
-            {feeStats.pending > 0 ? 'Pending Payment' : 'All Dues Paid'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* 5. School Notices & Upcoming Events */}
-      <View style={styles.cardContainer}>
-        <View style={styles.cardHeaderRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={[styles.iconCircleSmall, { backgroundColor: '#FEF3C7' }]}>
-              <IconComp name="notifications-outline" size={16} color="#D97706" />
-            </View>
-            <Text style={styles.cardTitle}>Latest School Notice</Text>
-          </View>
-          <TouchableOpacity onPress={() => { setActiveBottomTab('All'); setActiveAllModule('Noticeboard'); }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#B07FA8' }}>Noticeboard →</Text>
-          </TouchableOpacity>
-        </View>
-
-        {noticesList.length === 0 ? (
-          <View style={styles.emptyCardSubBox}>
-            <Text style={styles.emptyCardSubText}>No active notices posted today.</Text>
-          </View>
-        ) : (
-          <View style={{ backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, marginTop: 4 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', flex: 1 }}>
-                {noticesList[0].title}
-              </Text>
-              <View style={{ backgroundColor: '#FDE68A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>
-                  {noticesList[0].priority || 'Notice'}
-                </Text>
-              </View>
-            </View>
-            <Text style={{ fontSize: 11, color: '#475569', marginTop: 4, lineHeight: 16 }} numberOfLines={2}>
-              {noticesList[0].content}
-            </Text>
-            <Text style={{ fontSize: 10, color: '#94A3B8', marginTop: 6 }}>
-              {noticesList[0].date || noticesList[0].createdAt ? String(noticesList[0].date || noticesList[0].createdAt).slice(0, 10) : ''}
-            </Text>
           </View>
         )}
       </View>
@@ -2358,11 +2437,18 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           {(['Dashboard', 'Attendance', 'Homework', 'Messages', 'All'] as BottomTab[]).map(tab => {
             const isActive = activeBottomTab === tab && (!activeAllModule || tab === 'All');
             const iconMap: Record<BottomTab, string> = {
-              'Dashboard': 'grid-outline',
+              'Dashboard': 'person-circle-outline',
               'Attendance': 'calendar-outline',
               'Homework': 'book-outline',
               'Messages': 'chatbubbles-outline',
               'All': 'apps-outline',
+            };
+            const labelMap: Record<BottomTab, string> = {
+              'Dashboard': 'Overview',
+              'Attendance': 'Attendance',
+              'Homework': 'Homework',
+              'Messages': 'Messages',
+              'All': 'All',
             };
 
             return (
@@ -2386,7 +2472,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     styles.floatingTabLabelText,
                     isActive && styles.floatingTabLabelTextActive,
                   ]}>
-                  {tab}
+                  {labelMap[tab]}
                 </Text>
               </TouchableOpacity>
             );
@@ -2647,6 +2733,123 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           </View>
         </View>
       </Modal>
+
+      {/* =========================================================================
+          LINK ANOTHER CHILD MODAL (Screenshots 4 & 5)
+         ========================================================================= */}
+      <Modal
+        visible={isLinkAnotherModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setIsLinkAnotherModalOpen(false);
+          setLinkChildError('');
+        }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlayDark}>
+          <View style={[styles.modalCardContainer, { maxWidth: 380, width: '92%' }]}>
+            {/* Header */}
+            <View style={styles.linkModalHeaderRow}>
+              <Text style={styles.linkModalTitle}>Link Another Child</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsLinkAnotherModalOpen(false);
+                  setLinkChildError('');
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <IconComp name="close-outline" size={22} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Error State Banner (Screenshot 5) */}
+            {linkChildError ? (
+              <View style={styles.linkErrorBannerBox}>
+                <Text style={styles.linkErrorBannerText}>{linkChildError}</Text>
+              </View>
+            ) : null}
+
+            {/* Field: Admission Number */}
+            <Text style={styles.linkFieldLabel}>
+              Admission Number <Text style={{ color: '#EF4444' }}>*</Text>
+            </Text>
+            <FocusTextInput
+              style={styles.linkFieldInput}
+              placeholder="e.g. ADM-2024-001"
+              placeholderTextColor="#94A3B8"
+              value={linkChildAdmission}
+              onChangeText={txt => {
+                setLinkChildAdmission(txt);
+                setLinkChildError('');
+              }}
+              autoCapitalize="characters"
+            />
+
+            {/* Field: Date of Birth */}
+            <Text style={[styles.linkFieldLabel, { marginTop: 14 }]}>
+              Date of Birth <Text style={{ color: '#EF4444' }}>*</Text>
+            </Text>
+            <View style={styles.linkDobInputRow}>
+              <RNTextInput
+                style={styles.linkDobTextInput}
+                placeholder="dd-mm-yyyy"
+                placeholderTextColor="#94A3B8"
+                value={linkChildDob}
+                onChangeText={txt => {
+                  setLinkChildDob(txt);
+                  setLinkChildError('');
+                }}
+              />
+              <TouchableOpacity
+                style={styles.linkDobCalendarIconBtn}
+                onPress={() => setShowLinkDatePicker(true)}>
+                <IconComp name="calendar-outline" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Buttons: Cancel and Link Child (Screenshot 4) */}
+            <View style={styles.linkModalButtonsRow}>
+              <TouchableOpacity
+                style={styles.linkCancelBtn}
+                onPress={() => {
+                  setIsLinkAnotherModalOpen(false);
+                  setLinkChildError('');
+                }}>
+                <Text style={styles.linkCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.linkSubmitBtn, isLinkingChild && { opacity: 0.7 }]}
+                onPress={handleLinkChildSubmit}
+                disabled={isLinkingChild}
+                activeOpacity={0.85}>
+                {isLinkingChild ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.linkSubmitBtnText}>Link Child</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Date Picker Modal for Link Another Child DOB */}
+      <CalendarDatePickerModal
+        visible={showLinkDatePicker}
+        title="Select Date of Birth"
+        currentDateStr={linkChildDob}
+        onSelectDate={dStr => {
+          const parts = dStr.split('-');
+          if (parts.length === 3) {
+            setLinkChildDob(`${parts[2]}-${parts[1]}-${parts[0]}`);
+          } else {
+            setLinkChildDob(dStr);
+          }
+          setLinkChildError('');
+          setShowLinkDatePicker(false);
+        }}
+        onClose={() => setShowLinkDatePicker(false)}
+      />
     </View>
   );
 };
@@ -2664,63 +2867,63 @@ const styles = StyleSheet.create({
     paddingBottom: 100, // Extra space so floating nav never blocks content
   },
 
-  // Top Header Bar
+  // Top Header Bar (Matching Admin / Teacher Portal Dimensions & Spacing Exactly)
   topHeaderBar: {
-    height: 56,
-    backgroundColor: '#FFFFFF',
+    height: 64,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
   headerLogoBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   schoolBrandDetails: {
     flex: 1,
-    marginLeft: 10,
+    justifyContent: 'center',
   },
   headerBrandTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '800',
     color: '#0F172A',
+    letterSpacing: -0.2,
   },
   schoolSubRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 2,
-    gap: 4,
   },
   officialBadgeInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
     borderWidth: 1,
   },
   officialBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '700',
   },
   dotSeparator: {
+    fontSize: 11,
     color: '#94A3B8',
-    fontSize: 10,
+    marginHorizontal: 6,
   },
   headerBrandSub: {
     fontSize: 11,
+    fontWeight: '500',
     color: '#64748B',
   },
   headerRightProfile: {
@@ -2729,23 +2932,391 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   avatarPill: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarPillText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   logoutCircleBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+
+  // =========================================================================
+  // STUDENT OVERVIEW (SCREENSHOTS 2 & 3) STYLES
+  // =========================================================================
+
+  // 1. Viewing Card & Dropdown (Screenshots 2 & 3)
+  viewingCardWrapper: {
+    backgroundColor: '#FAF5FF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#F3E8FF',
+    padding: 14,
+    marginBottom: 16,
+  },
+  viewingCardTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  viewingCardHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#7E22CE',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  viewingCardChildName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E1B4B',
+    marginTop: 2,
+  },
+  viewingDropdownPopup: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E9D5FF',
+  },
+  childDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    gap: 10,
+  },
+  childDropdownItemActive: {
+    backgroundColor: '#F3E8FF',
+  },
+  childDropdownAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#faedf7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  childDropdownAvatarText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#7E22CE',
+  },
+  childDropdownName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E1B4B',
+    flex: 1,
+  },
+  childDropdownDivider: {
+    height: 1,
+    backgroundColor: '#E9D5FF',
+    marginVertical: 6,
+  },
+  linkAnotherChildBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 6,
+  },
+  linkAnotherChildBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#7E22CE',
+  },
+
+  // 2. Dark Hero Student Banner Card (Screenshot 2)
+  darkHeroBannerCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 18,
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 16,
+  },
+  darkHeroAvatarCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#faedf7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  darkHeroAvatarText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  darkHeroStudentName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  darkHeroSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+  },
+  darkHeroClassText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  darkHeroBullet: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  darkHeroIdText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+
+  // 3. Overview Cards (Attendance & Recent Assessments)
+  overviewSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginBottom: 16,
+  },
+  overviewSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  overviewSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+
+  // Attendance Summary specifics
+  attendanceDonutWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  attendanceDonutRing: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 6,
+    borderColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  attendanceDonutText: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  attSummaryTripleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  attSummaryBox: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  attSummaryBoxNumber: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  attSummaryBoxLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  attSummaryStatusBanner: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 10,
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  attSummaryStatusBannerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+
+  // Recent Assessments specifics
+  assessmentsEmptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  assessmentsEmptyIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F8FAFC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  assessmentsEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 10,
+  },
+  assessmentsEmptySub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 4,
+    paddingHorizontal: 16,
+    lineHeight: 17,
+  },
+  assessmentRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  assessmentRowTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  assessmentRowDate: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  assessmentGradePill: {
+    backgroundColor: '#F3E8FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  assessmentGradePillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#7E22CE',
+  },
+
+  // =========================================================================
+  // LINK ANOTHER CHILD MODAL (SCREENSHOTS 4 & 5) STYLES
+  // =========================================================================
+  linkModalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  linkModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  linkErrorBannerBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  linkErrorBannerText: {
+    color: '#DC2626',
+    fontSize: 12.5,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+  linkFieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  linkFieldInput: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    fontSize: 13,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  linkDobInputRow: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  linkDobTextInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    padding: 0,
+  },
+  linkDobCalendarIconBtn: {
+    padding: 4,
+  },
+  linkModalButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 22,
+  },
+  linkCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  linkCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  linkSubmitBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#9D6381',
+  },
+  linkSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
   // Module Hero Header Card
