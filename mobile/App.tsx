@@ -25,8 +25,62 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import StudentPortal from './src/StudentPortal';
 import { StaffDirectoryScreen, StaffItem as StaffDirectoryItem, ALL_ROLES_LIST } from './src/StaffDirectoryModule';
 import { KeyboardAwareFormScrollView } from './src/KeyboardAwareFormScrollView';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 
 const { ZunaFilePicker } = NativeModules;
+
+const openNativeTimePicker = (currentTime: string, onSelect: (timeStr: string) => void) => {
+  if (Platform.OS === 'android') {
+    let [h, m] = (currentTime || '09:00').split(':').map(Number);
+    if (isNaN(h)) h = 9;
+    if (isNaN(m)) m = 0;
+    const now = new Date();
+    now.setHours(h, m, 0, 0);
+
+    DateTimePickerAndroid.open({
+      value: now,
+      onChange: (event, selectedDate) => {
+        if (event.type === 'set' && selectedDate) {
+          const hours = String(selectedDate.getHours()).padStart(2, '0');
+          const minutes = String(selectedDate.getMinutes()).padStart(2, '0');
+          onSelect(`${hours}:${minutes}`);
+        }
+      },
+      mode: 'time',
+      is24Hour: true,
+    });
+  }
+};
+
+const openNativeDatePicker = (currentDateStr: string, onSelect: (dateStr: string) => void) => {
+  if (Platform.OS === 'android') {
+    let initDate = new Date();
+    if (currentDateStr) {
+      const parts = currentDateStr.split('-');
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          initDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        } else {
+          initDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+        }
+      }
+    }
+    if (isNaN(initDate.getTime())) initDate = new Date();
+
+    DateTimePickerAndroid.open({
+      value: initDate,
+      onChange: (event, selectedDate) => {
+        if (event.type === 'set' && selectedDate) {
+          const y = selectedDate.getFullYear();
+          const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+          const d = String(selectedDate.getDate()).padStart(2, '0');
+          onSelect(`${y}-${m}-${d}`);
+        }
+      },
+      mode: 'date',
+    });
+  }
+};
 
 const pickDocument = async (type: 'excel' | 'image' | 'pdf' | 'document' | 'all' = 'all'): Promise<{ name: string; size: string; type: string; uri: string; filePath: string; base64: string } | null> => {
   if (Platform.OS === 'android' && ZunaFilePicker) {
@@ -204,11 +258,37 @@ interface SubjectItem {
 
 interface AdmissionAppItem {
   id: string;
+  applicationNumber?: string;
   name: string;
+  studentName?: string;
+  firstName?: string;
+  lastName?: string;
   parentName: string;
+  parentPhone?: string;
+  parentEmail?: string;
   classApplied: string;
+  targetClassId?: string;
+  targetClassName?: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   date: string;
+  submittedAt?: string;
+  gender?: string;
+  age?: string;
+  dob?: string;
+  bloodGroup?: string;
+  nationality?: string;
+  religion?: string;
+  aadharNumber?: string;
+  homeAddress?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  previousSchool?: string;
+  previousMarks?: string;
+  photoUrl?: string;
+  assignedAdmissionNumber?: string;
+  assignedClassId?: string;
+  admittedAt?: string;
 }
 
 // Icon Helper Component with Graceful Fallback (Prevents null / missing icons)
@@ -248,7 +328,9 @@ const FocusTextInput = forwardRef<any, TextInputProps>((props, ref) => {
 const sanitizeName = (val: string) => (val || '').replace(/[^a-zA-Z\s.'-]/g, '');
 const validateName = (val: string) => {
   const trimmed = (val || '').trim();
-  return trimmed.length >= 2 && !/[0-9]/.test(trimmed);
+  if (!trimmed) return false;
+  if (/[0-9]/.test(trimmed)) return false;
+  return /^[a-zA-Z\s.'-]+$/.test(trimmed);
 };
 
 const sanitizePhone = (val: string) => (val || '').replace(/[^0-9]/g, '').slice(0, 10);
@@ -579,6 +661,8 @@ const adjustTime = (timeStr: string, deltaMinutes: number): string => {
 function App() {
   // --- App State ---
   const [isSplashVisible, setIsSplashVisible] = useState<boolean>(true);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(true);
+  const [onboardingIndex, setOnboardingIndex] = useState<number>(0);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState<string>('');
@@ -767,11 +851,20 @@ function App() {
     } else if (datePickerTarget === 'adminLeaveEnd') {
       setNewLeaveForm(prev => ({ ...prev, endDate: dStr }));
     } else if (datePickerTarget === 'adminIssueBookDue') {
-      setIssueBookForm(prev => ({ ...prev, dueDate: isoStr }));
+      setIssueDueDate(isoStr);
     } else if (datePickerTarget === 'adminAssignFeeDue') {
       setNewFeeForm(prev => ({ ...prev, dueDate: dStr }));
-    } else if (datePickerTarget === 'adminAddEventDate') {
-      setEventStartInput(isoStr);
+    } else if (datePickerTarget === 'adminAddEventDate' || datePickerTarget === 'adminEventStartDate') {
+      setEventStartDate(dStr);
+      if (isMultipleCustomDates) {
+        setCustomDatesList(prev => prev.includes(dStr) ? prev : [...prev, dStr]);
+      }
+    } else if (datePickerTarget === 'adminEventEndDate') {
+      setEventEndDate(dStr);
+    } else if (datePickerTarget === 'adminAttDate') {
+      setAdminAttDate(dStr);
+    } else if (datePickerTarget === 'adminAttAnalyticsDate') {
+      setAdminAttAnalyticsDate(dStr);
     } else if (datePickerTarget === 'adminAttendanceArchive') {
       setAttendanceArchiveDate(dStr);
     } else if (datePickerTarget === 'leadsStartDate') {
@@ -1505,19 +1598,37 @@ function App() {
   const [newStaffRole, setNewStaffRole] = useState('Teachers');
   const [newStaffGender, setNewStaffGender] = useState<'Male' | 'Female'>('Male');
 
-  // --- 2. Classes & Sections State (Screenshot 2 matching) ---
+  // --- 2. Classes & Sections State (Matching Reference Images 2, 3, 4) ---
   const [classList, setClassList] = useState<ClassItem[]>([
-    { id: 'cl1', name: 'grade - 3', section: 'Section A', category: 'Middle', studentCount: 1 },
-    { id: 'cl2', name: 'PRE KG', section: 'Section A', category: 'KG', studentCount: 3 },
+    { id: 'cl1', name: 'Grade - 10', section: 'Section B', category: 'Higher Secondary', studentCount: 2 },
+    { id: 'cl2', name: 'grade - 3', section: 'Section A', category: 'Middle', studentCount: 1 },
+    { id: 'cl3', name: 'PRE KG', section: 'Section A', category: 'KG', studentCount: 3 },
   ]);
   const [classCategoryFilter, setClassCategoryFilter] = useState('All Categories');
-  const [showAddClassModal, setShowAddClassModal] = useState(false);
+  const [classFilterClassName, setClassFilterClassName] = useState('All Classes');
+  const [classFilterSection, setClassFilterSection] = useState('All Sections');
+  const [showCategoryFilterDropdown, setShowCategoryFilterDropdown] = useState(false);
+  const [showClassFilterDropdown, setShowClassFilterDropdown] = useState(false);
+  const [showSectionFilterDropdown, setShowSectionFilterDropdown] = useState(false);
+  const [showAddClassCard, setShowAddClassCard] = useState(false);
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [newClassName, setNewClassName] = useState('');
-  const [newClassSection, setNewClassSection] = useState('Section A');
-  const [newClassCategory, setNewClassCategory] = useState('KG');
+  const [newClassSection, setNewClassSection] = useState('');
+  const [newClassCategory, setNewClassCategory] = useState('');
+  const [showClassCategoryDropdown, setShowClassCategoryDropdown] = useState(false);
+  const [isSavingClass, setIsSavingClass] = useState(false);
+  const [showAddClassModal, setShowAddClassModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [categoriesList, setCategoriesList] = useState(['KG', 'Middle', 'Higher Secondary']);
+  const [categoriesList, setCategoriesList] = useState<Array<{ id: string; name: string; isDefault: boolean }>>([
+    { id: 'cat_kg', name: 'KG', isDefault: true },
+    { id: 'cat_mid', name: 'Middle', isDefault: true },
+    { id: 'cat_higher', name: 'Higher Secondary', isDefault: true },
+  ]);
   const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [showClassBulkImportModal, setShowClassBulkImportModal] = useState(false);
+  const [bulkImportFile, setBulkImportFile] = useState<{ name: string; base64: string } | null>(null);
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
 
   // --- 3. Subject Management State (Screenshot 3 matching) ---
   const [subjectList, setSubjectList] = useState<SubjectItem[]>([
@@ -1603,10 +1714,48 @@ function App() {
       homeAddress: '54 West Mada Street, Chennai',
       feePaid: true,
     },
+    {
+      id: 'st_abi',
+      name: 'Abi J',
+      admissionNo: 'ADM-010',
+      rollNo: '-',
+      gradeClass: 'Grade - 10 - Section B',
+      gender: 'Female',
+      dob: '2015-04-10',
+      parentName: 'Janardhanan',
+      parentPhone: '+91 98765 43220',
+      parentEmail: 'abi@example.com',
+      homeAddress: 'Chennai',
+      feePaid: true,
+    },
+    {
+      id: 'st_balu',
+      name: 'Balu B',
+      admissionNo: 'ADM-011',
+      rollNo: '-',
+      gradeClass: 'Grade - 10 - Section B',
+      gender: 'Male',
+      dob: '2015-08-15',
+      parentName: 'Bhaskar',
+      parentPhone: '+91 98765 43221',
+      parentEmail: 'balu@example.com',
+      homeAddress: 'Chennai',
+      feePaid: true,
+    },
   ]);
-  const [admissionApplicationsList, setAdmissionApplicationsList] = useState<AdmissionAppItem[]>([
-    { id: 'app1', name: 'Siddharth V', parentName: 'Vijay V', classApplied: 'GRADE - 3', status: 'Pending', date: '08-09-2026' }
-  ]);
+  const [admissionApplicationsList, setAdmissionApplicationsList] = useState<AdmissionAppItem[]>([]);
+  const [showNewAdmissionMenu, setShowNewAdmissionMenu] = useState(false);
+  const [showShareAdmissionModal, setShowShareAdmissionModal] = useState(false);
+  const [copiedAdmissionLink, setCopiedAdmissionLink] = useState(false);
+  const [appSearchQuery, setAppSearchQuery] = useState('');
+  const [appStatusFilter, setAppStatusFilter] = useState<'all' | 'Pending' | 'Approved' | 'Rejected'>('all');
+  const [selectedAppForReview, setSelectedAppForReview] = useState<any>(null);
+  const [showReviewAppModal, setShowReviewAppModal] = useState(false);
+  const [assigningAppClassId, setAssigningAppClassId] = useState('');
+  const [assigningAppAdmissionNumber, setAssigningAppAdmissionNumber] = useState('');
+  const [isApprovingApp, setIsApprovingApp] = useState(false);
+  const [isRejectingApp, setIsRejectingApp] = useState(false);
+
   const [showChangeClassModal, setShowChangeClassModal] = useState(false);
   const [selectedStudentForChange, setSelectedStudentForChange] = useState<any>(null);
   const [targetNewClass, setTargetNewClass] = useState('GRADE - 3 - A');
@@ -1614,6 +1763,8 @@ function App() {
   // Student Details Modal State
   const [showStudentDetailsModal, setShowStudentDetailsModal] = useState<boolean>(false);
   const [selectedStudentForDetails, setSelectedStudentForDetails] = useState<any>(null);
+  const [showEditStudentModal, setShowEditStudentModal] = useState<boolean>(false);
+  const [editingStudentData, setEditingStudentData] = useState<any>(null);
 
   // Export Student Directory Modal State (Image 2)
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
@@ -2228,6 +2379,181 @@ function App() {
         );
     } catch (e) {}
 
+    // 14. Classes Real-time Subscription
+    let unsubClasses: any = null;
+    try {
+      unsubClasses = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('classes')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap && !snap.empty) {
+              const cList: ClassItem[] = [];
+              snap.forEach((docSnap: any) => {
+                const d = docSnap.data();
+                cList.push({
+                  id: docSnap.id,
+                  name: d.name || '',
+                  section: d.section || '',
+                  category: d.category || d.categoryId || 'General',
+                  studentCount: d.studentCount || 0,
+                });
+              });
+              if (cList.length > 0) setClassList(cList);
+            }
+          },
+          (err: any) => console.warn('Classes subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 15. Class Categories Real-time Subscription
+    let unsubClassCategories: any = null;
+    try {
+      unsubClassCategories = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('classCategories')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap) {
+              const defaultCats = [
+                { id: 'cat_kg', name: 'KG', isDefault: true },
+                { id: 'cat_mid', name: 'Middle', isDefault: true },
+                { id: 'cat_higher', name: 'Higher Secondary', isDefault: true },
+              ];
+              const customCats: Array<{ id: string; name: string; isDefault: boolean }> = [];
+              snap.forEach((docSnap: any) => {
+                const d = docSnap.data();
+                if (d.name && !customCats.some(c => c.name.toLowerCase() === d.name.toLowerCase())) {
+                  customCats.push({
+                    id: docSnap.id,
+                    name: d.name,
+                    isDefault: !!d.isDefault,
+                  });
+                }
+              });
+              const combined = [...defaultCats];
+              customCats.forEach(cc => {
+                if (!combined.some(c => c.name.toLowerCase() === cc.name.toLowerCase())) {
+                  combined.push(cc);
+                }
+              });
+              setCategoriesList(combined);
+            }
+          },
+          (err: any) => console.warn('Categories subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 16. HR & Payroll Real-time Subscription
+    let unsubPayroll: any = null;
+    try {
+      unsubPayroll = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('payroll')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap && !snap.empty) {
+              const pList: any[] = [];
+              snap.forEach((docSnap: any) => {
+                pList.push({ id: docSnap.id, ...docSnap.data() });
+              });
+              if (pList.length > 0) setHrPayrollList(pList);
+            }
+          },
+          (err: any) => console.warn('Payroll subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 17. Calendar Real-time Subscription
+    let unsubCalendar: any = null;
+    try {
+      unsubCalendar = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('calendar')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap && !snap.empty) {
+              const evList: any[] = [];
+              snap.forEach((docSnap: any) => {
+                const d = docSnap.data();
+                evList.push({
+                  id: docSnap.id,
+                  title: d.title || d.name || 'Event',
+                  type: d.type || d.category || 'General',
+                  startDate: d.startDate || d.date || '',
+                  endDate: d.endDate || d.startDate || d.date || '',
+                  description: d.description || '',
+                  targetAudience: d.targetAudience || 'All',
+                  isHoliday: !!d.isHoliday,
+                });
+              });
+              if (evList.length > 0) setCalendarEventsList(evList);
+            }
+          },
+          (err: any) => console.warn('Calendar subscribe err:', err)
+        );
+    } catch (e) {}
+
+    // 18. Admission Applications Real-time Subscription
+    let unsubAdmissionApps: any = null;
+    try {
+      unsubAdmissionApps = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('admissionApplications')
+        .onSnapshot(
+          (snapshot: any) => {
+            if (snapshot) {
+              const list: AdmissionAppItem[] = [];
+              snapshot.forEach((docSnap: any) => {
+                const data = docSnap.data();
+                list.push({
+                  id: docSnap.id,
+                  applicationNumber: data.applicationNumber || data.appNumber || `APP-${docSnap.id.slice(0, 6).toUpperCase()}`,
+                  name: data.studentName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || 'Student Applicant',
+                  studentName: data.studentName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || 'Student Applicant',
+                  firstName: data.firstName || '',
+                  lastName: data.lastName || '',
+                  parentName: data.parentName || data.fatherName || data.guardianName || 'N/A',
+                  parentPhone: data.parentPhone || data.phone || data.mobileNumber || '',
+                  parentEmail: data.parentEmail || data.email || '',
+                  targetClassId: data.targetClassId || data.classId || '',
+                  targetClassName: data.targetClassName || data.className || data.targetClass || 'General Admission',
+                  classApplied: data.targetClassName || data.className || data.targetClass || 'General Admission',
+                  status: (data.status === 'Approved' ? 'Approved' : data.status === 'Rejected' ? 'Rejected' : 'Pending'),
+                  date: data.submittedAt ? new Date(data.submittedAt).toLocaleDateString('en-GB') : (data.createdAt ? new Date(data.createdAt).toLocaleDateString('en-GB') : 'Recent'),
+                  submittedAt: data.submittedAt || data.createdAt || '',
+                  gender: data.gender || 'Male',
+                  age: data.age ? String(data.age) : '',
+                  dob: data.dob || '',
+                  bloodGroup: data.bloodGroup || '',
+                  nationality: data.nationality || 'Indian',
+                  religion: data.religion || '',
+                  aadharNumber: data.aadharNumber || '',
+                  homeAddress: data.homeAddress || data.address || '',
+                  city: data.city || '',
+                  state: data.state || '',
+                  pincode: data.pincode || '',
+                  previousSchool: data.previousSchool || '',
+                  previousMarks: data.previousMarks || '',
+                  photoUrl: data.photoUrl || '',
+                  assignedAdmissionNumber: data.assignedAdmissionNumber || '',
+                  assignedClassId: data.assignedClassId || '',
+                  admittedAt: data.admittedAt || '',
+                });
+              });
+              list.sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
+              setAdmissionApplicationsList(list);
+            }
+          },
+          (err: any) => console.warn('Admission applications subscribe err:', err)
+        );
+    } catch (e) {}
+
     return () => {
       if (typeof unsubPeriods === 'function') unsubPeriods();
       if (typeof unsubLeaveRules === 'function') unsubLeaveRules();
@@ -2242,6 +2568,11 @@ function App() {
       if (typeof unsubPlans === 'function') unsubPlans();
       if (typeof unsubCustomModules === 'function') unsubCustomModules();
       if (typeof unsubSidebarOrder === 'function') unsubSidebarOrder();
+      if (typeof unsubClasses === 'function') unsubClasses();
+      if (typeof unsubClassCategories === 'function') unsubClassCategories();
+      if (typeof unsubPayroll === 'function') unsubPayroll();
+      if (typeof unsubCalendar === 'function') unsubCalendar();
+      if (typeof unsubAdmissionApps === 'function') unsubAdmissionApps();
     };
   }, []);
 
@@ -2608,11 +2939,11 @@ function App() {
     ]);
   };
 
-  // --- HR & Payroll Module State ---
+  // --- HR & Payroll Module State (Matching Reference Image 5) ---
   const [hrPayrollList, setHrPayrollList] = useState<any[]>([
     {
       id: 'pr1',
-      teacherId: 't1',
+      teacherId: 'st1',
       name: 'Jana D',
       role: 'Teacher',
       baseSalary: 25000,
@@ -2626,7 +2957,7 @@ function App() {
     },
     {
       id: 'pr2',
-      teacherId: 't2',
+      teacherId: 'st2',
       name: 'Ragu D',
       role: 'Head Teacher',
       baseSalary: 35000,
@@ -2642,11 +2973,372 @@ function App() {
   const [hrSearchQuery, setHrSearchQuery] = useState('');
   const [showAddHrModal, setShowAddHrModal] = useState(false);
   const [showHrSettingsModal, setShowHrSettingsModal] = useState(false);
+  const [hrSignatureFile, setHrSignatureFile] = useState<{ name: string; base64?: string } | null>(null);
+  const [isUploadingSignature, setIsUploadingSignature] = useState(false);
   const [showPayslipModalItem, setShowPayslipModalItem] = useState<any>(null);
-  const [hrStaffName, setHrStaffName] = useState('Jana D');
-  const [hrStaffRole, setHrStaffRole] = useState('Teacher');
-  const [hrBaseSalary, setHrBaseSalary] = useState('25000');
-  const [hrPaymentStatus, setHrPaymentStatus] = useState<'Pending' | 'Paid'>('Pending');
+  const [hrSelectedStaffId, setHrSelectedStaffId] = useState('');
+  const [hrStaffName, setHrStaffName] = useState('');
+  const [hrStaffRole, setHrStaffRole] = useState('');
+  const [hrBaseSalary, setHrBaseSalary] = useState('0');
+  const [hrDeductions, setHrDeductions] = useState('0');
+  const [hrPfCalculated, setHrPfCalculated] = useState(0);
+  const [hrEsiCalculated, setHrEsiCalculated] = useState(0);
+  const [hrPaymentStatus, setHrPaymentStatus] = useState<'Pending' | 'Paid' | 'Payslip Released'>('Pending');
+  const [showHrStaffDropdown, setShowHrStaffDropdown] = useState(false);
+  const [showHrStatusDropdown, setShowHrStatusDropdown] = useState(false);
+  const [isSavingPayroll, setIsSavingPayroll] = useState(false);
+
+  // --- Classes & Sections Handlers (Matching Images 2, 3, 4) ---
+  const handleSaveClass = async () => {
+    if (!newClassName.trim() || !newClassSection.trim()) {
+      Alert.alert('Required Fields', 'Please fill in Class/Grade Name and Section/Group.');
+      return;
+    }
+    const normalizedName = newClassName.trim();
+    const normalizedSection = newClassSection.trim().toUpperCase();
+
+    const isDuplicate = classList.some(
+      c => c.name.toLowerCase() === normalizedName.toLowerCase() &&
+           c.section.toLowerCase() === normalizedSection.toLowerCase() &&
+           c.id !== editingClassId
+    );
+    if (isDuplicate) {
+      Alert.alert('Duplicate Class', `Class "${normalizedName} - ${normalizedSection}" already exists.`);
+      return;
+    }
+
+    setIsSavingClass(true);
+    try {
+      if (editingClassId) {
+        await updateSubDocument('school1', 'classes', editingClassId, {
+          name: normalizedName,
+          section: normalizedSection,
+          category: newClassCategory || 'General',
+        });
+        setClassList(prev => prev.map(c => c.id === editingClassId ? {
+          ...c,
+          name: normalizedName,
+          section: normalizedSection,
+          category: newClassCategory || 'General',
+        } : c));
+        showToast('Class updated successfully');
+      } else {
+        const newClassId = await addSubDocument('school1', 'classes', {
+          name: normalizedName,
+          section: normalizedSection,
+          category: newClassCategory || 'General',
+          studentCount: 0,
+          createdAt: new Date().toISOString(),
+        });
+        setClassList(prev => [
+          ...prev,
+          {
+            id: newClassId || ('cl_' + Date.now()),
+            name: normalizedName,
+            section: normalizedSection,
+            category: newClassCategory || 'General',
+            studentCount: 0,
+          }
+        ]);
+        showToast('Class created successfully');
+      }
+      setNewClassName('');
+      setNewClassSection('');
+      setNewClassCategory('');
+      setEditingClassId(null);
+      setShowAddClassCard(false);
+    } catch (err) {
+      console.warn('Error saving class:', err);
+      showToast('Failed to save class');
+    } finally {
+      setIsSavingClass(false);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryInput.trim()) return;
+    const catName = newCategoryInput.trim();
+    if (categoriesList.some(c => c.name.toLowerCase() === catName.toLowerCase())) {
+      Alert.alert('Duplicate', 'Category already exists.');
+      return;
+    }
+    setIsAddingCategory(true);
+    try {
+      const newCatId = await addSubDocument('school1', 'classCategories', {
+        name: catName,
+        isDefault: false,
+        createdAt: new Date().toISOString(),
+      });
+      setCategoriesList(prev => [
+        ...prev,
+        { id: newCatId || ('cat_' + Date.now()), name: catName, isDefault: false }
+      ]);
+      setNewCategoryInput('');
+      showToast('Category added successfully');
+    } catch (err) {
+      console.warn('Error adding category:', err);
+      showToast('Failed to add category');
+    } finally {
+      setIsAddingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (catId: string, catName: string) => {
+    const isInUse = classList.some(c => c.category?.toLowerCase() === catName.toLowerCase());
+    if (isInUse) {
+      Alert.alert('Cannot Delete', 'This category is currently assigned to existing classes.');
+      return;
+    }
+    Alert.alert('Delete Category', `Are you sure you want to delete category "${catName}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteSubDocument('school1', 'classCategories', catId);
+            setCategoriesList(prev => prev.filter(c => c.id !== catId));
+            showToast('Category deleted');
+          } catch (err) {
+            console.warn('Error deleting category:', err);
+            showToast('Failed to delete category');
+          }
+        }
+      }
+    ]);
+  };
+
+  const handleDownloadClassTemplate = async () => {
+    const templateData = [
+      { "Class Name": "Grade 10", "Section": "A", "Category": "Higher Secondary" },
+      { "Class Name": "Grade 10", "Section": "B", "Category": "Higher Secondary" },
+      { "Class Name": "Grade 6", "Section": "A", "Category": "Middle" },
+    ];
+    await exportAndShareExcel('Class_Import_Template.xlsx', 'Classes Template', templateData, [18, 12, 18]);
+  };
+
+  const handleChooseImportFile = async () => {
+    const fileRes = await pickDocument('excel');
+    if (fileRes && fileRes.base64) {
+      setBulkImportFile({ name: fileRes.name || 'Classes_Import.xlsx', base64: fileRes.base64 });
+    }
+  };
+
+  const handleStartBulkImport = async () => {
+    if (!bulkImportFile || !bulkImportFile.base64) {
+      Alert.alert('File Required', 'Please select an Excel file first.');
+      return;
+    }
+    if (!XLSX) {
+      Alert.alert('Error', 'Excel library not available.');
+      return;
+    }
+    setIsBulkImporting(true);
+    try {
+      const workbook = XLSX.read(bulkImportFile.base64, { type: 'base64' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+      if (!jsonData || jsonData.length === 0) {
+        Alert.alert('Empty File', 'The selected file contains no class rows.');
+        setIsBulkImporting(false);
+        return;
+      }
+
+      let addedCount = 0;
+      let skippedCount = 0;
+      const newClasses: ClassItem[] = [];
+
+      for (const row of jsonData) {
+        const classNameRaw = row['Class Name'] || row['class name'] || row['Class'] || '';
+        const sectionRaw = row['Section'] || row['section'] || '';
+        const categoryRaw = row['Category'] || row['category'] || '';
+
+        const name = String(classNameRaw).trim();
+        const section = String(sectionRaw).trim().toUpperCase();
+        const cat = String(categoryRaw).trim();
+
+        if (!name || !section) {
+          skippedCount++;
+          continue;
+        }
+
+        const isDuplicate = classList.some(
+          c => c.name.toLowerCase() === name.toLowerCase() && c.section.toLowerCase() === section.toLowerCase()
+        ) || newClasses.some(
+          c => c.name.toLowerCase() === name.toLowerCase() && c.section.toLowerCase() === section.toLowerCase()
+        );
+
+        if (isDuplicate) {
+          skippedCount++;
+          continue;
+        }
+
+        // Auto-create category in Firestore if brand new
+        if (cat && !categoriesList.some(c => c.name.toLowerCase() === cat.toLowerCase())) {
+          try {
+            const catId = await addSubDocument('school1', 'classCategories', {
+              name: cat,
+              isDefault: false,
+              createdAt: new Date().toISOString(),
+            });
+            setCategoriesList(prev => [...prev, { id: catId || ('cat_' + Date.now()), name: cat, isDefault: false }]);
+          } catch (e) {}
+        }
+
+        const newId = await addSubDocument('school1', 'classes', {
+          name,
+          section,
+          category: cat || 'General',
+          studentCount: 0,
+          createdAt: new Date().toISOString(),
+        });
+
+        newClasses.push({
+          id: newId || ('cl_' + Date.now() + Math.random()),
+          name,
+          section,
+          category: cat || 'General',
+          studentCount: 0,
+        });
+        addedCount++;
+      }
+
+      if (addedCount > 0) {
+        setClassList(prev => [...prev, ...newClasses]);
+        Alert.alert('Import Complete', `Successfully imported ${addedCount} class(es). Skipped ${skippedCount} existing/invalid rows.`);
+        setBulkImportFile(null);
+        setShowClassBulkImportModal(false);
+      } else {
+        Alert.alert('Import Notice', `No new classes imported. Skipped ${skippedCount} existing/empty rows.`);
+      }
+    } catch (err: any) {
+      console.warn('Import parse error:', err);
+      Alert.alert('Error', 'Failed to parse the file. Please verify the Excel columns match the template.');
+    } finally {
+      setIsBulkImporting(false);
+    }
+  };
+
+  // --- HR & Payroll Handlers (Matching Image 5) ---
+  const handleSelectStaffForPayroll = (staffId: string) => {
+    setHrSelectedStaffId(staffId);
+    setShowHrStaffDropdown(false);
+    const staff = staffList.find(s => s.id === staffId);
+    if (staff) {
+      setHrStaffName(staff.name || '');
+      setHrStaffRole(staff.role || 'Teacher');
+    } else {
+      setHrStaffName('');
+      setHrStaffRole('');
+    }
+  };
+
+  const handleSalaryChange = (valStr: string) => {
+    setHrBaseSalary(valStr);
+    const sal = parseFloat(valStr) || 0;
+    const pf = Math.round(Math.min(sal, 15000) * 0.12);
+    const esi = Math.round(sal * 0.0075);
+    setHrPfCalculated(pf);
+    setHrEsiCalculated(esi);
+    setHrDeductions(String(pf + esi));
+  };
+
+  const handleSavePayrollRecord = async () => {
+    if (!hrSelectedStaffId && !hrStaffName.trim()) {
+      Alert.alert('Required', 'Please select a staff member.');
+      return;
+    }
+    const sal = parseFloat(hrBaseSalary) || 0;
+    const ded = parseFloat(hrDeductions) || 0;
+    const net = sal - ded;
+
+    setIsSavingPayroll(true);
+    try {
+      const newRec = {
+        teacherId: hrSelectedStaffId || ('st_' + Date.now()),
+        name: hrStaffName || 'Staff Member',
+        role: hrStaffRole || 'Staff',
+        baseSalary: sal,
+        deductions: ded,
+        pfCalculated: hrPfCalculated,
+        esiCalculated: hrEsiCalculated,
+        netPay: net,
+        month: 'September 2026',
+        status: hrPaymentStatus,
+        createdAt: new Date().toISOString(),
+      };
+      const newDocId = await addSubDocument('school1', 'payroll', newRec);
+      setHrPayrollList(prev => [{ id: newDocId || ('pr_' + Date.now()), ...newRec }, ...prev]);
+      setShowAddHrModal(false);
+      showToast('Payroll record saved successfully!');
+      // reset form
+      setHrSelectedStaffId('');
+      setHrStaffName('');
+      setHrStaffRole('');
+      setHrBaseSalary('0');
+      setHrDeductions('0');
+      setHrPfCalculated(0);
+      setHrEsiCalculated(0);
+      setHrPaymentStatus('Pending');
+    } catch (err) {
+      console.warn('Save payroll error:', err);
+      showToast('Failed to save payroll record');
+    } finally {
+      setIsSavingPayroll(false);
+    }
+  };
+
+  const handleHrBulkExport = async () => {
+    if (!hrPayrollList || hrPayrollList.length === 0) {
+      Alert.alert('Notice', 'No payroll data available to report');
+      showToast('No payroll data available to report');
+      return;
+    }
+    const exportData = hrPayrollList.map(item => ({
+      'Staff Name': item.name,
+      'Role': item.role,
+      'Base Salary (₹)': item.baseSalary,
+      'Deductions (₹)': item.deductions,
+      'Net Pay (₹)': item.netPay,
+      'Month': item.month,
+      'Status': item.status,
+    }));
+    await exportAndShareExcel('Payroll_Report.xlsx', 'Payroll Records', exportData, [22, 16, 16, 16, 16, 16, 16]);
+  };
+
+  const handleChooseSignatureFile = async () => {
+    const fileRes = await pickDocument('image');
+    if (fileRes) {
+      setHrSignatureFile({ name: fileRes.name || 'signature.png', base64: fileRes.base64 });
+    }
+  };
+
+  const handleUploadSignature = async () => {
+    if (!hrSignatureFile) {
+      Alert.alert('File Required', 'Please select a signature image first.');
+      return;
+    }
+    setIsUploadingSignature(true);
+    try {
+      if (db) {
+        try {
+          await db.collection('schools').doc(adminSchoolId).collection('config').doc('hrSettings').set({
+            hasSignature: true,
+            signatureFileName: hrSignatureFile.name,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+        } catch (e) {}
+      }
+      showToast('Authorized signature uploaded successfully!');
+      setShowHrSettingsModal(false);
+    } catch (err) {
+      showToast('Failed to upload signature');
+    } finally {
+      setIsUploadingSignature(false);
+    }
+  };
 
   // --- Chat Monitor Module State ---
   const [chatThreadsList, setChatThreadsList] = useState<any[]>([
@@ -2688,9 +3380,20 @@ function App() {
   const [chatSearchQuery, setChatSearchQuery] = useState('');
 
   // --- Timetables Module State ---
-  const [timetableClassSelected, setTimetableClassSelected] = useState('grade - 3 - Section A');
+  const [timetableClassSelected, setTimetableClassSelected] = useState(''); // Empty by default = 'Select a Class...' (Image 1 Master Timetable view)
   const [timetableMasterDay, setTimetableMasterDay] = useState('Monday');
+  const [showTimetableClassDropdown, setShowTimetableClassDropdown] = useState(false);
+  const [targetSlotDay, setTargetSlotDay] = useState('Monday');
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [isSavingTimetable, setIsSavingTimetable] = useState(false);
   const [timetablesData, setTimetablesData] = useState<any>({
+    'Grade - 10 - Section B': {
+      Monday: [],
+      Tuesday: [],
+      Wednesday: [],
+      Thursday: [],
+      Friday: [],
+    },
     'grade - 3 - Section A': {
       Monday: [
         { id: 'ts1', startTime: '09:00 AM', endTime: '10:00 AM', subject: 'Mathematics', teacher: 'Jana D' },
@@ -2731,7 +3434,7 @@ function App() {
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
-  const [calendarDate, setCalendarDate] = useState<Date>(new Date(2026, 8, 1)); // September 2026
+  const [calendarDate, setCalendarDate] = useState<Date>(() => new Date());
   const calendarCurrentMonth = `${MONTH_NAMES[calendarDate.getMonth()]} ${calendarDate.getFullYear()}`;
   const handleCalendarPrevMonth = () => {
     setCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
@@ -2741,13 +3444,125 @@ function App() {
     setCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
     setCalendarSelectedDayNum(1);
   };
+  const handleCalendarToday = () => {
+    const now = new Date();
+    setCalendarDate(now);
+    setCalendarSelectedDayNum(now.getDate());
+  };
+  const [adminCalendarPickerMode, setAdminCalendarPickerMode] = useState<'none' | 'month' | 'year'>('none');
+  const calendarYearsList = useMemo(() => Array.from({ length: 16 }, (_, i) => 2020 + i), []);
   const [calendarViewMode, setCalendarViewMode] = useState<'Day' | 'Week' | 'Month' | 'Year'>('Month');
-  const [calendarSelectedDayNum, setCalendarSelectedDayNum] = useState<number>(30);
+  const [calendarSelectedDayNum, setCalendarSelectedDayNum] = useState<number>(() => new Date().getDate());
   const [showAddEventModal, setShowAddEventModal] = useState(false);
   const [eventTitleInput, setEventTitleInput] = useState('');
-  const [eventTypeInput, setEventTypeInput] = useState<'event' | 'holiday' | 'exam'>('event');
-  const [eventStartInput, setEventStartInput] = useState('2026-09-15');
-  const [eventEndInput, setEventEndInput] = useState('2026-09-15');
+  const [isMultipleCustomDates, setIsMultipleCustomDates] = useState(false);
+  const [customDatesList, setCustomDatesList] = useState<string[]>([]);
+  const getTodayFormattedStr = () => {
+    const now = new Date();
+    const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+    return `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
+  };
+  const [eventStartDate, setEventStartDate] = useState(getTodayFormattedStr());
+  const [eventEndDate, setEventEndDate] = useState(getTodayFormattedStr());
+  const [eventTypeInput, setEventTypeInput] = useState<string>('General Event');
+  const [showEventTypeDropdown, setShowEventTypeDropdown] = useState(false);
+  const [isSavingCalendarEvent, setIsSavingCalendarEvent] = useState(false);
+
+  useEffect(() => {
+    if (activeModuleModal === 'Calendar') {
+      const now = new Date();
+      setCalendarDate(now);
+      setCalendarSelectedDayNum(now.getDate());
+      const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+      const todayStr = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
+      setEventStartDate(todayStr);
+      setEventEndDate(todayStr);
+    }
+  }, [activeModuleModal]);
+
+  const handleSaveCalendarEvent = async () => {
+    if (!eventTitleInput.trim()) {
+      Alert.alert('Required', 'Please enter event title.');
+      return;
+    }
+    setIsSavingCalendarEvent(true);
+    try {
+      const typeKey = eventTypeInput.toLowerCase().includes('holiday')
+        ? 'holiday'
+        : eventTypeInput.toLowerCase().includes('exam')
+        ? 'exam'
+        : 'event';
+      const newEv = {
+        id: `ev_${Date.now()}`,
+        title: eventTitleInput.trim(),
+        type: typeKey,
+        isCustomDates: isMultipleCustomDates,
+        customDates: isMultipleCustomDates ? customDatesList : [],
+        start: eventStartDate,
+        end: eventEndDate,
+        createdAt: new Date().toISOString(),
+      };
+      if (db) {
+        try {
+          await addSubDocument(adminSchoolId, 'calendar', newEv);
+        } catch (e) {}
+      }
+      setCalendarEventsList(prev => [newEv, ...prev]);
+      setShowAddEventModal(false);
+      showToast('Event saved successfully!');
+      setEventTitleInput('');
+      setIsMultipleCustomDates(false);
+      setCustomDatesList([]);
+      setEventStartDate('17-09-2026');
+      setEventEndDate('17-09-2026');
+      setEventTypeInput('General Event');
+    } catch (err) {
+      showToast('Failed to save event');
+    } finally {
+      setIsSavingCalendarEvent(false);
+    }
+  };
+
+  // --- Admin Attendance Module State (Matching Reference Images 3 & 4) ---
+  const [adminAttClass, setAdminAttClass] = useState('Grade - 10 - Section B');
+  const [adminAttViewMode, setAdminAttViewMode] = useState<'Daily Marking' | 'This Week Report' | 'This Month Report' | 'This Term Report'>('Daily Marking');
+  const [adminAttDate, setAdminAttDate] = useState('17-09-2026');
+  const [adminAttSession, setAdminAttSession] = useState<'FN (Forenoon)' | 'AN (Afternoon)'>('FN (Forenoon)');
+  const [adminAttSearchQuery, setAdminAttSearchQuery] = useState('');
+  const [adminAttRecords, setAdminAttRecords] = useState<Record<string, 'Present' | 'Absent' | 'Late'>>({
+    'st_abi': 'Late',
+    'st_balu': 'Late',
+  });
+  const [showAdminAttClassPicker, setShowAdminAttClassPicker] = useState(false);
+  const [showAdminAttModePicker, setShowAdminAttModePicker] = useState(false);
+  const [showAdminAttSessionPicker, setShowAdminAttSessionPicker] = useState(false);
+  const [adminAttAnalyticsDate, setAdminAttAnalyticsDate] = useState('17-09-2026');
+  const [adminAttRepeatedClassFilter, setAdminAttRepeatedClassFilter] = useState('All Classes');
+  const [showAdminAttAnalyticsClassDropdown, setShowAdminAttAnalyticsClassDropdown] = useState(false);
+  const [isSavingAdminAttendance, setIsSavingAdminAttendance] = useState(false);
+
+  const handleSaveAdminAttendance = async () => {
+    setIsSavingAdminAttendance(true);
+    try {
+      if (db) {
+        try {
+          const attendanceKey = `${adminAttDate}_${adminAttSession.startsWith('FN') ? 'FN' : 'AN'}`;
+          await db.collection('schools').doc(adminSchoolId).collection('attendance').doc(`${adminAttClass}_${attendanceKey}`).set({
+            class: adminAttClass,
+            date: adminAttDate,
+            session: adminAttSession,
+            records: adminAttRecords,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+        } catch (e) {}
+      }
+      showToast('Attendance saved successfully!');
+    } catch (err) {
+      showToast('Failed to save attendance');
+    } finally {
+      setIsSavingAdminAttendance(false);
+    }
+  };
 
   // --- Exams & Results Module State ---
   const [examActiveSubTab, setExamActiveSubTab] = useState<'manage' | 'reports'>('manage');
@@ -2777,19 +3592,94 @@ function App() {
   const [newExamName, setNewExamName] = useState('');
   const [newExamType, setNewExamType] = useState('Custom Exam');
   const [newExamSubject, setNewExamSubject] = useState('English');
-  const [newExamMaxMarks, setNewExamMaxMarks] = useState('50');
-  const [newExamStartDate, setNewExamStartDate] = useState('28/08/2026');
-  const [newExamEndDate, setNewExamEndDate] = useState('28/08/2026');
+  const [newExamMaxMarks, setNewExamMaxMarks] = useState('100');
+  const [newExamStartDate, setNewExamStartDate] = useState('2026-08-28');
+  const [newExamEndDate, setNewExamEndDate] = useState('2026-08-28');
 
-  const [reportSelectedExam, setReportSelectedExam] = useState('Terminal Assessment - 1');
-  const [reportSelectedClass, setReportSelectedClass] = useState('grade - 3 - Section A');
+  const [reportSelectedExam, setReportSelectedExam] = useState('');
+  const [reportSelectedClass, setReportSelectedClass] = useState('');
+  const [showExamDropdown, setShowExamDropdown] = useState(false);
+  const [showClassDropdown, setShowClassDropdown] = useState(false);
+  const [hasGeneratedReportView, setHasGeneratedReportView] = useState(false);
+  const [showTemplateBuilderModal, setShowTemplateBuilderModal] = useState(false);
+
+  // Template Builder State
+  const [reportTemplate, setReportTemplate] = useState({
+    themeColor: '#b07fa8',
+    header: {
+      showLogo: true,
+      showAddress: true,
+      showAffiliation: true,
+      title: 'PROGRESS REPORT',
+      subtitle: 'Academic Session 2024-2025',
+    },
+    studentFields: {
+      admissionNo: true,
+      dob: true,
+      fatherName: true,
+      motherName: true,
+      attendance: true,
+    },
+    grading: {
+      style: 'marks_and_grades',
+      showTotal: true,
+      showPercentage: true,
+    },
+    gradingScaleText: 'A1: 91-100 | A2: 81-90 | B1: 71-80 | B2: 61-70 | C1: 51-60 | C2: 41-50 | D: 33-40 | E: Below 33',
+    remarks: true,
+  });
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
   const [generatedReportCards, setGeneratedReportCards] = useState<any[]>([
-    { id: 'r1', studentName: 'Ahamed Tamzil', rollNo: 'ADM-005', marksObtained: 42, maxMarks: 50, percentage: 84, grade: 'A' },
-    { id: 'r2', studentName: 'pavithran a', rollNo: '002', marksObtained: 45, maxMarks: 50, percentage: 90, grade: 'A+' },
+    {
+      id: 'r1',
+      studentName: 'Ahamed Tamzil',
+      rollNo: 'ADM-005',
+      admissionNo: 'ADM-005',
+      dob: '20-Aug-2016',
+      fatherName: 'Tamzil M',
+      motherName: 'Fatima T',
+      attendance: '94%',
+      marksObtained: 42,
+      maxMarks: 50,
+      percentage: 84,
+      grade: 'A',
+      subjects: [
+        { name: 'English', maxMarks: 100, marksObt: 85, grade: 'A2' },
+        { name: 'Mathematics', maxMarks: 100, marksObt: 92, grade: 'A1' },
+        { name: 'Science', maxMarks: 100, marksObt: 78, grade: 'B1' },
+        { name: 'Social Studies', maxMarks: 100, marksObt: 88, grade: 'A2' },
+        { name: 'Computer Science', maxMarks: 100, marksObt: 95, grade: 'A1' },
+      ],
+      remarks: 'Good academic performance throughout the term. Keep up the good work!',
+    },
+    {
+      id: 'r2',
+      studentName: 'pavithran a',
+      rollNo: '002',
+      admissionNo: '002',
+      dob: '12-May-2019',
+      fatherName: 'Arun A',
+      motherName: 'Priya A',
+      attendance: '96%',
+      marksObtained: 45,
+      maxMarks: 50,
+      percentage: 90,
+      grade: 'A+',
+      subjects: [
+        { name: 'English', maxMarks: 100, marksObt: 91, grade: 'A1' },
+        { name: 'Mathematics', maxMarks: 100, marksObt: 95, grade: 'A1' },
+        { name: 'Science', maxMarks: 100, marksObt: 89, grade: 'A2' },
+        { name: 'Social Studies', maxMarks: 100, marksObt: 86, grade: 'A2' },
+        { name: 'Computer Science', maxMarks: 100, marksObt: 98, grade: 'A1' },
+      ],
+      remarks: 'Outstanding performance. High potential in analytics and reasoning.',
+    },
   ]);
 
   // --- Homework Module State ---
   const [hwClassFilter, setHwClassFilter] = useState<string>('');
+  const [showAdminHwClassDropdown, setShowAdminHwClassDropdown] = useState<boolean>(false);
   const [hwTrackingModal, setHwTrackingModal] = useState(false);
   const [hwSelected, setHwSelected] = useState<any>(null);
   const adminHomeworkList: any[] = []; // Empty — matches web "No homework found" empty state
@@ -2827,24 +3717,45 @@ function App() {
   const [librarySearch, setLibrarySearch] = useState('');
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [showIssueBookModal, setShowIssueBookModal] = useState(false);
-  const [newBookForm, setNewBookForm] = useState({ title: '', author: '', isbn: '', category: 'Fiction', totalQuantity: '1' });
-  const [issueBookForm, setIssueBookForm] = useState({ bookId: '', studentName: '', dueDate: '' });
-  const libraryBooksList: any[] = [
-    { id: 'm1', title: 'To Kill a Mockingbird', author: 'Harper Lee', category: 'FICTION', isbn: '978-0060935467', available: 5, total: 5 },
-    { id: 'm2', title: '1984', author: 'George Orwell', category: 'FICTION', isbn: '978-0451524935', available: 3, total: 3 },
-    { id: 'm3', title: 'The Great Gatsby', author: 'F. Scott Fitzgerald', category: 'FICTION', isbn: '978-0743273565', available: 4, total: 4 },
-    { id: 'm4', title: 'A Brief History of Time', author: 'Stephen Hawking', category: 'SCIENCE', isbn: '978-0553380163', available: 2, total: 2 },
-    { id: 'm5', title: 'The Catcher in the Rye', author: 'J.D. Salinger', category: 'FICTION', isbn: '978-0316769488', available: 6, total: 6 },
-    { id: 'm6', title: 'Pride and Prejudice', author: 'Jane Austen', category: 'FICTION', isbn: '978-0141439518', available: 3, total: 3 },
-    { id: 'm7', title: 'Introduction to Algorithms', author: 'Thomas H. Cormen', category: 'COMPUTER SCIENCE', isbn: '978-0262033848', available: 2, total: 2 },
-    { id: 'm8', title: 'The Hobbit', author: 'J.R.R. Tolkien', category: 'FANTASY', isbn: '978-0547928227', available: 4, total: 4 },
-    { id: 'm9', title: 'Principles of Physics', author: 'David Halliday', category: 'SCIENCE', isbn: '978-1118230725', available: 5, total: 5 },
-    { id: 'm10', title: 'Sapiens', author: 'Yuval Noah Harari', category: 'HISTORY', isbn: '978-0062316097', available: 3, total: 3 },
-  ];
+  const [libraryCategoriesList, setLibraryCategoriesList] = useState<string[]>([
+    'General',
+    'Fiction',
+    'Science',
+    'Computer Science',
+    'Fantasy',
+    'History',
+    'Mathematics',
+  ]);
+  const [showBookCategoryDropdown, setShowBookCategoryDropdown] = useState(false);
+  const [showAddCategoryInline, setShowAddCategoryInline] = useState(false);
+  const [newBookCategoryInput, setNewBookCategoryInput] = useState('');
+
+  const [newBookForm, setNewBookForm] = useState({ title: '', author: '', isbn: '', category: 'General', totalQuantity: '1' });
+  const [libraryBooksList, setLibraryBooksList] = useState<any[]>([
+    { id: 'm1', title: 'To Kill a Mockingbird', author: 'Harper Lee', category: 'Fiction', isbn: '978-0060935467', available: 5, total: 5 },
+    { id: 'm2', title: '1984', author: 'George Orwell', category: 'Fiction', isbn: '978-0451524935', available: 3, total: 3 },
+    { id: 'm3', title: 'The Great Gatsby', author: 'F. Scott Fitzgerald', category: 'Fiction', isbn: '978-0743273565', available: 4, total: 4 },
+    { id: 'm4', title: 'A Brief History of Time', author: 'Stephen Hawking', category: 'Science', isbn: '978-0553380163', available: 2, total: 2 },
+    { id: 'm5', title: 'The Catcher in the Rye', author: 'J.D. Salinger', category: 'Fiction', isbn: '978-0316769488', available: 6, total: 6 },
+    { id: 'm6', title: 'Pride and Prejudice', author: 'Jane Austen', category: 'Fiction', isbn: '978-0141439518', available: 3, total: 3 },
+    { id: 'm7', title: 'Introduction to Algorithms', author: 'Thomas H. Cormen', category: 'Computer Science', isbn: '978-0262033848', available: 2, total: 2 },
+    { id: 'm8', title: 'The Hobbit', author: 'J.R.R. Tolkien', category: 'Fantasy', isbn: '978-0547928227', available: 4, total: 4 },
+    { id: 'm9', title: 'Principles of Physics', author: 'David Halliday', category: 'Science', isbn: '978-1118230725', available: 5, total: 5 },
+    { id: 'm10', title: 'Sapiens', author: 'Yuval Noah Harari', category: 'History', isbn: '978-0062316097', available: 3, total: 3 },
+  ]);
   const [issuedBooksList, setIssuedBooksList] = useState<any[]>([]);
 
+  // Issue Book State
+  const [issueSelectedBookId, setIssueSelectedBookId] = useState('');
+  const [issueSelectedClass, setIssueSelectedClass] = useState('');
+  const [issueSelectedStudent, setIssueSelectedStudent] = useState('');
+  const [issueDueDate, setIssueDueDate] = useState('');
+  const [showIssueBookDropdown, setShowIssueBookDropdown] = useState(false);
+  const [showIssueClassDropdown, setShowIssueClassDropdown] = useState(false);
+  const [showIssueStudentDropdown, setShowIssueStudentDropdown] = useState(false);
+
   // --- Inventory & Assets Module State ---
-  const adminSchoolId = 'school1';
+  const [adminSchoolId, setAdminSchoolId] = useState<string>('school1');
   const [inventoryItemsList, setInventoryItemsList] = useState<any[]>([]);
   const [inventoryCategoriesList, setInventoryCategoriesList] = useState<any[]>([
     { id: 'cat_1', name: 'Electronics', description: 'Computers, projectors, lab gadgets' },
@@ -4041,6 +4952,36 @@ function App() {
     setUnifiedModulesList(combined);
   }, [customModulesList, sidebarOrderList]);
 
+  const CORE_FORM_MODULES = [
+    { id: 'staff', name: 'Staff Directory' },
+    { id: 'students', name: 'Student Directory' },
+    { id: 'inventory', name: 'Inventory Management' },
+    { id: 'hr-payroll', name: 'HR & Payroll' },
+    { id: 'timetables', name: 'Timetables' },
+    { id: 'exams', name: 'Exams & Results' },
+    { id: 'fees', name: 'Fees & Payments' },
+    { id: 'transport', name: 'Transport' },
+    { id: 'library', name: 'Library' },
+    { id: 'environment_setup', name: 'Environment Setup' },
+  ];
+
+  const FORM_FIELD_TYPES = [
+    { value: 'text', label: 'Text Input' },
+    { value: 'number', label: 'Number Input' },
+    { value: 'email', label: 'Email Input' },
+    { value: 'date', label: 'Date Picker' },
+    { value: 'select', label: 'Dropdown (Select)' },
+    { value: 'checkbox', label: 'Checkbox' },
+    { value: 'relation', label: 'Relation (Lookup)' },
+    { value: 'file', label: 'File Upload' },
+  ];
+
+  const [selectedCustomModuleId, setSelectedCustomModuleId] = useState('staff');
+  const [isSavingSchema, setIsSavingSchema] = useState(false);
+  const [isLoadingSchema, setIsLoadingSchema] = useState(false);
+  const [activeFieldTypePicker, setActiveFieldTypePicker] = useState<{ secId: string; fieldId: string } | null>(null);
+  const [activeRelationPicker, setActiveRelationPicker] = useState<{ secId: string; fieldId: string } | null>(null);
+
   const SCHEMA_MODULE_LIST = [
     'Staff Directory',
     'Student Directory',
@@ -4058,6 +4999,12 @@ function App() {
   const [showAddFieldModal, setShowAddFieldModal] = useState(false);
   const [targetSectionIdForField, setTargetSectionIdForField] = useState('');
   const [newFieldData, setNewFieldData] = useState({ label: '', type: 'text', required: false });
+
+  useEffect(() => {
+    if (activeModuleModal === 'Custom Modules' || activeModuleModal === 'Module Customization') {
+      loadModuleSchema(selectedCustomModuleId);
+    }
+  }, [activeModuleModal, selectedCustomModuleId]);
 
   // --- Roles & Permissions State (Pic 4 Matching) ---
   const DEFAULT_ROLES_LIST = [
@@ -4226,19 +5173,28 @@ function App() {
   useEffect(() => {
     const checkSavedSession = async () => {
       try {
-        const savedSession = await AsyncStorage.getItem('@zuna_user_session');
-        if (savedSession) {
-          const sessionData = JSON.parse(savedSession);
-          if (sessionData && sessionData.loggedIn) {
-            const restoredRole = (sessionData.role || 'Admin') as Role;
-            setActiveRole(restoredRole);
-            setSelectedDemoRole(restoredRole);
-            if (sessionData.email) {
-              setLoginEmail(sessionData.email);
-            }
-            setIsLoggedIn(true);
-            if (restoredRole === 'Admin') {
-              setActiveAdminTab('Dashboard');
+        const seenOnboarding = await AsyncStorage.getItem('@zuna_has_seen_onboarding');
+        if (seenOnboarding !== 'true') {
+          setShowOnboarding(true);
+          setIsLoggedIn(false);
+        } else {
+          setShowOnboarding(false);
+          const savedSession = await AsyncStorage.getItem('@zuna_user_session');
+          if (savedSession) {
+            const sessionData = JSON.parse(savedSession);
+            if (sessionData && sessionData.loggedIn) {
+              const restoredRole = (sessionData.role || 'Admin') as Role;
+              setActiveRole(restoredRole);
+              setSelectedDemoRole(restoredRole);
+              if (sessionData.email) {
+                setLoginEmail(sessionData.email);
+              }
+              setIsLoggedIn(true);
+              if (restoredRole === 'Teacher') {
+                setActiveStaffTab('Dashboard');
+              } else if (restoredRole === 'Admin') {
+                setActiveAdminTab('Dashboard');
+              }
             }
           }
         }
@@ -4247,7 +5203,7 @@ function App() {
       } finally {
         setTimeout(() => {
           setIsSplashVisible(false);
-        }, 1000);
+        }, 800);
       }
     };
     checkSavedSession();
@@ -5726,40 +6682,155 @@ function App() {
   );
 
 
-  // --- Auth Handlers ---
+  // --- Auth Handlers (Real Firebase Authentication) ---
   const handleLoginSubmit = async () => {
-    if (!loginEmail.trim()) {
+    const rawIdentifier = (loginEmail || '').trim();
+    const rawPassword = (loginPassword || '');
+    if (!rawIdentifier) {
       Alert.alert('Authentication Error', 'Please enter your email or admission number.');
       return;
     }
-    if (!loginPassword) {
+    if (!rawPassword) {
       Alert.alert('Authentication Error', 'Please enter your password.');
       return;
     }
 
     setIsLoggingIn(true);
-    setTimeout(async () => {
-      setIsLoggingIn(false);
-      const emailLower = (loginEmail || '').trim().toLowerCase();
+    try {
+      let authUser: any = null;
 
-      let detectedRole: Role = activeRole;
-      if (emailLower.includes('teacher') || emailLower.includes('staff')) {
-        detectedRole = 'Teacher';
-      } else if (emailLower.includes('student') || activeRole === 'Student' || selectedDemoRole === 'Student') {
-        detectedRole = 'Student';
-      } else if (emailLower.includes('admin')) {
-        detectedRole = 'Admin';
-      } else {
-        detectedRole = activeRole || 'Admin';
+      // 1. Try Firebase Authentication with email or synthetic parent email
+      if (auth) {
+        try {
+          if (rawIdentifier.includes('@')) {
+            const userCred = await auth.signInWithEmailAndPassword(rawIdentifier, rawPassword);
+            authUser = userCred.user;
+          } else {
+            // Reconstruct synthetic email for student admission number (identical to website auth.js!)
+            const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
+            const userCred = await auth.signInWithEmailAndPassword(syntheticEmail, rawPassword);
+            authUser = userCred.user;
+          }
+        } catch (authErr: any) {
+          console.warn('signInWithEmailAndPassword error:', authErr?.code, authErr?.message);
+          // If account doesn't exist in Firebase Auth yet, check if they exist in school teachers or students collections
+          if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/invalid-login-credentials') {
+            if (rawIdentifier.includes('@') && db) {
+              // Check teachers collection across schools
+              const teacherSnap = await db.collection('schools').doc(adminSchoolId || 'school1')
+                .collection('teachers')
+                .where('email', '==', rawIdentifier)
+                .get();
+
+              if (!teacherSnap.empty) {
+                const teacherDocData = teacherSnap.docs[0].data();
+                try {
+                  const newCred = await auth.createUserWithEmailAndPassword(rawIdentifier, rawPassword);
+                  authUser = newCred.user;
+                  const isTeaching = teacherDocData.staff_type === 'teaching' || teacherDocData.role === 'teacher';
+                  const roleToSet = isTeaching ? 'teacher' : 'staff';
+                  await db.collection('users').doc(authUser.uid).set({
+                    email: rawIdentifier,
+                    role: roleToSet,
+                    schoolId: adminSchoolId || 'school1',
+                    name: teacherDocData.name || rawIdentifier,
+                    createdAt: new Date().toISOString(),
+                  }, { merge: true });
+                  await db.collection('schools').doc(adminSchoolId || 'school1')
+                    .collection('teachers').doc(teacherSnap.docs[0].id)
+                    .set({ userId: authUser.uid, status: 'Active' }, { merge: true });
+                } catch (regErr: any) {
+                  console.warn('Teacher auto-provision error:', regErr);
+                }
+              }
+            } else if (!rawIdentifier.includes('@') && db) {
+              // Check students collection for admission number
+              const studentSnap = await db.collection('schools').doc(adminSchoolId || 'school1')
+                .collection('students')
+                .where('admissionNumber', '==', rawIdentifier)
+                .get();
+
+              if (!studentSnap.empty) {
+                const studentDocData = studentSnap.docs[0].data();
+                const validDob = (studentDocData.dob || '').replace(/[^0-9]/g, '');
+                const inputClean = rawPassword.replace(/[^0-9]/g, '');
+                const matchesDob = validDob && inputClean && (validDob === inputClean || studentDocData.dob === rawPassword);
+                const isAcceptablePassword = rawPassword === 'password123' || matchesDob || rawPassword.length >= 6;
+
+                if (isAcceptablePassword) {
+                  try {
+                    const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
+                    const newCred = await auth.createUserWithEmailAndPassword(syntheticEmail, rawPassword);
+                    authUser = newCred.user;
+                    await db.collection('users').doc(authUser.uid).set({
+                      email: syntheticEmail,
+                      role: 'parent',
+                      schoolId: adminSchoolId || 'school1',
+                      studentAdmissionNumber: rawIdentifier,
+                      name: studentDocData.parentName || studentDocData.name || rawIdentifier,
+                      createdAt: new Date().toISOString(),
+                    }, { merge: true });
+                  } catch (regErr: any) {
+                    console.warn('Student auto-provision error:', regErr);
+                  }
+                }
+              }
+            }
+          }
+
+          if (!authUser) {
+            let userMsg = 'Invalid email/admission number or password.';
+            if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/invalid-login-credentials') {
+              userMsg = 'Incorrect password. Please try again.';
+            } else if (authErr?.code === 'auth/user-not-found') {
+              userMsg = 'No account found. Please check your credentials or contact administrator.';
+            } else if (authErr?.code === 'auth/too-many-requests') {
+              userMsg = 'Too many attempts. Please wait a moment and try again.';
+            }
+            Alert.alert('Authentication Failed', userMsg);
+            setIsLoggingIn(false);
+            return;
+          }
+        }
       }
 
-      // Check credentials for Student role
-      if (detectedRole === 'Student') {
-        // Enforce valid student password / authentication
-        if (loginPassword !== 'password123' && loginPassword.length < 4) {
-          Alert.alert('Authentication Failed', 'Invalid credentials. Please enter a valid student admission number or registered email and password.');
-          return;
+      // 2. Fetch User Profile from Firestore users collection
+      let profileData: any = null;
+      if (authUser && db) {
+        try {
+          const userDoc = await db.collection('users').doc(authUser.uid).get();
+          if (userDoc.exists) {
+            profileData = userDoc.data();
+          }
+        } catch (e) {
+          console.warn('Error reading user profile:', e);
         }
+      }
+
+      // 3. Resolve Role matching website logic:
+      let detectedRole: Role = 'Admin';
+      const roleStr = (profileData?.role || '').toLowerCase();
+      const loginPanel = (profileData?.loginPanel || '').toLowerCase();
+
+      if (loginPanel === 'teacher' || roleStr === 'teacher' || roleStr === 'staff') {
+        detectedRole = 'Teacher';
+      } else if (loginPanel === 'parent' || roleStr === 'parent' || roleStr === 'student') {
+        detectedRole = 'Student';
+      } else if (roleStr === 'admin' || roleStr === 'superadmin') {
+        detectedRole = 'Admin';
+      } else {
+        const emailLower = (rawIdentifier || '').toLowerCase();
+        if (emailLower.includes('teacher') || emailLower.includes('staff')) {
+          detectedRole = 'Teacher';
+        } else if (!emailLower.includes('@') || emailLower.includes('student') || emailLower.includes('parent')) {
+          detectedRole = 'Student';
+        } else {
+          detectedRole = 'Admin';
+        }
+      }
+
+      if (profileData?.schoolId) {
+        setAdminSchoolId(profileData.schoolId);
       }
 
       setActiveRole(detectedRole);
@@ -5776,27 +6847,54 @@ function App() {
         try {
           await AsyncStorage.setItem(
             '@zuna_user_session',
-            JSON.stringify({ loggedIn: true, role: detectedRole, email: loginEmail.trim() })
+            JSON.stringify({
+              loggedIn: true,
+              role: detectedRole,
+              email: rawIdentifier,
+              uid: authUser?.uid || '',
+            })
           );
         } catch (e) {}
       }
+
       showToast(`Welcome back! Authenticated as ${detectedRole}`);
-    }, 600);
+    } catch (error: any) {
+      console.warn('Login exception:', error);
+      Alert.alert('Login Error', error?.message || 'Failed to authenticate. Please check your credentials.');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
-  const handleDemoQuickLogin = (role: Role) => {
+  const handleDemoQuickLogin = async (role: Role) => {
     const demoEmail = role === 'Admin' ? 'admin@zuna.edu' : role === 'Teacher' ? 'teacher@zuna.edu' : 'student@zuna.edu';
     setLoginEmail(demoEmail);
     setActiveRole(role);
     setSelectedDemoRole(role);
     setLoginPassword('password123');
     setIsLoggedIn(true);
+
     if (role === 'Teacher') {
       setActiveStaffTab('Dashboard');
     } else if (role === 'Admin') {
       setActiveAdminTab('Dashboard');
     }
-    showToast(`Welcome back! Authenticated as ${role}`);
+
+    if (rememberMe) {
+      try {
+        await AsyncStorage.setItem(
+          '@zuna_user_session',
+          JSON.stringify({
+            loggedIn: true,
+            role,
+            email: demoEmail,
+            uid: `quick_${role.toLowerCase()}`,
+          })
+        );
+      } catch (e) {}
+    }
+    const roleLabel = role === 'Teacher' ? 'Teacher/Staff' : role === 'Student' ? 'Student/Parent' : 'Admin';
+    showToast(`Quick login as ${roleLabel}`);
   };
 
   const handleLogout = async () => {
@@ -5946,22 +7044,75 @@ function App() {
     if (!selectedStudentForChange) return;
     const newClass = targetNewClass.trim() || 'PRE KG - A';
     setDirectoryStudents(prev =>
-      prev.map(s => (s.id === selectedStudentForChange.id ? { ...s, gradeClass: newClass } : s))
+      prev.map(s => (s.id === selectedStudentForChange.id ? { ...s, gradeClass: newClass, className: newClass, classId: newClass } : s))
     );
     setStudents(prev =>
       prev.map(s => (s.id === selectedStudentForChange.id || s.name === selectedStudentForChange.name ? { ...s, grade: newClass } : s))
     );
-    if (db) {
+    if (typeof updateSubDocument === 'function') {
       try {
-        await db.collection('schools').doc('school1').collection('students').doc(selectedStudentForChange.id).update({
+        await updateSubDocument(adminSchoolId || 'school1', 'students', selectedStudentForChange.id, {
           gradeClass: newClass,
           className: newClass,
+          classId: newClass,
           updatedAt: new Date().toISOString(),
         });
       } catch (e) {}
     }
     setShowChangeClassModal(false);
     showToast(`Updated class for ${selectedStudentForChange.name} to ${newClass}`);
+  };
+
+  const handleSaveStudentEdit = async () => {
+    if (!editingStudentData) return;
+    if (!editingStudentData.firstName?.trim()) {
+      Alert.alert('Required Information', 'Please enter student First Name.');
+      return;
+    }
+    if (!validateName(editingStudentData.firstName.trim())) {
+      Alert.alert('Invalid Name', 'First name must contain letters only.');
+      return;
+    }
+    if (editingStudentData.lastName?.trim() && !validateName(editingStudentData.lastName.trim())) {
+      Alert.alert('Invalid Name', 'Last name must contain letters only.');
+      return;
+    }
+    const fullName = `${editingStudentData.firstName.trim()} ${editingStudentData.lastName?.trim() || ''}`.trim();
+    const updatedData: any = {
+      firstName: editingStudentData.firstName.trim(),
+      lastName: (editingStudentData.lastName || '').trim(),
+      name: fullName,
+      gradeClass: editingStudentData.gradeClass || 'PRE KG - A',
+      className: editingStudentData.gradeClass || 'PRE KG - A',
+      classId: editingStudentData.gradeClass || 'PRE KG - A',
+      dob: editingStudentData.dob || '',
+      gender: editingStudentData.gender || 'Male',
+      parentName: (editingStudentData.parentName || '').trim(),
+      parentPhone: (editingStudentData.parentPhone || '').trim(),
+      parentEmail: (editingStudentData.parentEmail || '').trim(),
+      homeAddress: (editingStudentData.homeAddress || '').trim(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (typeof updateSubDocument === 'function') {
+      try {
+        await updateSubDocument(adminSchoolId || 'school1', 'students', editingStudentData.id, updatedData);
+      } catch (e) {
+        console.warn('Update student Firestore error:', e);
+      }
+    }
+
+    setDirectoryStudents(prev =>
+      prev.map(s => (s.id === editingStudentData.id ? { ...s, ...updatedData } : s))
+    );
+    setStudents(prev =>
+      prev.map(s => (s.id === editingStudentData.id || s.name === editingStudentData.name ? { ...s, name: fullName, grade: updatedData.gradeClass } : s))
+    );
+    if (selectedStudentForDetails && selectedStudentForDetails.id === editingStudentData.id) {
+      setSelectedStudentForDetails((p: any) => ({ ...p, ...updatedData }));
+    }
+    setShowEditStudentModal(false);
+    showToast(`Updated student profile for ${fullName}`);
   };
 
   const handleDeleteStudent = (student: any) => {
@@ -6219,13 +7370,17 @@ function App() {
     ]);
   };
 
-  const handleAdmitStudentSubmit = () => {
-    if (!admitStudentForm.firstName.trim() || !admitStudentForm.lastName.trim()) {
-      Alert.alert('Required Information', 'Please enter student First Name and Last Name.');
+  const handleAdmitStudentSubmit = async () => {
+    if (!admitStudentForm.firstName.trim()) {
+      Alert.alert('Required Information', 'Please enter student First Name.');
       return;
     }
-    if (!validateName(admitStudentForm.firstName.trim()) || !validateName(admitStudentForm.lastName.trim())) {
-      Alert.alert('Invalid Name', 'First and Last names must contain letters only (no numbers).');
+    if (!validateName(admitStudentForm.firstName.trim())) {
+      Alert.alert('Invalid Name', 'First name must contain letters only.');
+      return;
+    }
+    if (admitStudentForm.lastName.trim() && !validateName(admitStudentForm.lastName.trim())) {
+      Alert.alert('Invalid Name', 'Last name must contain letters only.');
       return;
     }
     if (!admitStudentForm.dob) {
@@ -6253,22 +7408,47 @@ function App() {
       return;
     }
 
-    const fullName = `${admitStudentForm.firstName.trim()} ${admitStudentForm.lastName.trim()}`;
-    const newDirStudent = {
-      id: 'dir_' + Date.now(),
+    const fullName = `${admitStudentForm.firstName.trim()} ${admitStudentForm.lastName.trim()}`.trim();
+    const studentData: any = {
+      firstName: admitStudentForm.firstName.trim(),
+      lastName: admitStudentForm.lastName.trim(),
       name: fullName,
+      admissionNumber: admitStudentForm.admissionNumber.trim(),
       admissionNo: admitStudentForm.admissionNumber.trim(),
+      classId: admitStudentForm.classId || 'PRE KG - A',
       gradeClass: admitStudentForm.classId || 'PRE KG - A',
-      attachment: 'No attachment',
+      className: admitStudentForm.classId || 'PRE KG - A',
       gender: admitStudentForm.gender || 'Male',
       dob: admitStudentForm.dob,
-      parentName: admitStudentForm.parentName,
-      parentEmail: admitStudentForm.parentEmail,
-      parentPhone: admitStudentForm.parentPhone,
+      parentName: admitStudentForm.parentName ? admitStudentForm.parentName.trim() : '',
+      parentEmail: admitStudentForm.parentEmail ? admitStudentForm.parentEmail.trim() : '',
+      parentPhone: admitStudentForm.parentPhone ? admitStudentForm.parentPhone.trim() : '',
+      homeAddress: admitStudentForm.homeAddress ? admitStudentForm.homeAddress.trim() : '',
+      emergencyContact: admitStudentForm.emergencyContact ? admitStudentForm.emergencyContact.trim() : '',
+      aadharNumber: admitStudentForm.aadharNumber ? admitStudentForm.aadharNumber.trim() : '',
+      status: 'Active',
+      feePaid: true,
+      attachment: admitStudentForm.photo ? admitStudentForm.photo.name : 'No attachment',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    let docId = 'dir_' + Date.now();
+    if (typeof addSubDocument === 'function') {
+      try {
+        docId = await addSubDocument(adminSchoolId || 'school1', 'students', studentData);
+      } catch (e) {
+        console.warn('Student admission Firestore error:', e);
+      }
+    }
+
+    const newDirStudent = {
+      id: docId,
+      ...studentData,
     };
 
     const newStudent: StudentItem = {
-      id: Date.now().toString(),
+      id: docId,
       name: fullName,
       grade: admitStudentForm.classId || 'PRE KG - A',
       rollNo: admitStudentForm.admissionNumber.trim(),
@@ -6297,6 +7477,168 @@ function App() {
 
   const handleRegisterStudentSubmit = () => {
     handleAdmitStudentSubmit();
+  };
+
+  // --- Admission Application Workflow Handlers ---
+  const handleOpenReviewAppModal = (app: any) => {
+    setSelectedAppForReview(app);
+    const matchingClass = classList.find(c => 
+      c.id === app.targetClassId || 
+      `${c.name} - ${c.section}`.toLowerCase() === (app.targetClassName || '').toLowerCase()
+    );
+    const initialClassId = matchingClass ? matchingClass.id : (classList[0]?.id || 'cl1');
+    setAssigningAppClassId(initialClassId);
+
+    const year = new Date().getFullYear();
+    const existingNums = directoryStudents
+      .map(s => parseInt((s.admissionNo || s.admissionNumber || '').replace(/\D/g, '')))
+      .filter(n => !isNaN(n));
+    const maxNum = existingNums.length > 0 ? Math.max(...existingNums) : directoryStudents.length;
+    const nextSeq = (maxNum + 1).toString().padStart(3, '0');
+    setAssigningAppAdmissionNumber(app.assignedAdmissionNumber || `ADM-${year}-${nextSeq}`);
+    setShowReviewAppModal(true);
+  };
+
+  const handleApproveAdmissionApplication = async () => {
+    if (!selectedAppForReview) return;
+    const app = selectedAppForReview;
+    const targetSchool = adminSchoolId || 'school1';
+
+    const finalAdmNumber = (assigningAppAdmissionNumber || '').trim();
+    if (!finalAdmNumber) {
+      Alert.alert('Validation Error', 'Please enter a valid Admission Number.');
+      return;
+    }
+
+    const isDuplicate = directoryStudents.some(
+      s => (s.admissionNo || s.admissionNumber || '').toLowerCase() === finalAdmNumber.toLowerCase()
+    );
+    if (isDuplicate) {
+      Alert.alert('Duplicate', `Admission number "${finalAdmNumber}" is already in use by another student.`);
+      return;
+    }
+
+    setIsApprovingApp(true);
+    try {
+      const targetCls = classList.find(c => c.id === assigningAppClassId || c.name === assigningAppClassId);
+      const targetClassStr = targetCls ? `${targetCls.name} - ${targetCls.section}` : (assigningAppClassId || app.targetClassName || 'PRE KG - A');
+      const fullName = app.studentName || `${app.firstName || ''} ${app.lastName || ''}`.trim() || 'Student';
+
+      const newStudentPayload = {
+        firstName: app.firstName || (app.studentName ? app.studentName.split(' ')[0] : 'Student'),
+        lastName: app.lastName || (app.studentName && app.studentName.split(' ').length > 1 ? app.studentName.split(' ').slice(1).join(' ') : ''),
+        name: fullName,
+        admissionNumber: finalAdmNumber,
+        admissionNo: finalAdmNumber,
+        classId: assigningAppClassId,
+        className: targetClassStr,
+        gradeClass: targetClassStr,
+        dob: app.dob || '2019-05-12',
+        age: app.age || '',
+        gender: app.gender || 'Male',
+        bloodGroup: app.bloodGroup || '',
+        nationality: app.nationality || 'Indian',
+        religion: app.religion || '',
+        aadharNumber: app.aadharNumber || '',
+        studentEmail: app.studentEmail || '',
+        studentPhone: app.studentPhone || '',
+        parentName: app.parentName || '',
+        parentPhone: app.parentPhone || '',
+        parentEmail: app.parentEmail || '',
+        homeAddress: app.homeAddress || '',
+        city: app.city || '',
+        state: app.state || '',
+        pincode: app.pincode || '',
+        photoUrl: app.photoUrl || '',
+        status: 'Active',
+        admittedFromApplicationId: app.id,
+        admittedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+
+      let newDocId = 'st_' + Date.now();
+      if (typeof addSubDocument === 'function') {
+        newDocId = await addSubDocument(targetSchool, 'students', newStudentPayload);
+      } else if (db) {
+        const ref = await db.collection('schools').doc(targetSchool).collection('students').add(newStudentPayload);
+        newDocId = ref.id;
+      }
+
+      if (db) {
+        await db.collection('schools').doc(targetSchool).collection('admissionApplications').doc(app.id).update({
+          status: 'Approved',
+          admittedAt: new Date().toISOString(),
+          assignedAdmissionNumber: finalAdmNumber,
+          admittedStudentId: newDocId,
+          assignedClassId: assigningAppClassId,
+          assignedClassName: targetClassStr,
+        });
+      }
+
+      setAdmissionApplicationsList(prev =>
+        prev.map(item => item.id === app.id ? { ...item, status: 'Approved', assignedAdmissionNumber: finalAdmNumber } : item)
+      );
+
+      showToast(`Student ${fullName} admitted successfully!`);
+      setShowReviewAppModal(false);
+      setSelectedAppForReview(null);
+    } catch (err: any) {
+      console.error('Error approving admission:', err);
+      Alert.alert('Error', 'Failed to admit student: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsApprovingApp(false);
+    }
+  };
+
+  const handleRejectAdmissionApplication = async (appId: string) => {
+    setIsRejectingApp(true);
+    const targetSchool = adminSchoolId || 'school1';
+    try {
+      if (db) {
+        await db.collection('schools').doc(targetSchool).collection('admissionApplications').doc(appId).update({
+          status: 'Rejected',
+          rejectedAt: new Date().toISOString(),
+        });
+      }
+      setAdmissionApplicationsList(prev =>
+        prev.map(item => item.id === appId ? { ...item, status: 'Rejected' } : item)
+      );
+      showToast('Application marked as Rejected.');
+      setShowReviewAppModal(false);
+      setSelectedAppForReview(null);
+    } catch (err: any) {
+      console.error('Error rejecting application:', err);
+      Alert.alert('Error', 'Failed to reject application.');
+    } finally {
+      setIsRejectingApp(false);
+    }
+  };
+
+  const handleDeleteAdmissionApplication = (appId: string, studentName: string) => {
+    Alert.alert(
+      'Delete Application',
+      `Are you sure you want to delete the admission application for ${studentName}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const targetSchool = adminSchoolId || 'school1';
+            try {
+              if (db) {
+                await db.collection('schools').doc(targetSchool).collection('admissionApplications').doc(appId).delete();
+              }
+              setAdmissionApplicationsList(prev => prev.filter(item => item.id !== appId));
+              showToast('Application deleted successfully.');
+            } catch (err) {
+              console.error('Error deleting application:', err);
+              Alert.alert('Error', 'Failed to delete application.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // --- Leave Management Handlers ---
@@ -6341,13 +7683,30 @@ function App() {
   };
 
   // --- Reports & Analytics Handlers ---
-  const handleDownloadFullReport = () => {
-    Share.share({
-      title: 'ZUNA School Performance Report',
-      message: `ZUNA International Academy - School Performance & Analytics Report\nTotal Revenue: ₹0\nTotal Students Enrolled: ${directoryStudents.length}\nAverage Attendance: 95%\nTotal Teaching Staff: ${staffList.filter(s => s.staffType === 'Teaching').length}\nExport Date: 08-09-2026`,
-    }).catch(() => {
-      showToast('Exported School Performance Report (XLSX/PDF)');
-    });
+  const handleDownloadFullReport = async () => {
+    try {
+      const rows = [
+        { 'Category': 'Executive Summary', 'Metric': 'Report Name', 'Value': 'ZUNA School Performance & Analytics Report' },
+        { 'Category': 'Executive Summary', 'Metric': 'Generated On', 'Value': new Date().toLocaleString() },
+        { 'Category': 'Key Performance Indicators', 'Metric': 'Total Revenue (YTD)', 'Value': '₹0' },
+        { 'Category': 'Key Performance Indicators', 'Metric': 'Total Students Enrolled', 'Value': String(directoryStudents.length) },
+        { 'Category': 'Key Performance Indicators', 'Metric': 'Average Attendance Rate', 'Value': '95%' },
+        { 'Category': 'Key Performance Indicators', 'Metric': 'Total Teaching Staff', 'Value': String(staffList.filter(s => s.staffType === 'Teaching').length || 2) },
+        { 'Category': 'Key Performance Indicators', 'Metric': 'Total Non-Teaching Staff', 'Value': String(staffList.filter(s => s.staffType !== 'Teaching').length) },
+        { 'Category': 'Academic Structure', 'Metric': 'Total Classes / Sections', 'Value': String(classList.length) },
+        { 'Category': 'Revenue Overview', 'Metric': 'Apr 2026', 'Value': '₹0' },
+        { 'Category': 'Revenue Overview', 'Metric': 'May 2026', 'Value': '₹0' },
+        { 'Category': 'Revenue Overview', 'Metric': 'Jun 2026', 'Value': '₹0' },
+        { 'Category': 'Revenue Overview', 'Metric': 'Jul 2026', 'Value': '₹0' },
+        { 'Category': 'Revenue Overview', 'Metric': 'Aug 2026', 'Value': '₹0' },
+        { 'Category': 'Revenue Overview', 'Metric': 'Sep 2026', 'Value': '₹0' },
+      ];
+      await exportAndShareExcel('ZUNA_School_Analytics_Report', 'School Analytics', rows, [25, 30, 30]);
+      showToast('School Analytics Report (XLSX) generated!');
+    } catch (err: any) {
+      console.error('Failed to export analytics report:', err);
+      Alert.alert('Export Error', 'Failed to generate Excel report file.');
+    }
   };
 
   // --- API Integrations Handlers ---
@@ -6908,130 +8267,390 @@ function App() {
     );
   };
 
-  // --- Module Customization Handlers ---
-  const handleAddSectionSubmit = () => {
-    if (!newSectionTitle.trim()) {
-      Alert.alert('Required', 'Please enter section title.');
-      return;
+  // --- Module Customization & Schema Builder Handlers (Matching Image 2) ---
+  const defaultCoreSchemas: Record<string, any[]> = {
+    staff: [
+      {
+        id: 'sec_1',
+        title: 'Personal Details',
+        fields: [
+          { id: 'f_1', label: 'First Name', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_2', label: 'Last Name', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_3', label: 'Email', type: 'email', required: true, options: '', relationModule: '' },
+          { id: 'f_4', label: 'Phone', type: 'text', required: true, options: '', relationModule: '' },
+        ],
+      },
+      {
+        id: 'sec_2',
+        title: 'Academic Details',
+        fields: [
+          { id: 'f_5', label: 'Qualification', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_6', label: 'Experience (Years)', type: 'number', required: false, options: '', relationModule: '' },
+        ],
+      },
+    ],
+    students: [
+      {
+        id: 'sec_1',
+        title: 'Student Details',
+        fields: [
+          { id: 'f_1', label: 'First Name', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_2', label: 'Last Name', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_3', label: 'Date of Birth', type: 'date', required: true, options: '', relationModule: '' },
+        ],
+      },
+      {
+        id: 'sec_2',
+        title: 'Parent Details',
+        fields: [
+          { id: 'f_4', label: 'Parent Name', type: 'text', required: true, options: '', relationModule: '' },
+          { id: 'f_5', label: 'Parent Phone', type: 'text', required: true, options: '', relationModule: '' },
+        ],
+      },
+    ],
+  };
+
+  const loadModuleSchema = async (modId: string) => {
+    setIsLoadingSchema(true);
+    try {
+      if (db && adminSchoolId) {
+        const docSnap = await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(modId).get();
+        if (docSnap && docSnap.exists) {
+          const data = docSnap.data();
+          if (data && data.sections && data.sections.length > 0) {
+            setCustomModuleSections(data.sections);
+            setIsLoadingSchema(false);
+            return;
+          }
+        }
+      }
+      const cached = await AsyncStorage.getItem(`sms_schema_${adminSchoolId || 'school1'}_${modId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCustomModuleSections(parsed);
+          setIsLoadingSchema(false);
+          return;
+        }
+      }
+      if (defaultCoreSchemas[modId]) {
+        setCustomModuleSections(defaultCoreSchemas[modId]);
+      } else {
+        setCustomModuleSections([]);
+      }
+    } catch (e) {
+      console.warn('Error loading schema:', e);
+      if (defaultCoreSchemas[modId]) {
+        setCustomModuleSections(defaultCoreSchemas[modId]);
+      } else {
+        setCustomModuleSections([]);
+      }
+    } finally {
+      setIsLoadingSchema(false);
     }
+  };
+
+  const handleAddSectionDirect = () => {
     const newSec = {
       id: `sec_${Date.now()}`,
-      title: newSectionTitle.trim(),
-      fields: [],
+      title: 'New Section',
+      fields: [
+        {
+          id: `field_${Date.now()}`,
+          label: 'New Field',
+          type: 'text',
+          required: false,
+          options: '',
+          relationModule: '',
+        },
+      ],
     };
-    setCustomModuleSections([...customModuleSections, newSec]);
-    setNewSectionTitle('');
-    setShowAddSectionModal(false);
-    showToast(`Section "${newSec.title}" added.`);
+    setCustomModuleSections(prev => [...prev, newSec]);
+    showToast('New section added');
+  };
+
+  const handleUpdateSectionTitle = (secId: string, title: string) => {
+    setCustomModuleSections(prev =>
+      prev.map(s => (s.id === secId ? { ...s, title } : s))
+    );
+  };
+
+  const handleMoveSection = (index: number, direction: 'up' | 'down') => {
+    setCustomModuleSections(prev => {
+      if ((direction === 'up' && index === 0) || (direction === 'down' && index === prev.length - 1)) return prev;
+      const copy = [...prev];
+      const swapIdx = direction === 'up' ? index - 1 : index + 1;
+      [copy[index], copy[swapIdx]] = [copy[swapIdx], copy[index]];
+      return copy;
+    });
   };
 
   const handleDeleteSection = (secId: string) => {
     setCustomModuleSections(prev => prev.filter(s => s.id !== secId));
-    showToast('Section deleted.');
+    showToast('Section deleted');
   };
 
-  const handleAddFieldSubmit = () => {
-    if (!newFieldData.label.trim()) {
-      Alert.alert('Required', 'Please enter field label.');
-      return;
-    }
-    const fieldId = `f_${Date.now()}`;
+  const handleAddFieldDirect = (secId: string) => {
+    const newFld = {
+      id: `field_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      label: 'New Field',
+      type: 'text',
+      required: false,
+      options: '',
+      relationModule: '',
+    };
     setCustomModuleSections(prev =>
-      prev.map(sec => {
-        if (sec.id === targetSectionIdForField) {
-          return {
-            ...sec,
-            fields: [
-              ...sec.fields,
-              {
-                id: fieldId,
-                label: newFieldData.label.trim(),
-                type: newFieldData.type,
-                required: newFieldData.required,
-              },
-            ],
-          };
-        }
-        return sec;
+      prev.map(s => (s.id === secId ? { ...s, fields: [...(s.fields || []), newFld] } : s))
+    );
+    showToast('New field added');
+  };
+
+  const handleUpdateField = (secId: string, fieldId: string, key: string, value: any) => {
+    setCustomModuleSections(prev =>
+      prev.map(s => {
+        if (s.id !== secId) return s;
+        return {
+          ...s,
+          fields: (s.fields || []).map((f: any) => (f.id === fieldId ? { ...f, [key]: value } : f)),
+        };
       })
     );
-    setNewFieldData({ label: '', type: 'text', required: false });
-    setShowAddFieldModal(false);
-    showToast('Field added to section.');
+  };
+
+  const handleMoveField = (secId: string, fIndex: number, direction: 'up' | 'down') => {
+    setCustomModuleSections(prev =>
+      prev.map(s => {
+        if (s.id !== secId) return s;
+        const fields = [...(s.fields || [])];
+        if ((direction === 'up' && fIndex === 0) || (direction === 'down' && fIndex === fields.length - 1)) return s;
+        const swapIdx = direction === 'up' ? fIndex - 1 : fIndex + 1;
+        [fields[fIndex], fields[swapIdx]] = [fields[swapIdx], fields[fIndex]];
+        return { ...s, fields };
+      })
+    );
   };
 
   const handleDeleteField = (secId: string, fieldId: string) => {
     setCustomModuleSections(prev =>
-      prev.map(sec => {
-        if (sec.id === secId) {
-          return {
-            ...sec,
-            fields: sec.fields.filter((f: any) => f.id !== fieldId),
-          };
-        }
-        return sec;
+      prev.map(s => {
+        if (s.id !== secId) return s;
+        return {
+          ...s,
+          fields: (s.fields || []).filter((f: any) => f.id !== fieldId),
+        };
       })
     );
-    showToast('Field removed.');
+    showToast('Field removed');
   };
 
   const handleSaveSchema = async () => {
-    const modKey = selectedCustomModuleTarget.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    showToast(`Form Schema for "${selectedCustomModuleTarget}" saved successfully!`);
-
+    setIsSavingSchema(true);
     try {
+      const modId = selectedCustomModuleId || 'staff';
       if (db && adminSchoolId) {
-        await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(modKey).set({
+        await db.collection('schools').doc(adminSchoolId).collection('formSchemas').doc(modId).set({
           targetModule: selectedCustomModuleTarget,
           sections: customModuleSections,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
+        if (adminSchoolId === 'school1') {
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('formSchemas').doc(modId).set({
+              targetModule: selectedCustomModuleTarget,
+              sections: customModuleSections,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch (e) {}
+        }
       }
-      await AsyncStorage.setItem(`sms_schema_${adminSchoolId || 'default'}_${modKey}`, JSON.stringify(customModuleSections));
+      await AsyncStorage.setItem(`sms_schema_${adminSchoolId || 'school1'}_${modId}`, JSON.stringify(customModuleSections));
+      showToast(`Form Schema for "${selectedCustomModuleTarget}" saved successfully!`);
     } catch (err) {
       console.warn('Error saving schema:', err);
+      showToast('Failed to save schema');
+    } finally {
+      setIsSavingSchema(false);
     }
   };
 
   const handleImportSchema = (source: string) => {
     if (!source || source === '-- Select Module to Import --') return;
     let imported: any[] = [];
-    if (source === 'Staff Directory') {
-      imported = [
-        {
-          id: `sec_${Date.now()}_1`,
-          title: 'Personal Information',
-          fields: [
-            { id: `f_${Date.now()}_1`, label: 'Full Name', type: 'text', required: true },
-            { id: `f_${Date.now()}_2`, label: 'Official Email', type: 'email', required: true },
-            { id: `f_${Date.now()}_3`, label: 'Contact Phone', type: 'text', required: true },
-          ],
-        },
-        {
-          id: `sec_${Date.now()}_2`,
-          title: 'Designation & Department',
-          fields: [
-            { id: `f_${Date.now()}_4`, label: 'Department', type: 'select', required: true },
-            { id: `f_${Date.now()}_5`, label: 'Employee ID', type: 'text', required: true },
-          ],
-        },
-      ];
+    if (source === 'Staff Directory' || source === 'staff') {
+      imported = defaultCoreSchemas['staff'] || [];
+    } else if (source === 'Student Directory' || source === 'students') {
+      imported = defaultCoreSchemas['students'] || [];
     } else {
       imported = [
         {
-          id: `sec_${Date.now()}_1`,
-          title: `${source} General Info`,
+          id: `sec_${Date.now()}`,
+          title: `${source} Details`,
           fields: [
-            { id: `f_${Date.now()}_1`, label: 'Title / Name', type: 'text', required: true },
-            { id: `f_${Date.now()}_2`, label: 'Category', type: 'select', required: false },
-            { id: `f_${Date.now()}_3`, label: 'Reference Code', type: 'text', required: true },
+            { id: `f_${Date.now()}_1`, label: 'Name / Title', type: 'text', required: true, options: '', relationModule: '' },
+            { id: `f_${Date.now()}_2`, label: 'Category', type: 'select', required: false, options: 'Primary, Secondary', relationModule: '' },
           ],
         },
       ];
     }
-    setCustomModuleSections([...customModuleSections, ...imported]);
+    const cloned = imported.map((s, sIdx) => ({
+      ...s,
+      id: `sec_${Date.now()}_${sIdx}`,
+      fields: (s.fields || []).map((f: any, fIdx: number) => ({
+        ...f,
+        id: `field_${Date.now()}_${fIdx}_${Math.floor(Math.random() * 1000)}`,
+      })),
+    }));
+    setCustomModuleSections(prev => [...prev, ...cloned]);
     setSelectedImportModule('');
-    showToast(`Imported sections from ${source}!`);
+    showToast(`Sections imported from ${source}!`);
+  };
+
+  // --- Timetables Handlers (Matching Image 1 & Image 3) ---
+  const handleOpenAddPeriodModal = (day: string) => {
+    setTargetSlotDay(day);
+    setEditingSlotId(null);
+    setSlotStartTime('09:00 AM');
+    setSlotEndTime('10:00 AM');
+    setSlotSubject(subjectList[0]?.name || 'Mathematics');
+    setSlotTeacher(staffList[0]?.name || 'Not Assigned');
+    setShowAddSlotModal(true);
+  };
+
+  const handleOpenEditPeriodModal = (day: string, slot: any) => {
+    setTargetSlotDay(day);
+    setEditingSlotId(slot.id);
+    setSlotStartTime(slot.startTime || '09:00 AM');
+    setSlotEndTime(slot.endTime || '10:00 AM');
+    setSlotSubject(slot.subject || '');
+    setSlotTeacher(slot.teacher || 'Not Assigned');
+    setShowAddSlotModal(true);
+  };
+
+  const handleSavePeriod = () => {
+    if (!slotSubject.trim()) {
+      Alert.alert('Required', 'Please enter subject name');
+      return;
+    }
+    const clsKey = timetableClassSelected || (classList[0] ? `${classList[0].name} - Section ${classList[0].section}` : 'Grade - 10 - Section B');
+    const newSlotObj = {
+      id: editingSlotId || `slot_${Date.now()}`,
+      startTime: slotStartTime || '09:00 AM',
+      endTime: slotEndTime || '10:00 AM',
+      subject: slotSubject.trim(),
+      teacher: slotTeacher.trim() || 'Not Assigned',
+    };
+
+    setTimetablesData((prev: any) => {
+      const curClassData = prev[clsKey] || { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] };
+      const curDaySlots = curClassData[targetSlotDay] || [];
+      let updatedSlots: any[];
+      if (editingSlotId) {
+        updatedSlots = curDaySlots.map((s: any) => (s.id === editingSlotId ? newSlotObj : s));
+      } else {
+        updatedSlots = [...curDaySlots, newSlotObj];
+      }
+      updatedSlots.sort((a, b) => a.startTime.localeCompare(b.startTime));
+      return {
+        ...prev,
+        [clsKey]: {
+          ...curClassData,
+          [targetSlotDay]: updatedSlots,
+        },
+      };
+    });
+
+    setShowAddSlotModal(false);
+    showToast(editingSlotId ? 'Period updated!' : 'Period added to timetable!');
+  };
+
+  const handleDeleteTimetableSlot = (day: string, slotId: string) => {
+    const clsKey = timetableClassSelected;
+    if (!clsKey) return;
+    setTimetablesData((prev: any) => {
+      const curClassData = prev[clsKey] || {};
+      const curDaySlots = curClassData[day] || [];
+      return {
+        ...prev,
+        [clsKey]: {
+          ...curClassData,
+          [day]: curDaySlots.filter((s: any) => s.id !== slotId),
+        },
+      };
+    });
+    showToast('Period removed');
+  };
+
+  const handleAddSectionSubmit = () => {
+    if (!newSectionTitle.trim()) {
+      showToast('Please enter section title');
+      return;
+    }
+    const newSec = {
+      id: `sec_${Date.now()}`,
+      title: newSectionTitle.trim(),
+      fields: [{ id: `field_${Date.now()}`, label: 'New Field', type: 'text', required: false, options: '', relationModule: '' }],
+    };
+    setCustomModuleSections(prev => [...prev, newSec]);
+    setNewSectionTitle('');
+    setShowAddSectionModal(false);
+    showToast('Section added');
+  };
+
+  const handleAddFieldSubmit = () => {
+    if (!newFieldData.label.trim()) {
+      showToast('Please enter field label');
+      return;
+    }
+    const newFld = {
+      id: `field_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      label: newFieldData.label.trim(),
+      type: newFieldData.type,
+      required: newFieldData.required,
+      options: '',
+      relationModule: '',
+    };
+    setCustomModuleSections(prev =>
+      prev.map(s => (s.id === targetSectionIdForField ? { ...s, fields: [...(s.fields || []), newFld] } : s))
+    );
+    setNewFieldData({ label: '', type: 'text', required: false });
+    setShowAddFieldModal(false);
+    showToast('Field added');
+  };
+
+  const handleSaveTimetableChanges = async () => {
+    if (!timetableClassSelected) {
+      showToast('Please select a class first');
+      return;
+    }
+    setIsSavingTimetable(true);
+    try {
+      const scheduleToSave = timetablesData[timetableClassSelected] || {
+        Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [],
+      };
+      if (db && adminSchoolId) {
+        await db.collection('schools').doc(adminSchoolId).collection('timetables').doc(timetableClassSelected).set({
+          className: timetableClassSelected,
+          schedule: scheduleToSave,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+        if (adminSchoolId === 'school1') {
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('timetables').doc(timetableClassSelected).set({
+              className: timetableClassSelected,
+              schedule: scheduleToSave,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch (e) {}
+        }
+      }
+      await AsyncStorage.setItem(`sms_timetable_${adminSchoolId || 'school1'}_${timetableClassSelected}`, JSON.stringify(scheduleToSave));
+      showToast('Timetable changes saved successfully!');
+    } catch (err) {
+      console.warn('Error saving timetable:', err);
+      showToast('Failed to save timetable');
+    } finally {
+      setIsSavingTimetable(false);
+    }
   };
 
   // --- Roles & Permissions Handlers ---
@@ -7088,7 +8707,7 @@ function App() {
   const handleSavePermissions = async () => {
     const rolePerms = rolePermissionsMap[selectedRole] || {};
     const activePanel = targetLoginPanel === 'Teacher Panel' ? 'teacher' : 'admin';
-    showToast(`${selectedRole} permissions saved successfully!`);
+    showToast(`${selectedRole} permissions saved successfully.`);
 
     try {
       if (db && adminSchoolId) {
@@ -7203,6 +8822,24 @@ function App() {
     (studentDirPage - 1) * directoryPageSize,
     studentDirPage * directoryPageSize
   );
+
+  // Admission Applications Filtering & Metrics (Matches Image 4 & 5)
+  const pendingAppsCount = admissionApplicationsList.filter(a => (a.status || 'Pending') === 'Pending').length;
+  const approvedAppsCount = admissionApplicationsList.filter(a => a.status === 'Approved').length;
+  const rejectedAppsCount = admissionApplicationsList.filter(a => a.status === 'Rejected').length;
+
+  const filteredAdmissionApplications = admissionApplicationsList.filter(app => {
+    const q = (appSearchQuery || '').toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      (app.name && app.name.toLowerCase().includes(q)) ||
+      (app.studentName && app.studentName.toLowerCase().includes(q)) ||
+      (app.applicationNumber && app.applicationNumber.toLowerCase().includes(q)) ||
+      (app.parentName && app.parentName.toLowerCase().includes(q)) ||
+      (app.parentPhone && app.parentPhone.includes(q));
+    const matchesStatus = appStatusFilter === 'all' || app.status === appStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   const filteredFeeInvoices = feeInvoicesList.filter(inv => {
     const q = (feeInvoiceSearch || '').toLowerCase().trim();
@@ -7431,6 +9068,152 @@ function App() {
   }
 
   // =========================================================================
+  // 1.5. ONBOARDING SCREEN (3 PAGES - MATCHING IMAGE 2)
+  // =========================================================================
+  if (showOnboarding) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#916985' }} edges={['top', 'left', 'right', 'bottom']}>
+          <AppStatusBar barStyle="light-content" backgroundColor="#916985" translucent={false} />
+          <View style={{ flex: 1, backgroundColor: '#916985', justifyContent: 'space-between', paddingHorizontal: 28, paddingVertical: 36 }}>
+            {/* Top spacer */}
+            <View style={{ height: 20 }} />
+
+            {/* Page 0: Your school, in your pocket */}
+            {onboardingIndex === 0 && (
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center', marginBottom: 28 }}>
+                  <IconComp name="school-outline" size={38} color="#FFFFFF" />
+                </View>
+                <Text style={{ fontSize: 23, fontWeight: '800', color: '#FFFFFF', textAlign: 'center', marginBottom: 12 }}>
+                  Your school, in your pocket
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 20, maxWidth: 280 }}>
+                  Manage admissions, classes, and staff from anywhere, anytime.
+                </Text>
+              </View>
+            )}
+
+            {/* Page 1: Every module, one app */}
+            {onboardingIndex === 1 && (
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ width: 170, flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center', marginBottom: 28 }}>
+                  {[
+                    { name: 'attendance', icon: 'calendar-outline', label: 'Attendance' },
+                    { name: 'fees', icon: 'card-outline', label: 'Fees' },
+                    { name: 'exams', icon: 'document-text-outline', label: 'Exams' },
+                    { name: 'messages', icon: 'chatbubble-ellipses-outline', label: 'Messages' },
+                  ].map(m => (
+                    <View key={m.name} style={{ width: 76, height: 72, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center', padding: 6 }}>
+                      <IconComp name={m.icon} size={22} color="#FFFFFF" />
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#FFFFFF', marginTop: 4 }}>{m.label}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={{ fontSize: 23, fontWeight: '800', color: '#FFFFFF', textAlign: 'center', marginBottom: 12 }}>
+                  Every module, one app
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 20, maxWidth: 280 }}>
+                  Attendance, fees, exams and messaging, all synced in real time.
+                </Text>
+              </View>
+            )}
+
+            {/* Page 2: Built for your whole school */}
+            {onboardingIndex === 2 && (
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center', marginBottom: 28 }}>
+                  <IconComp name="people-outline" size={38} color="#FFFFFF" />
+                </View>
+                <Text style={{ fontSize: 23, fontWeight: '800', color: '#FFFFFF', textAlign: 'center', marginBottom: 12 }}>
+                  Built for your whole school
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.85)', textAlign: 'center', lineHeight: 20, maxWidth: 280, marginBottom: 24 }}>
+                  Choose your role to get a personalized experience.
+                </Text>
+
+                <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'center', width: '100%' }}>
+                  {[
+                    { label: 'Admin', icon: 'shield-checkmark-outline' },
+                    { label: 'Teacher', icon: 'school-outline' },
+                    { label: 'Student', icon: 'person-outline' },
+                  ].map(r => (
+                    <View key={r.label} style={{ flex: 1, height: 68, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center', padding: 6 }}>
+                      <IconComp name={r.icon} size={22} color="#FFFFFF" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF', marginTop: 4 }}>{r.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Bottom Navigation Row */}
+            <View style={{ width: '100%', paddingBottom: 10 }}>
+              {/* Pagination Indicators */}
+              <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, marginBottom: 28 }}>
+                {[0, 1, 2].map(idx => (
+                  <View
+                    key={idx}
+                    style={{
+                      width: onboardingIndex === idx ? 22 : 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: onboardingIndex === idx ? '#FFFFFF' : 'rgba(255,255,255,0.35)',
+                    }}
+                  />
+                ))}
+              </View>
+
+              {onboardingIndex < 2 ? (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await AsyncStorage.setItem('@zuna_has_seen_onboarding', 'true');
+                      } catch (e) {}
+                      setShowOnboarding(false);
+                    }}
+                    style={{ paddingVertical: 10, paddingHorizontal: 16 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: 'rgba(255,255,255,0.8)' }}>Skip</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setOnboardingIndex(prev => prev + 1)}
+                    style={{ paddingVertical: 10, paddingHorizontal: 16 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#FFFFFF' }}>Next</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 14,
+                    height: 52,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.15,
+                    shadowRadius: 10,
+                    elevation: 4,
+                  }}
+                  onPress={async () => {
+                    try {
+                      await AsyncStorage.setItem('@zuna_has_seen_onboarding', 'true');
+                    } catch (e) {}
+                    setShowOnboarding(false);
+                  }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#916985' }}>Get Started</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+
+  // =========================================================================
   // 2. PROFESSIONAL LOGIN SCREEN
   // =========================================================================
   if (!isLoggedIn) {
@@ -7549,22 +9332,24 @@ function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* Quick Demo Access */}
+              {/* Quick Login Role Options */}
               <View style={styles.quickDemoCardSection}>
-                <Text style={styles.quickDemoHeaderTitle}>QUICK DEMO ACCESS</Text>
+                <Text style={styles.quickDemoHeaderTitle}>QUICK LOGIN</Text>
                 <View style={styles.quickPillsRowBox}>
                   <TouchableOpacity
                     style={[
                       styles.quickRolePillBtn,
                       selectedDemoRole === 'Admin' && styles.quickRolePillBtnActiveAdmin,
                     ]}
-                    onPress={() => handleDemoQuickLogin('Admin')}>
+                    onPress={() => handleDemoQuickLogin('Admin')}
+                    activeOpacity={0.75}>
                     <IconComp
                       name="shield-checkmark-outline"
                       size={14}
                       color={selectedDemoRole === 'Admin' ? '#b07fa8' : '#64748B'}
                     />
                     <Text
+                      numberOfLines={1}
                       style={[
                         styles.quickRolePillText,
                         selectedDemoRole === 'Admin' && styles.quickRolePillTextActiveAdmin,
@@ -7578,18 +9363,20 @@ function App() {
                       styles.quickRolePillBtn,
                       selectedDemoRole === 'Teacher' && styles.quickRolePillBtnActiveTeacher,
                     ]}
-                    onPress={() => handleDemoQuickLogin('Teacher')}>
+                    onPress={() => handleDemoQuickLogin('Teacher')}
+                    activeOpacity={0.75}>
                     <IconComp
                       name="school-outline"
                       size={14}
                       color={selectedDemoRole === 'Teacher' ? '#2563EB' : '#64748B'}
                     />
                     <Text
+                      numberOfLines={1}
                       style={[
                         styles.quickRolePillText,
                         selectedDemoRole === 'Teacher' && styles.quickRolePillTextActiveTeacher,
                       ]}>
-                      Teacher
+                      Teacher/Staff
                     </Text>
                   </TouchableOpacity>
 
@@ -7598,22 +9385,36 @@ function App() {
                       styles.quickRolePillBtn,
                       selectedDemoRole === 'Student' && styles.quickRolePillBtnActiveStudent,
                     ]}
-                    onPress={() => handleDemoQuickLogin('Student')}>
+                    onPress={() => handleDemoQuickLogin('Student')}
+                    activeOpacity={0.75}>
                     <IconComp
                       name="person-outline"
                       size={14}
                       color={selectedDemoRole === 'Student' ? '#059669' : '#64748B'}
                     />
                     <Text
+                      numberOfLines={1}
                       style={[
                         styles.quickRolePillText,
                         selectedDemoRole === 'Student' && styles.quickRolePillTextActiveStudent,
                       ]}>
-                      Student
+                      Student/Parent
                     </Text>
                   </TouchableOpacity>
                 </View>
               </View>
+
+              {/* App Tour / Onboarding Link */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 18, paddingVertical: 8 }}
+                onPress={() => {
+                  setOnboardingIndex(0);
+                  setShowOnboarding(true);
+                }}>
+                <IconComp name="compass-outline" size={16} color="#b07fa8" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#b07fa8' }}>Explore Zuna App Tour</Text>
+              </TouchableOpacity>
+
             </ScrollView>
           </KeyboardAvoidingView>
 
@@ -15384,7 +17185,7 @@ function App() {
                   <Text style={styles.greenOutlineBtnText}>Bulk Import</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowStudentModal(true)}>
+                <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowNewAdmissionMenu(true)}>
                   <IconComp name="add-outline" size={14} color="#FFFFFF" />
                   <Text style={styles.purplePrimaryBtnText}>New Admission</Text>
                 </TouchableOpacity>
@@ -15408,187 +17209,389 @@ function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* 4 Stat Summary Cards Grid (Screenshot 4 Matching) */}
-              <View style={styles.metricsGridContainer}>
-                <View style={styles.metricCard}>
-                  <Text style={styles.metricLabelTitle}>SEATS ENROLLED</Text>
-                  <Text style={styles.metricNumberValue}>4 <Text style={{ fontSize: 13, color: '#64748B' }}>/ 500</Text></Text>
-                  <View style={[styles.progressBarTrack, { marginTop: 6 }]}>
-                    <View style={[styles.progressBarFill, { width: '1%', backgroundColor: '#b07fa8' }]} />
-                  </View>
-                </View>
-
-                <View style={styles.metricCard}>
-                  <View style={styles.metricIconRow}>
-                    <Text style={styles.metricLabelTitle}>ACTIVE</Text>
-                    <IconComp name="checkmark-circle-outline" size={16} color="#059669" />
-                  </View>
-                  <Text style={styles.metricNumberValue}>4</Text>
-                </View>
-
-                <View style={styles.metricCard}>
-                  <View style={styles.metricIconRow}>
-                    <Text style={styles.metricLabelTitle}>BOYS</Text>
-                    <IconComp name="man-outline" size={16} color="#2563EB" />
-                  </View>
-                  <Text style={styles.metricNumberValue}>3</Text>
-                </View>
-
-                <View style={styles.metricCard}>
-                  <View style={styles.metricIconRow}>
-                    <Text style={styles.metricLabelTitle}>GIRLS</Text>
-                    <IconComp name="woman-outline" size={16} color="#EC4899" />
-                  </View>
-                  <Text style={styles.metricNumberValue}>1</Text>
-                </View>
-              </View>
-
-              {/* Search Bar (Full Width Row) */}
-              <SearchInputBox
-                wrapperStyle={styles.searchInputWrapperFullWidth}
-                style={styles.searchTextInput}
-                placeholder="Search by student name or admission number..."
-                value={studentSearchQuery}
-                onChangeText={setStudentSearchQuery}
-              />
-
-              {/* Interactive Filter Pills Row with Generous Spacing */}
-              <View style={styles.filterPillsRowContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.interactiveFilterPillBtn,
-                    studentGenderFilter !== 'All Genders' && styles.interactiveFilterPillActive,
-                  ]}
-                  onPress={() => setShowGenderFilterModal(true)}
-                  activeOpacity={0.7}>
-                  <IconComp
-                    name="man-outline"
-                    size={14}
-                    color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#475569'}
-                  />
-                  <Text
-                    style={[
-                      styles.interactiveFilterPillText,
-                      studentGenderFilter !== 'All Genders' && styles.interactiveFilterPillTextActive,
-                    ]}>
-                    {studentGenderFilter}
-                  </Text>
-                  <IconComp
-                    name="chevron-down-outline"
-                    size={12}
-                    color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#64748B'}
-                  />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.interactiveFilterPillBtn,
-                    studentClassFilter !== 'All Classes' && styles.interactiveFilterPillActive,
-                  ]}
-                  onPress={() => setShowClassFilterModal(true)}
-                  activeOpacity={0.7}>
-                  <IconComp
-                    name="school-outline"
-                    size={14}
-                    color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#475569'}
-                  />
-                  <Text
-                    style={[
-                      styles.interactiveFilterPillText,
-                      studentClassFilter !== 'All Classes' && styles.interactiveFilterPillTextActive,
-                    ]}>
-                    {studentClassFilter}
-                  </Text>
-                  <IconComp
-                    name="chevron-down-outline"
-                    size={12}
-                    color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#64748B'}
-                  />
-                </TouchableOpacity>
-
-                {(studentGenderFilter !== 'All Genders' || studentClassFilter !== 'All Classes') && (
-                  <TouchableOpacity
-                    style={styles.resetFilterBtn}
-                    onPress={() => {
-                      setStudentGenderFilter('All Genders');
-                      setStudentClassFilter('All Classes');
-                      showToast('Student filters reset');
-                    }}>
-                    <Text style={styles.resetFilterBtnText}>Reset</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Enrolled Students Card List */}
+              {/* Enrolled Students Tab View */}
               {studentDirectoryTab === 'enrolled' ? (
-                <View style={{ gap: 10 }}>
-                  {paginatedDirectoryStudents.map(st => (
-                    <View key={st.id} style={styles.studentCardContainer}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                        <View style={styles.avatarCircleInitial}>
-                          <Text style={styles.avatarInitialText}>{(st.name || 'S').slice(0, 2)}</Text>
+                <>
+                  {/* 4 Stat Summary Cards Grid (Screenshot 4 Matching) */}
+                  <View style={styles.metricsGridContainer}>
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabelTitle}>SEATS ENROLLED</Text>
+                      <Text style={styles.metricNumberValue}>{directoryStudents.length} <Text style={{ fontSize: 13, color: '#64748B' }}>/ 500</Text></Text>
+                      <View style={[styles.progressBarTrack, { marginTop: 6 }]}>
+                        <View style={[styles.progressBarFill, { width: `${Math.min(100, Math.round((directoryStudents.length / 500) * 100))}%`, backgroundColor: '#b07fa8' }]} />
+                      </View>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>ACTIVE</Text>
+                        <IconComp name="checkmark-circle-outline" size={16} color="#059669" />
+                      </View>
+                      <Text style={styles.metricNumberValue}>{directoryStudents.length}</Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>BOYS</Text>
+                        <IconComp name="man-outline" size={16} color="#2563EB" />
+                      </View>
+                      <Text style={styles.metricNumberValue}>
+                        {directoryStudents.filter(s => (s.gender || 'Male').toLowerCase() === 'male').length}
+                      </Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>GIRLS</Text>
+                        <IconComp name="woman-outline" size={16} color="#EC4899" />
+                      </View>
+                      <Text style={styles.metricNumberValue}>
+                        {directoryStudents.filter(s => (s.gender || '').toLowerCase() === 'female').length}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Search Bar (Full Width Row) */}
+                  <SearchInputBox
+                    wrapperStyle={styles.searchInputWrapperFullWidth}
+                    style={styles.searchTextInput}
+                    placeholder="Search by student name or admission number..."
+                    value={studentSearchQuery}
+                    onChangeText={setStudentSearchQuery}
+                  />
+
+                  {/* Interactive Filter Pills Row with Generous Spacing */}
+                  <View style={styles.filterPillsRowContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.interactiveFilterPillBtn,
+                        studentGenderFilter !== 'All Genders' && styles.interactiveFilterPillActive,
+                      ]}
+                      onPress={() => setShowGenderFilterModal(true)}
+                      activeOpacity={0.7}>
+                      <IconComp
+                        name="man-outline"
+                        size={14}
+                        color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#475569'}
+                      />
+                      <Text
+                        style={[
+                          styles.interactiveFilterPillText,
+                          studentGenderFilter !== 'All Genders' && styles.interactiveFilterPillTextActive,
+                        ]}>
+                        {studentGenderFilter}
+                      </Text>
+                      <IconComp
+                        name="chevron-down-outline"
+                        size={12}
+                        color={studentGenderFilter !== 'All Genders' ? '#b07fa8' : '#64748B'}
+                      />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.interactiveFilterPillBtn,
+                        studentClassFilter !== 'All Classes' && styles.interactiveFilterPillActive,
+                      ]}
+                      onPress={() => setShowClassFilterModal(true)}
+                      activeOpacity={0.7}>
+                      <IconComp
+                        name="school-outline"
+                        size={14}
+                        color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#475569'}
+                      />
+                      <Text
+                        style={[
+                          styles.interactiveFilterPillText,
+                          studentClassFilter !== 'All Classes' && styles.interactiveFilterPillTextActive,
+                        ]}>
+                        {studentClassFilter}
+                      </Text>
+                      <IconComp
+                        name="chevron-down-outline"
+                        size={12}
+                        color={studentClassFilter !== 'All Classes' ? '#b07fa8' : '#64748B'}
+                      />
+                    </TouchableOpacity>
+
+                    {(studentGenderFilter !== 'All Genders' || studentClassFilter !== 'All Classes') && (
+                      <TouchableOpacity
+                        style={styles.resetFilterBtn}
+                        onPress={() => {
+                          setStudentGenderFilter('All Genders');
+                          setStudentClassFilter('All Classes');
+                          showToast('Student filters reset');
+                        }}>
+                        <Text style={styles.resetFilterBtnText}>Reset</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Enrolled Students Card List */}
+                  <View style={{ gap: 10 }}>
+                    {paginatedDirectoryStudents.map(st => (
+                      <View key={st.id} style={styles.studentCardContainer}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <View style={styles.avatarCircleInitial}>
+                            <Text style={styles.avatarInitialText}>{(st.name || 'S').slice(0, 2)}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.studentNameTitle}>{st.name}</Text>
+                            <Text style={styles.studentSubText}>Admission No: <Text style={{ fontWeight: '700', color: '#334155' }}>{st.admissionNo}</Text></Text>
+                            <View style={styles.classBadgePill}>
+                              <Text style={styles.classBadgeText}>{st.gradeClass}</Text>
+                            </View>
+                          </View>
+
+                          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                            <View style={{ flexDirection: 'row', gap: 8 }}>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setSelectedStudentForDetails(st);
+                                  setShowStudentDetailsModal(true);
+                                }}>
+                                <IconComp name="eye-outline" size={18} color="#64748B" />
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const parts = (st.name || '').split(' ');
+                                  setEditingStudentData({
+                                    ...st,
+                                    firstName: st.firstName || parts[0] || '',
+                                    lastName: st.lastName || parts.slice(1).join(' ') || '',
+                                  });
+                                  setShowEditStudentModal(true);
+                                }}>
+                                <IconComp name="create-outline" size={18} color="#b07fa8" />
+                              </TouchableOpacity>
+                              <TouchableOpacity onPress={() => handleDeleteStudent(st)}>
+                                <IconComp name="trash-outline" size={18} color="#DC2626" />
+                              </TouchableOpacity>
+                            </View>
+
+                            <TouchableOpacity
+                              style={styles.changeClassBtn}
+                              onPress={() => {
+                                setSelectedStudentForChange(st);
+                                setTargetNewClass(st.gradeClass || 'PRE KG - A');
+                                setShowChangeClassModal(true);
+                              }}>
+                              <Text style={styles.changeClassBtnText}>Change Class</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.studentNameTitle}>{st.name}</Text>
-                          <Text style={styles.studentSubText}>Admission No: <Text style={{ fontWeight: '700', color: '#334155' }}>{st.admissionNo}</Text></Text>
-                          <View style={styles.classBadgePill}>
-                            <Text style={styles.classBadgeText}>{st.gradeClass}</Text>
+                      </View>
+                    ))}
+
+                    {paginatedDirectoryStudents.length === 0 && (
+                      <View style={styles.emptyNoticeStateBox}>
+                        <IconComp name="search-outline" size={32} color="#CBD5E1" />
+                        <Text style={styles.emptyNoticeTitle}>No matching students found</Text>
+                        <Text style={styles.emptyNoticeSub}>Try adjusting your search query or gender/class filters.</Text>
+                      </View>
+                    )}
+                  </View>
+                </>
+              ) : (
+                /* Admission Applications Tab View (Matches Image 5) */
+                <>
+                  {/* 4 Metric Stat Cards Grid */}
+                  <View style={styles.metricsGridContainer}>
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabelTitle}>TOTAL RECEIVED</Text>
+                      <Text style={styles.metricNumberValue}>{admissionApplicationsList.length}</Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>All applications</Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>PENDING REVIEW</Text>
+                        <IconComp name="time-outline" size={16} color="#D97706" />
+                      </View>
+                      <Text style={[styles.metricNumberValue, { color: '#D97706' }]}>{pendingAppsCount}</Text>
+                      <Text style={{ fontSize: 11, color: '#D97706', marginTop: 2 }}>Needs action</Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>APPROVED</Text>
+                        <IconComp name="checkmark-circle-outline" size={16} color="#059669" />
+                      </View>
+                      <Text style={[styles.metricNumberValue, { color: '#059669' }]}>{approvedAppsCount}</Text>
+                      <Text style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>Admitted to class</Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <View style={styles.metricIconRow}>
+                        <Text style={styles.metricLabelTitle}>REJECTED</Text>
+                        <IconComp name="close-circle-outline" size={16} color="#64748B" />
+                      </View>
+                      <Text style={styles.metricNumberValue}>{rejectedAppsCount}</Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Declined</Text>
+                    </View>
+                  </View>
+
+                  {/* Search Bar for Applications */}
+                  <SearchInputBox
+                    wrapperStyle={styles.searchInputWrapperFullWidth}
+                    style={styles.searchTextInput}
+                    placeholder="Search by student name, application #, parent phone..."
+                    value={appSearchQuery}
+                    onChangeText={setAppSearchQuery}
+                  />
+
+                  {/* Filter Pills for Applications */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    {[
+                      { key: 'all', label: `All (${admissionApplicationsList.length})` },
+                      { key: 'Pending', label: `Pending (${pendingAppsCount})` },
+                      { key: 'Approved', label: `Approved (${approvedAppsCount})` },
+                      { key: 'Rejected', label: `Rejected (${rejectedAppsCount})` },
+                    ].map(f => (
+                      <TouchableOpacity
+                        key={f.key}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 7,
+                          borderRadius: 20,
+                          backgroundColor: appStatusFilter === f.key ? '#059669' : '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: appStatusFilter === f.key ? '#059669' : '#E2E8F0',
+                        }}
+                        onPress={() => setAppStatusFilter(f.key as any)}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: appStatusFilter === f.key ? '700' : '600',
+                            color: appStatusFilter === f.key ? '#FFFFFF' : '#475569',
+                          }}>
+                          {f.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Applications List */}
+                  <View style={{ gap: 12 }}>
+                    {filteredAdmissionApplications.map(app => (
+                      <View key={app.id} style={[styles.studentCardContainer, { padding: 14, gap: 10 }]}>
+                        {/* Top Row: Application ID & Status Badge */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                            <Text style={{ fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontWeight: '800', color: '#334155' }}>
+                              {app.applicationNumber || app.id?.slice(0, 8)}
+                            </Text>
+                          </View>
+                          {app.status === 'Approved' ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#D1FAE5', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
+                              <IconComp name="checkmark-circle" size={12} color="#065F46" />
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#065F46' }}>Approved & Admitted</Text>
+                            </View>
+                          ) : app.status === 'Rejected' ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
+                              <IconComp name="close-circle" size={12} color="#64748B" />
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B' }}>Rejected</Text>
+                            </View>
+                          ) : (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
+                              <IconComp name="time" size={12} color="#92400E" />
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#92400E' }}>Pending Review</Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Middle Row: Student Info */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <View style={[styles.avatarCircleInitial, { backgroundColor: '#ECFDF5' }]}>
+                            <Text style={[styles.avatarInitialText, { color: '#059669' }]}>
+                              {(app.name || 'S').slice(0, 2).toUpperCase()}
+                            </Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.studentNameTitle}>{app.name || app.studentName}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                              <Text style={{ fontSize: 12, color: '#64748B' }}>{app.gender || 'Student'}</Text>
+                              {!!app.age && (
+                                <>
+                                  <Text style={{ color: '#CBD5E1' }}>•</Text>
+                                  <Text style={{ fontSize: 12, color: '#64748B' }}>{app.age} yrs</Text>
+                                </>
+                              )}
+                            </View>
+                          </View>
+                          <View style={{ backgroundColor: '#EEF2FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#C7D2FE' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#4338CA' }}>
+                              {app.targetClassName || app.classApplied || 'General'}
+                            </Text>
                           </View>
                         </View>
 
-                        <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                          <View style={{ flexDirection: 'row', gap: 8 }}>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setSelectedStudentForDetails(st);
-                                setShowStudentDetailsModal(true);
-                              }}>
-                              <IconComp name="eye-outline" size={18} color="#64748B" />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => handleDeleteStudent(st)}>
-                              <IconComp name="trash-outline" size={18} color="#DC2626" />
-                            </TouchableOpacity>
+                        {/* Details Box */}
+                        <View style={{ backgroundColor: '#F8FAFC', padding: 10, borderRadius: 10, gap: 4 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                            <Text style={{ fontSize: 12, color: '#64748B' }}>Parent / Guardian:</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1E293B' }}>{app.parentName || 'N/A'}</Text>
                           </View>
+                          {!!app.parentPhone && (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                              <Text style={{ fontSize: 12, color: '#64748B' }}>Contact Phone:</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#1E293B' }}>{app.parentPhone}</Text>
+                            </View>
+                          )}
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                            <Text style={{ fontSize: 11, color: '#94A3B8' }}>Submitted:</Text>
+                            <Text style={{ fontSize: 11, color: '#94A3B8' }}>{app.date}</Text>
+                          </View>
+                        </View>
+
+                        {/* Actions Row */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              paddingHorizontal: 14,
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                              backgroundColor: app.status === 'Approved' ? '#F1F5F9' : '#059669',
+                            }}
+                            onPress={() => handleOpenReviewAppModal(app)}>
+                            <IconComp name={app.status === 'Approved' ? 'eye-outline' : 'checkmark-done-outline'} size={14} color={app.status === 'Approved' ? '#475569' : '#FFFFFF'} />
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: app.status === 'Approved' ? '#475569' : '#FFFFFF' }}>
+                              {app.status === 'Approved' ? 'View Details' : 'Review & Admit'}
+                            </Text>
+                          </TouchableOpacity>
 
                           <TouchableOpacity
-                            style={styles.changeClassBtn}
-                            onPress={() => {
-                              setSelectedStudentForChange(st);
-                              setTargetNewClass(st.gradeClass || 'PRE KG - A');
-                              setShowChangeClassModal(true);
-                            }}>
-                            <Text style={styles.changeClassBtnText}>Change Class</Text>
+                            style={{ padding: 8, borderRadius: 8, backgroundColor: '#FEF2F2' }}
+                            onPress={() => handleDeleteAdmissionApplication(app.id, app.name || 'this applicant')}>
+                            <IconComp name="trash-outline" size={16} color="#DC2626" />
                           </TouchableOpacity>
                         </View>
                       </View>
-                    </View>
-                  ))}
+                    ))}
 
-                  {paginatedDirectoryStudents.length === 0 && (
-                    <View style={styles.emptyNoticeStateBox}>
-                      <IconComp name="search-outline" size={32} color="#CBD5E1" />
-                      <Text style={styles.emptyNoticeTitle}>No matching students found</Text>
-                      <Text style={styles.emptyNoticeSub}>Try adjusting your search query or gender/class filters.</Text>
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <View style={{ gap: 10 }}>
-                  {admissionApplicationsList.map(app => (
-                    <View key={app.id} style={styles.studentCardContainer}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <View>
-                          <Text style={styles.studentNameTitle}>{app.name}</Text>
-                          <Text style={styles.studentSubText}>Parent: {app.parentName} • Applied: {app.classApplied}</Text>
-                          <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>Submitted on: {app.date}</Text>
+                    {/* Empty State (Matches Image 5) */}
+                    {filteredAdmissionApplications.length === 0 && (
+                      <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: '#F1F5F9', marginTop: 10 }}>
+                        <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+                          <IconComp name="share-social-outline" size={32} color="#059669" />
                         </View>
-                        <View style={styles.pendingBadgePill}>
-                          <Text style={styles.pendingBadgeText}>{app.status}</Text>
-                        </View>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A', textAlign: 'center' }}>No Admission Applications Found</Text>
+                        <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, marginBottom: 20, lineHeight: 18, maxWidth: 320 }}>
+                          Share your school's public admission form link with parents or prospective students to receive online applications.
+                        </Text>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#059669', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 }}
+                          onPress={() => setShowShareAdmissionModal(true)}>
+                          <IconComp name="share-social" size={16} color="#FFFFFF" />
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Share Admission Link</Text>
+                        </TouchableOpacity>
                       </View>
-                    </View>
-                  ))}
-                </View>
+                    )}
+                  </View>
+                </>
               )}
 
               {/* Pagination Controls - ONLY shown when filtered students > 10 */}
@@ -15607,178 +17610,632 @@ function App() {
           )}
 
           {/* ==================== TAB 3: ATTENDANCE MANAGEMENT (Screenshot 5 Matching) ==================== */}
-          {activeAdminTab === 'Attendance' && (
-            <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
-              
-              {/* Purple Hero Header Card */}
-              <ModuleHeaderCard
-                icon="clipboard-outline"
-                title="Attendance Management"
-                subtitle="View analytics, run cutoff audits, and log student attendance records."
-              />
+          {activeAdminTab === 'Attendance' && (() => {
+            const adminAttStudentsList = [
+              { id: 'st_abi', name: 'ABI', rollNo: '1', admNo: 'ADM-001' },
+              { id: 'st_balu', name: 'BALU', rollNo: '2', admNo: 'ADM-002' },
+              { id: 'st_chandru', name: 'CHANDRU', rollNo: '3', admNo: 'ADM-003' },
+            ];
 
-              {/* Header Navigation Pills: Dashboard | Daily Marking | Analytics (Screenshot 5 Matching) */}
-              <View style={styles.subHeaderPillsContainer}>
-                <TouchableOpacity
-                  style={[styles.subHeaderPillBtn, attendanceSubTab === 'dashboard' && styles.subHeaderPillBtnActive]}
-                  onPress={() => setAttendanceSubTab('dashboard')}>
-                  <IconComp name="grid-outline" size={16} color={attendanceSubTab === 'dashboard' ? '#b07fa8' : '#64748B'} />
-                  <Text style={[styles.subHeaderPillText, attendanceSubTab === 'dashboard' && styles.subHeaderPillTextActive]}>
-                    Dashboard
-                  </Text>
-                </TouchableOpacity>
+            const filteredAttStudents = adminAttStudentsList.filter(st => {
+              if (!adminAttSearchQuery.trim()) return true;
+              const q = adminAttSearchQuery.toLowerCase();
+              return st.name.toLowerCase().includes(q) || st.rollNo.toLowerCase().includes(q) || st.admNo.toLowerCase().includes(q);
+            });
 
-                <TouchableOpacity
-                  style={[styles.subHeaderPillBtn, attendanceSubTab === 'marking' && styles.subHeaderPillBtnActive]}
-                  onPress={() => setAttendanceSubTab('marking')}>
-                  <IconComp name="clipboard-outline" size={16} color={attendanceSubTab === 'marking' ? '#b07fa8' : '#64748B'} />
-                  <Text style={[styles.subHeaderPillText, attendanceSubTab === 'marking' && styles.subHeaderPillTextActive]}>
-                    Daily Marking
-                  </Text>
-                </TouchableOpacity>
+            const presentCount = Object.values(adminAttRecords).filter(v => v === 'Present').length;
+            const lateCount = Object.values(adminAttRecords).filter(v => v === 'Late').length;
+            const absentCount = Object.values(adminAttRecords).filter(v => v === 'Absent').length;
 
-                <TouchableOpacity
-                  style={[styles.subHeaderPillBtn, attendanceSubTab === 'analytics' && styles.subHeaderPillBtnActive]}
-                  onPress={() => setAttendanceSubTab('analytics')}>
-                  <IconComp name="stats-chart-outline" size={16} color={attendanceSubTab === 'analytics' ? '#b07fa8' : '#64748B'} />
-                  <Text style={[styles.subHeaderPillText, attendanceSubTab === 'analytics' && styles.subHeaderPillTextActive]}>
-                    Analytics
-                  </Text>
-                </TouchableOpacity>
-              </View>
+            return (
+              <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {/* Purple Hero Header Card */}
+                <ModuleHeaderCard
+                  icon="clipboard-outline"
+                  title="Attendance Management"
+                  subtitle="Log daily records, view trends, and track attendance across classes."
+                  secondaryActions={[
+                    {
+                      label: "Edit Timetable",
+                      icon: "calendar-outline",
+                      onPress: () => {
+                        setTimetableClassSelected(adminAttClass);
+                        setActiveModuleModal('Timetables');
+                      },
+                    },
+                  ]}
+                />
 
-              {/* Content Mode 1: Dashboard View (Screenshot 5 Exact Matching) */}
-              {attendanceSubTab === 'dashboard' && (
-                <View style={{ gap: 14 }}>
-                  {/* Historical Archives Date Card */}
-                  <View style={styles.historicalArchivesCard}>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <IconComp name="calendar-outline" size={20} color="#b07fa8" />
-                      <View>
-                        <Text style={styles.archivesTitleText}>Historical Archives</Text>
-                        <Text style={styles.archivesSubText}>Select a calendar date to view the daily attendance snapshot.</Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.datePickerInputBox}
-                      onPress={() => openDatePicker('adminAttendanceArchive', attendanceArchiveDate, 'Select Attendance Date')}
-                      activeOpacity={0.8}>
-                      <Text style={styles.datePickerText}>{attendanceArchiveDate}</Text>
-                      <IconComp name="calendar-sharp" size={14} color="#64748B" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Empty / No Statistics Calculated Card (Screenshot 5 Matching) */}
-                  <View style={styles.emptyModuleCardContainer}>
-                    <View style={styles.emptyIconCircleLarge}>
-                      <IconComp name="clipboard-outline" size={40} color="#94A3B8" />
-                    </View>
-                    <Text style={styles.emptyModuleTitle}>No Statistics Calculated</Text>
-                    <Text style={styles.emptyModuleSub}>
-                      There are no dashboard records compiled for {attendanceArchiveDate}. Marks must be saved to compile stats.
+                {/* Sub-Header Navigation Tabs (Daily Marking vs Analytics & Reports) */}
+                <View style={styles.subHeaderPillsContainer}>
+                  <TouchableOpacity
+                    style={[styles.subHeaderPillBtn, (adminAttViewMode === 'Daily Marking' || attendanceSubTab === 'marking') && styles.subHeaderPillBtnActive]}
+                    onPress={() => {
+                      setAdminAttViewMode('Daily Marking');
+                      setAttendanceSubTab('marking');
+                    }}>
+                    <IconComp name="clipboard-outline" size={16} color={(adminAttViewMode === 'Daily Marking' || attendanceSubTab === 'marking') ? '#b07fa8' : '#64748B'} />
+                    <Text style={[styles.subHeaderPillText, (adminAttViewMode === 'Daily Marking' || attendanceSubTab === 'marking') && styles.subHeaderPillTextActive]}>
+                      Daily Marking
                     </Text>
-                    <TouchableOpacity
-                      style={styles.emptyActionPurpleBtn}
-                      onPress={() => setAttendanceSubTab('marking')}>
-                      <IconComp name="create-outline" size={16} color="#FFFFFF" />
-                      <Text style={styles.emptyActionBtnText}>Go to Daily Marking</Text>
-                    </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.subHeaderPillBtn, (adminAttViewMode !== 'Daily Marking' || attendanceSubTab === 'analytics') && styles.subHeaderPillBtnActive]}
+                    onPress={() => {
+                      setAdminAttViewMode('This Month Report');
+                      setAttendanceSubTab('analytics');
+                    }}>
+                    <IconComp name="stats-chart-outline" size={16} color={(adminAttViewMode !== 'Daily Marking' || attendanceSubTab === 'analytics') ? '#b07fa8' : '#64748B'} />
+                    <Text style={[styles.subHeaderPillText, (adminAttViewMode !== 'Daily Marking' || attendanceSubTab === 'analytics') && styles.subHeaderPillTextActive]}>
+                      Analytics & Reports
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-              )}
 
-              {/* Content Mode 2: Daily Marking View */}
-              {attendanceSubTab === 'marking' && (
-                <View style={{ gap: 14 }}>
-                  <View style={styles.attendanceFilterCard}>
-                    <View style={styles.controlDropdownRow}>
-                      <View style={[styles.dropdownBox, { flex: 1 }]}>
-                        <IconComp name="calendar-outline" size={16} color="#64748B" />
-                        <Text style={styles.dropdownTextValue}>08-09-2026</Text>
-                      </View>
-                      <View style={[styles.dropdownBox, { flex: 1 }]}>
-                        <Text style={styles.dropdownTextValue}>Class 10</Text>
-                      </View>
-                      <View style={[styles.dropdownBox, { flex: 1 }]}>
-                        <Text style={styles.dropdownTextValue}>Section A</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.sectionCardBox}>
-                    <View style={styles.tableHeaderRow}>
-                      <Text style={[styles.tableHeaderText, { width: 50 }]}>Roll No</Text>
-                      <Text style={[styles.tableHeaderText, { flex: 1 }]}>Student Name</Text>
-                      <Text style={[styles.tableHeaderText, { width: 80, textAlign: 'right' }]}>Status</Text>
-                    </View>
-
-                    {paginatedAttendance.map(student => (
-                      <View key={student.id} style={styles.tableDataRow}>
-                        <Text style={[styles.tableCellText, { width: 50, color: '#64748B' }]}>{student.rollNo}</Text>
-                        <Text style={[styles.tableCellText, { flex: 1, fontWeight: '600' }]}>{student.name}</Text>
+                {/* ========================================================================= */}
+                {/* VIEW 1: DAILY MARKING (EXACT MATCH FOR REFERENCE IMAGE 3) */}
+                {/* ========================================================================= */}
+                {(adminAttViewMode === 'Daily Marking' && attendanceSubTab !== 'analytics') && (
+                  <View style={{ gap: 14 }}>
+                    {/* Top Control Bar: Class | View Mode | Date | Session (Image 3 Matching) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {/* 1. Class Dropdown */}
                         <TouchableOpacity
-                          style={[
-                            styles.attendanceBadgePill,
-                            student.attendanceStatus === 'Present' && styles.attPresentStyle,
-                            student.attendanceStatus === 'Absent' && styles.attAbsentStyle,
-                            student.attendanceStatus === 'OD' && styles.attOdStyle,
-                          ]}
-                          onPress={() => toggleAttendance(student.id)}>
-                          <Text style={styles.attendanceBadgeText}>{student.attendanceStatus}</Text>
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => {
+                            setShowAdminAttClassPicker(prev => !prev);
+                            setShowAdminAttModePicker(false);
+                            setShowAdminAttSessionPicker(false);
+                          }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                            {adminAttClass}
+                          </Text>
+                          <IconComp name="chevron-down" size={14} color="#64748B" />
+                        </TouchableOpacity>
+
+                        {/* 2. View Mode Dropdown */}
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => {
+                            setShowAdminAttModePicker(prev => !prev);
+                            setShowAdminAttClassPicker(false);
+                            setShowAdminAttSessionPicker(false);
+                          }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                            {adminAttViewMode}
+                          </Text>
+                          <IconComp name="chevron-down" size={14} color="#64748B" />
                         </TouchableOpacity>
                       </View>
-                    ))}
 
-                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                      {/* Dropdown Options List for Class */}
+                      {showAdminAttClassPicker && (
+                        <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#FFFFFF', overflow: 'hidden' }}>
+                          {['Grade - 10 - Section B', 'Grade - 10 - Section A', 'grade - 3 - Section A', 'PRE KG - Section A'].map(cItem => (
+                            <TouchableOpacity
+                              key={cItem}
+                              style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: adminAttClass === cItem ? '#faedf7' : '#FFFFFF' }}
+                              onPress={() => {
+                                setAdminAttClass(cItem);
+                                setShowAdminAttClassPicker(false);
+                              }}>
+                              <Text style={{ fontSize: 12, fontWeight: adminAttClass === cItem ? '700' : '500', color: adminAttClass === cItem ? '#b07fa8' : '#0F172A' }}>
+                                {cItem}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+
+                      {/* Dropdown Options List for View Mode */}
+                      {showAdminAttModePicker && (
+                        <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#FFFFFF', overflow: 'hidden' }}>
+                          {(['Daily Marking', 'This Week Report', 'This Month Report', 'This Term Report'] as const).map(mItem => (
+                            <TouchableOpacity
+                              key={mItem}
+                              style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: adminAttViewMode === mItem ? '#faedf7' : '#FFFFFF' }}
+                              onPress={() => {
+                                setAdminAttViewMode(mItem);
+                                setShowAdminAttModePicker(false);
+                                if (mItem !== 'Daily Marking') {
+                                  setAttendanceSubTab('analytics');
+                                }
+                              }}>
+                              <Text style={{ fontSize: 12, fontWeight: adminAttViewMode === mItem ? '700' : '500', color: adminAttViewMode === mItem ? '#b07fa8' : '#0F172A' }}>
+                                {mItem}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {/* 3. Date Picker Button */}
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => openDatePicker('adminAttDate', adminAttDate, 'Select Attendance Date')}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                            {adminAttDate}
+                          </Text>
+                          <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                        </TouchableOpacity>
+
+                        {/* 4. Session Dropdown */}
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => {
+                            setShowAdminAttSessionPicker(prev => !prev);
+                            setShowAdminAttClassPicker(false);
+                            setShowAdminAttModePicker(false);
+                          }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                            {adminAttSession}
+                          </Text>
+                          <IconComp name="chevron-down" size={14} color="#64748B" />
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Dropdown Options List for Session */}
+                      {showAdminAttSessionPicker && (
+                        <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#FFFFFF', overflow: 'hidden' }}>
+                          {(['FN (Forenoon)', 'AN (Afternoon)'] as const).map(sItem => (
+                            <TouchableOpacity
+                              key={sItem}
+                              style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: adminAttSession === sItem ? '#faedf7' : '#FFFFFF' }}
+                              onPress={() => {
+                                setAdminAttSession(sItem);
+                                setShowAdminAttSessionPicker(false);
+                              }}>
+                              <Text style={{ fontSize: 12, fontWeight: adminAttSession === sItem ? '700' : '500', color: adminAttSession === sItem ? '#b07fa8' : '#0F172A' }}>
+                                {sItem}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Search & Quick Action Counters Row (Image 3 Matching) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
+                      <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        backgroundColor: '#F8FAFC',
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        height: 42,
+                      }}>
+                        <IconComp name="search-outline" size={16} color="#94A3B8" />
+                        <TextInput
+                          style={{ flex: 1, fontSize: 12, color: '#0F172A', paddingVertical: 0 }}
+                          placeholder="Search student by name or roll..."
+                          placeholderTextColor="#94A3B8"
+                          value={adminAttSearchQuery}
+                          onChangeText={setAdminAttSearchQuery}
+                        />
+                      </View>
+
+                      {/* Status Summary Pills (Present, Late, Absent counters) */}
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            paddingVertical: 7,
+                            borderRadius: 8,
+                            backgroundColor: '#DCFCE7',
+                            borderWidth: 1,
+                            borderColor: '#86EFAC',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => {
+                            const newRecs: Record<string, 'Present' | 'Absent' | 'Late'> = { ...adminAttRecords };
+                            filteredAttStudents.forEach(s => { newRecs[s.id] = 'Present'; });
+                            setAdminAttRecords(newRecs);
+                            showToast('Marked all as Present');
+                          }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>
+                            Present ({presentCount})
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            paddingVertical: 7,
+                            borderRadius: 8,
+                            backgroundColor: '#FEF3C7',
+                            borderWidth: 1,
+                            borderColor: '#FCD34D',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => {
+                            const newRecs: Record<string, 'Present' | 'Absent' | 'Late'> = { ...adminAttRecords };
+                            filteredAttStudents.forEach(s => { newRecs[s.id] = 'Late'; });
+                            setAdminAttRecords(newRecs);
+                            showToast('Marked all as Late');
+                          }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706' }}>
+                            Late ({lateCount})
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            paddingVertical: 7,
+                            borderRadius: 8,
+                            backgroundColor: '#FEE2E2',
+                            borderWidth: 1,
+                            borderColor: '#FCA5A5',
+                            alignItems: 'center',
+                          }}
+                          onPress={() => {
+                            const newRecs: Record<string, 'Present' | 'Absent' | 'Late'> = { ...adminAttRecords };
+                            filteredAttStudents.forEach(s => { newRecs[s.id] = 'Absent'; });
+                            setAdminAttRecords(newRecs);
+                            showToast('Marked all as Absent');
+                          }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>
+                            Absent ({absentCount})
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Student Records List (Image 3 Exact Layout) */}
+                    <View style={{ gap: 10 }}>
+                      {filteredAttStudents.map(student => {
+                        const curStatus = adminAttRecords[student.id] || 'Present';
+                        return (
+                          <View
+                            key={student.id}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 16,
+                              padding: 14,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              shadowColor: '#000',
+                              shadowOffset: { width: 0, height: 1 },
+                              shadowOpacity: 0.04,
+                              shadowRadius: 4,
+                              elevation: 1,
+                            }}>
+                            {/* Student Row Header */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#faedf7', justifyContent: 'center', alignItems: 'center' }}>
+                                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#b07fa8' }}>{student.rollNo}</Text>
+                                </View>
+                                <View>
+                                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{student.name}</Text>
+                                  <Text style={{ fontSize: 11, color: '#64748B' }}>{student.admNo} • Roll {student.rollNo}</Text>
+                                </View>
+                              </View>
+                            </View>
+
+                            {/* Status Buttons: Present | Absent | Late (Matching Image 3) */}
+                            <View style={{ flexDirection: 'row', gap: 8 }}>
+                              {/* Present */}
+                              <TouchableOpacity
+                                style={{
+                                  flex: 1,
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                  borderWidth: 1,
+                                  borderColor: curStatus === 'Present' ? '#16A34A' : '#E2E8F0',
+                                  backgroundColor: curStatus === 'Present' ? '#DCFCE7' : '#FFFFFF',
+                                }}
+                                onPress={() => setAdminAttRecords(prev => ({ ...prev, [student.id]: 'Present' }))}>
+                                <Text style={{ fontSize: 12, fontWeight: curStatus === 'Present' ? '800' : '600', color: curStatus === 'Present' ? '#16A34A' : '#64748B' }}>
+                                  Present
+                                </Text>
+                              </TouchableOpacity>
+
+                              {/* Absent */}
+                              <TouchableOpacity
+                                style={{
+                                  flex: 1,
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                  borderWidth: 1,
+                                  borderColor: curStatus === 'Absent' ? '#DC2626' : '#E2E8F0',
+                                  backgroundColor: curStatus === 'Absent' ? '#FEE2E2' : '#FFFFFF',
+                                }}
+                                onPress={() => setAdminAttRecords(prev => ({ ...prev, [student.id]: 'Absent' }))}>
+                                <Text style={{ fontSize: 12, fontWeight: curStatus === 'Absent' ? '800' : '600', color: curStatus === 'Absent' ? '#DC2626' : '#64748B' }}>
+                                  Absent
+                                </Text>
+                              </TouchableOpacity>
+
+                              {/* Late (Selected in Image 3) */}
+                              <TouchableOpacity
+                                style={{
+                                  flex: 1,
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                  borderWidth: 1,
+                                  borderColor: curStatus === 'Late' ? '#D97706' : '#E2E8F0',
+                                  backgroundColor: curStatus === 'Late' ? '#FEF3C7' : '#FFFFFF',
+                                }}
+                                onPress={() => setAdminAttRecords(prev => ({ ...prev, [student.id]: 'Late' }))}>
+                                <Text style={{ fontSize: 12, fontWeight: curStatus === 'Late' ? '800' : '600', color: curStatus === 'Late' ? '#D97706' : '#64748B' }}>
+                                  Late
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+
+                    {/* Bottom Save Bar (Image 3 Matching) */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4, marginBottom: 20 }}>
                       <TouchableOpacity
-                        style={[styles.attFooterActionBtn, { backgroundColor: '#E2E8F0' }]}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          backgroundColor: '#FFFFFF',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
                         onPress={() => {
-                          setStudents(prev => prev.map(s => ({ ...s, attendanceStatus: 'Present' })));
-                          showToast('Marked all students Present!');
+                          const newRecs: Record<string, 'Present' | 'Absent' | 'Late'> = {};
+                          adminAttStudentsList.forEach(s => { newRecs[s.id] = 'Present'; });
+                          setAdminAttRecords(newRecs);
+                          showToast('Marked all students Present');
                         }}>
-                        <Text style={[styles.attFooterActionBtnText, { color: '#334155' }]}>Mark All Present</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Mark All Present</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.attFooterActionBtn, { backgroundColor: '#b07fa8' }]}
-                        onPress={() => showToast('Attendance saved to school database!')}>
-                        <Text style={styles.attFooterActionBtnText}>Save Attendance</Text>
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          backgroundColor: '#986794',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                        onPress={handleSaveAdminAttendance}
+                        disabled={isSavingAdminAttendance}>
+                        {isSavingAdminAttendance ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>Save Attendance</Text>
+                          </>
+                        )}
                       </TouchableOpacity>
                     </View>
                   </View>
-                </View>
-              )}
+                )}
 
-              {/* Content Mode 3: Analytics View */}
-              {attendanceSubTab === 'analytics' && (
-                <View style={styles.sectionCardBox}>
-                  <Text style={styles.sectionCardTitle}>Monthly Attendance Analytics</Text>
-                  <Text style={{ fontSize: 13, color: '#64748B', marginTop: 4, marginBottom: 12 }}>
-                    Overall school attendance rating is currently at 85%.
-                  </Text>
-                  <View style={styles.attendanceBarItem}>
-                    <View style={styles.barLabelRow}>
-                      <Text style={styles.barCategoryTitle}>Grade 3</Text>
-                      <Text style={styles.barPercentValue}>92% Average</Text>
+                {/* ========================================================================= */}
+                {/* VIEW 2: ANALYTICS & REPORTS (EXACT MATCH FOR REFERENCE IMAGE 4) */}
+                {/* ========================================================================= */}
+                {(adminAttViewMode !== 'Daily Marking' || attendanceSubTab === 'analytics') && (
+                  <View style={{ gap: 14, marginBottom: 20 }}>
+                    {/* Filter Bar: Date & Class Filter */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {/* Date Picker Button */}
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => openDatePicker('adminAttAnalyticsDate', adminAttAnalyticsDate, 'Select Analytics Date')}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                            {adminAttAnalyticsDate}
+                          </Text>
+                          <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                        </TouchableOpacity>
+
+                        {/* Class Filter Dropdown */}
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => setShowAdminAttAnalyticsClassDropdown(prev => !prev)}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                            {adminAttRepeatedClassFilter}
+                          </Text>
+                          <IconComp name="chevron-down" size={14} color="#64748B" />
+                        </TouchableOpacity>
+                      </View>
+
+                      {showAdminAttAnalyticsClassDropdown && (
+                        <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#FFFFFF', overflow: 'hidden' }}>
+                          {['All Classes', 'Grade - 10 - Section B', 'grade - 3 - Section A', 'PRE KG - Section A'].map(cItem => (
+                            <TouchableOpacity
+                              key={cItem}
+                              style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: adminAttRepeatedClassFilter === cItem ? '#faedf7' : '#FFFFFF' }}
+                              onPress={() => {
+                                setAdminAttRepeatedClassFilter(cItem);
+                                setShowAdminAttAnalyticsClassDropdown(false);
+                              }}>
+                              <Text style={{ fontSize: 12, fontWeight: adminAttRepeatedClassFilter === cItem ? '700' : '500', color: adminAttRepeatedClassFilter === cItem ? '#b07fa8' : '#0F172A' }}>
+                                {cItem}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
                     </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '92%', backgroundColor: '#059669' }]} />
+
+                    {/* 3 Metric Cards Row (Image 4 Matching) */}
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      {/* Card 1: Overall Attendance Rate */}
+                      <View style={{ flex: 1, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 14, padding: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <IconComp name="trending-up-outline" size={18} color="#059669" />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#059669' }}>Today</Text>
+                        </View>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857' }}>ATTENDANCE RATE</Text>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#065F46', marginTop: 2 }}>0.0%</Text>
+                      </View>
+
+                      {/* Card 2: Classes Reported */}
+                      <View style={{ flex: 1, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 14, padding: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <IconComp name="school-outline" size={18} color="#2563EB" />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#2563EB' }}>Active</Text>
+                        </View>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#1D4ED8' }}>CLASSES</Text>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#1E40AF', marginTop: 2 }}>0/11</Text>
+                      </View>
+
+                      {/* Card 3: Total Students */}
+                      <View style={{ flex: 1, backgroundColor: '#faedf7', borderWidth: 1, borderColor: '#F5D0FE', borderRadius: 14, padding: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <IconComp name="people-outline" size={18} color="#b07fa8" />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#b07fa8' }}>Enrolled</Text>
+                        </View>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#86198F' }}>STUDENTS</Text>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#701A75', marginTop: 2 }}>3</Text>
+                      </View>
+                    </View>
+
+                    {/* Attendance Overview (FN & AN) (Image 4 Matching) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                        <IconComp name="bar-chart-outline" size={18} color="#b07fa8" />
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>
+                          Attendance Overview (FN & AN)
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        {/* FN Box */}
+                        <View style={{ flex: 1, backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A', marginBottom: 6 }}>Forenoon (FN)</Text>
+                          <View style={{ gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: '#16A34A', fontWeight: '600' }}>Present: 0</Text>
+                            <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '600' }}>Late: 2</Text>
+                            <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '600' }}>Absent: 0</Text>
+                          </View>
+                        </View>
+
+                        {/* AN Box */}
+                        <View style={{ flex: 1, backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A', marginBottom: 6 }}>Afternoon (AN)</Text>
+                          <View style={{ gap: 4 }}>
+                            <Text style={{ fontSize: 11, color: '#16A34A', fontWeight: '600' }}>Present: 0</Text>
+                            <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '600' }}>Late: 0</Text>
+                            <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '600' }}>Absent: 0</Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Chronic Absence Alerts (Image 4 Matching) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        <IconComp name="alert-circle-outline" size={18} color="#D97706" />
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>
+                          Chronic Absence Alerts
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 12 }}>
+                        Students with consecutive or excessive absences requiring intervention.
+                      </Text>
+
+                      <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                        backgroundColor: '#ECFDF5',
+                        borderWidth: 1,
+                        borderColor: '#A7F3D0',
+                        borderRadius: 12,
+                        padding: 12,
+                      }}>
+                        <IconComp name="shield-checkmark-outline" size={22} color="#059669" />
+                        <Text style={{ fontSize: 12, color: '#065F46', flex: 1, lineHeight: 16 }}>
+                          No critical chronic absentees detected today. All student attendance levels are within normal parameters.
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                  <View style={styles.attendanceBarItem}>
-                    <View style={styles.barLabelRow}>
-                      <Text style={styles.barCategoryTitle}>PRE KG</Text>
-                      <Text style={styles.barPercentValue}>78% Average</Text>
-                    </View>
-                    <View style={styles.progressBarTrack}>
-                      <View style={[styles.progressBarFill, { width: '78%', backgroundColor: '#059669' }]} />
-                    </View>
-                  </View>
-                </View>
-              )}
-
-            </ScrollView>
-          )}
+                )}
+              </ScrollView>
+            );
+          })()}
 
           {/* ==================== TAB 4: FEES & PAYMENTS (Image 3 Matching) ==================== */}
           {activeAdminTab === 'Fees' && renderFeeManagementContent()}
@@ -15905,24 +18362,6 @@ function App() {
                 </TouchableOpacity>
               )}
 
-              {activeModuleModal === 'Staff Directory' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowAddStaffModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Add Staff</Text>
-                </TouchableOpacity>
-              )}
-
-              {activeModuleModal === 'Classes & Sections' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowAddClassModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Create Class</Text>
-                </TouchableOpacity>
-              )}
-
 
 
               {activeModuleModal === 'HR & Payroll' && (
@@ -15940,15 +18379,6 @@ function App() {
                   onPress={() => showToast('Timetable changes saved successfully')}>
                   <IconComp name="checkmark-done-outline" size={14} color="#FFFFFF" />
                   <Text style={styles.moduleHeaderBtnText}>Save Changes</Text>
-                </TouchableOpacity>
-              )}
-
-              {activeModuleModal === 'Calendar' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowAddEventModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Add Event</Text>
                 </TouchableOpacity>
               )}
 
@@ -15999,7 +18429,11 @@ function App() {
                 canteenMealFilter !== 'All';
 
               return (
-                <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+                <ScrollView
+                  contentContainerStyle={{ padding: 16, paddingBottom: 260 }}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  showsVerticalScrollIndicator={false}>
                   {/* Header Title Card */}
                   <ModuleHeaderCard
                     icon="cafe-outline"
@@ -16226,57 +18660,324 @@ function App() {
                   subtitle="Define the academic structure and categories of your institution."
                 />
 
-                {/* Top Action Buttons */}
-                <View style={styles.actionButtonsTopRow}>
+                {/* Top Action Buttons (Matching Image 4 & Image 2, Horizontal scroll so no button is cut off) */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingBottom: 6, marginBottom: 8 }}>
                   <TouchableOpacity style={styles.outlineActionBtn} onPress={() => setShowCategoryModal(true)}>
                     <IconComp name="tags-outline" size={14} color="#475569" />
                     <Text style={styles.outlineActionBtnText}>Manage Categories</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => showToast('Bulk import classes modal opened')}>
+                  <TouchableOpacity style={styles.outlineActionBtn} onPress={() => setShowClassBulkImportModal(true)}>
                     <IconComp name="cloud-upload-outline" size={14} color="#475569" />
                     <Text style={styles.outlineActionBtnText}>Bulk Import</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowAddClassModal(true)}>
-                    <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>+ Create New Class</Text>
+                  <TouchableOpacity
+                    style={showAddClassCard ? [styles.outlineActionBtn, { borderColor: '#b07fa8' }] : styles.purplePrimaryActionBtn}
+                    onPress={() => {
+                      if (showAddClassCard) {
+                        setEditingClassId(null);
+                        setNewClassName('');
+                        setNewClassSection('');
+                        setNewClassCategory('');
+                        setShowAddClassCard(false);
+                      } else {
+                        setShowAddClassCard(true);
+                      }
+                    }}>
+                    {!showAddClassCard && <IconComp name="add-outline" size={14} color="#FFFFFF" />}
+                    <Text style={showAddClassCard ? [styles.outlineActionBtnText, { color: '#b07fa8', fontWeight: '700' }] : styles.purplePrimaryBtnText}>
+                      {showAddClassCard ? 'Cancel' : 'Create New Class'}
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+
+                {/* --- INLINE "ADD NEW CLASS" CARD (MATCHING REFERENCE IMAGE 4) --- */}
+                {showAddClassCard && (
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 16,
+                    padding: 16,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    marginBottom: 16,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 6,
+                    elevation: 2,
+                  }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 14 }}>
+                      {editingClassId ? 'Edit Class' : 'Add New Class'}
+                    </Text>
+
+                    {/* Field 1: Category (Optional) */}
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                      Category (Optional)
+                    </Text>
+                    <TouchableOpacity
+                      style={{
+                        height: 44,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        paddingHorizontal: 14,
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        backgroundColor: '#FFFFFF',
+                        marginBottom: 12,
+                      }}
+                      onPress={() => setShowClassCategoryDropdown(prev => !prev)}>
+                      <Text style={{ fontSize: 13, color: newClassCategory ? '#0F172A' : '#94A3B8', fontWeight: '500' }}>
+                        {newClassCategory || 'Select Category...'}
+                      </Text>
+                      <IconComp name="chevron-down-outline" size={14} color="#64748B" />
+                    </TouchableOpacity>
+
+                    {showClassCategoryDropdown && (
+                      <View style={{
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        backgroundColor: '#FFFFFF',
+                        marginBottom: 12,
+                        overflow: 'hidden',
+                      }}>
+                        <TouchableOpacity
+                          style={{ paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}
+                          onPress={() => {
+                            setNewClassCategory('');
+                            setShowClassCategoryDropdown(false);
+                          }}>
+                          <Text style={{ fontSize: 13, color: '#64748B' }}>Select Category...</Text>
+                        </TouchableOpacity>
+                        {categoriesList.map(cat => (
+                          <TouchableOpacity
+                            key={cat.id}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 14,
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                              backgroundColor: newClassCategory === cat.name ? '#F8FAFC' : '#FFFFFF',
+                            }}
+                            onPress={() => {
+                              setNewClassCategory(cat.name);
+                              setShowClassCategoryDropdown(false);
+                            }}>
+                            <Text style={{
+                              fontSize: 13,
+                              color: newClassCategory === cat.name ? '#b07fa8' : '#0F172A',
+                              fontWeight: newClassCategory === cat.name ? '700' : '500',
+                            }}>
+                              {cat.name}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Field 2: Class/Grade Name * */}
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                      Class/Grade Name <Text style={{ color: '#EF4444' }}>*</Text>
+                    </Text>
+                    <RNTextInput
+                      style={{
+                        height: 44,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        paddingHorizontal: 14,
+                        fontSize: 13,
+                        color: '#0F172A',
+                        backgroundColor: '#FFFFFF',
+                        marginBottom: 12,
+                      }}
+                      placeholder="e.g., Grade 10, Freshman"
+                      placeholderTextColor="#94A3B8"
+                      value={newClassName}
+                      onChangeText={setNewClassName}
+                    />
+
+                    {/* Field 3: Section/Group * */}
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                      Section/Group <Text style={{ color: '#EF4444' }}>*</Text>
+                    </Text>
+                    <RNTextInput
+                      style={{
+                        height: 44,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        paddingHorizontal: 14,
+                        fontSize: 13,
+                        color: '#0F172A',
+                        backgroundColor: '#FFFFFF',
+                        marginBottom: 16,
+                      }}
+                      placeholder="E.G., A, B, SCIENCE"
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="characters"
+                      value={newClassSection}
+                      onChangeText={v => setNewClassSection(v.toUpperCase())}
+                    />
+
+                    {/* Save Class Button (Dark Slate Button Matching Image 4) */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#0F172A',
+                        paddingVertical: 12,
+                        borderRadius: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      onPress={handleSaveClass}
+                      disabled={isSavingClass}>
+                      <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '700' }}>
+                        {isSavingClass ? 'Saving...' : (editingClassId ? 'Update Class' : 'Save Class')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Filter Row (Matching Image 4) */}
+                <View style={[styles.searchFilterBoxContainer, { flexWrap: 'wrap', gap: 8 }]}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569', alignSelf: 'center' }}>Filters:</Text>
+                  
+                  {/* Category Filter Pill */}
+                  <TouchableOpacity
+                    style={styles.pageSizePillBox}
+                    onPress={() => {
+                      setShowCategoryFilterDropdown(prev => !prev);
+                      setShowClassFilterDropdown(false);
+                      setShowSectionFilterDropdown(false);
+                    }}>
+                    <Text style={styles.pageSizePillText}>{classCategoryFilter}</Text>
+                    <IconComp name="chevron-down-outline" size={12} color="#64748B" />
+                  </TouchableOpacity>
+
+                  {/* Class Name Filter Pill */}
+                  <TouchableOpacity
+                    style={styles.pageSizePillBox}
+                    onPress={() => {
+                      setShowClassFilterDropdown(prev => !prev);
+                      setShowCategoryFilterDropdown(false);
+                      setShowSectionFilterDropdown(false);
+                    }}>
+                    <Text style={styles.pageSizePillText}>{classFilterClassName}</Text>
+                    <IconComp name="chevron-down-outline" size={12} color="#64748B" />
+                  </TouchableOpacity>
+
+                  {/* Section Filter Pill */}
+                  <TouchableOpacity
+                    style={styles.pageSizePillBox}
+                    onPress={() => {
+                      setShowSectionFilterDropdown(prev => !prev);
+                      setShowCategoryFilterDropdown(false);
+                      setShowClassFilterDropdown(false);
+                    }}>
+                    <Text style={styles.pageSizePillText}>{classFilterSection}</Text>
+                    <IconComp name="chevron-down-outline" size={12} color="#64748B" />
                   </TouchableOpacity>
                 </View>
 
-                {/* Filter Row */}
-                <View style={styles.searchFilterBoxContainer}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Filters:</Text>
-                  <View style={styles.pageSizePillBox}>
-                    <Text style={styles.pageSizePillText}>All Categories</Text>
-                    <IconComp name="chevron-down-outline" size={12} color="#64748B" />
+                {/* Category Filter Dropdown List */}
+                {showCategoryFilterDropdown && (
+                  <View style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 4, marginBottom: 10 }}>
+                    {['All Categories', ...categoriesList.map(c => c.name)].map(cat => (
+                      <TouchableOpacity
+                        key={cat}
+                        style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, backgroundColor: classCategoryFilter === cat ? '#F1F5F9' : 'transparent' }}
+                        onPress={() => {
+                          setClassCategoryFilter(cat);
+                          setShowCategoryFilterDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: classCategoryFilter === cat ? '700' : '500' }}>{cat}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
-                  <View style={styles.pageSizePillBox}>
-                    <Text style={styles.pageSizePillText}>All Classes</Text>
-                    <IconComp name="chevron-down-outline" size={12} color="#64748B" />
-                  </View>
-                </View>
+                )}
 
-                {/* Class Cards Grid / Stacked Cards (Screenshot 2 Matching) */}
+                {/* Class Name Filter Dropdown List */}
+                {showClassFilterDropdown && (
+                  <View style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 4, marginBottom: 10 }}>
+                    {['All Classes', ...Array.from(new Set(classList.map(c => c.name))).sort()].map(clsName => (
+                      <TouchableOpacity
+                        key={clsName}
+                        style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, backgroundColor: classFilterClassName === clsName ? '#F1F5F9' : 'transparent' }}
+                        onPress={() => {
+                          setClassFilterClassName(clsName);
+                          setShowClassFilterDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: classFilterClassName === clsName ? '700' : '500' }}>{clsName}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* Section Filter Dropdown List */}
+                {showSectionFilterDropdown && (
+                  <View style={{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 4, marginBottom: 10 }}>
+                    {['All Sections', ...Array.from(new Set(classList.map(c => c.section))).sort()].map(sec => (
+                      <TouchableOpacity
+                        key={sec}
+                        style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, backgroundColor: classFilterSection === sec ? '#F1F5F9' : 'transparent' }}
+                        onPress={() => {
+                          setClassFilterSection(sec);
+                          setShowSectionFilterDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: classFilterSection === sec ? '700' : '500' }}>{sec}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* Class Cards Grid / Stacked Cards (Matching Image 4) */}
                 <View style={{ gap: 12 }}>
-                  {classList.map(cl => (
-                    <View key={cl.id} style={styles.classCardBoxItem}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                        <IconComp name="book-outline" size={20} color="#b07fa8" />
-                        <Text style={styles.classCardTitle}>{cl.name}</Text>
-                        <View style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
-                          <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{cl.section}</Text>
+                  {classList
+                    .filter(cl => {
+                      if (classCategoryFilter !== 'All Categories' && cl.category !== classCategoryFilter) return false;
+                      if (classFilterClassName !== 'All Classes' && cl.name !== classFilterClassName) return false;
+                      if (classFilterSection !== 'All Sections' && cl.section !== classFilterSection) return false;
+                      return true;
+                    })
+                    .map(cl => (
+                      <View key={cl.id} style={styles.classCardBoxItem}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                            <IconComp name="book-outline" size={20} color="#b07fa8" />
+                            <Text style={styles.classCardTitle}>{cl.name}</Text>
+                            <View style={[styles.classBadgePill, { backgroundColor: '#faedf7' }]}>
+                              <Text style={[styles.classBadgeText, { color: '#b07fa8' }]}>{cl.section}</Text>
+                            </View>
+                            {!!cl.category && (
+                              <View style={[styles.classBadgePill, { backgroundColor: '#FCE7F3' }]}>
+                                <Text style={[styles.classBadgeText, { color: '#BE185D' }]}>{cl.category}</Text>
+                              </View>
+                            )}
+                          </View>
+                          <TouchableOpacity
+                            style={{ padding: 4 }}
+                            onPress={() => {
+                              setEditingClassId(cl.id);
+                              setNewClassName(cl.name);
+                              setNewClassSection(cl.section);
+                              setNewClassCategory(cl.category || '');
+                              setShowAddClassCard(true);
+                            }}>
+                            <IconComp name="pencil-outline" size={16} color="#64748B" />
+                          </TouchableOpacity>
                         </View>
-                        <View style={[styles.classBadgePill, { backgroundColor: '#FCE7F3' }]}>
-                          <Text style={[styles.classBadgeText, { color: '#BE185D' }]}>{cl.category}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <IconComp name="people-outline" size={14} color="#64748B" />
+                          <Text style={styles.classCardSubText}>{cl.studentCount} Students currently assigned</Text>
                         </View>
                       </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <IconComp name="people-outline" size={14} color="#64748B" />
-                        <Text style={styles.classCardSubText}>{cl.studentCount} Students currently assigned</Text>
-                      </View>
-                    </View>
-                  ))}
+                    ))}
                 </View>
               </ScrollView>
             )}
@@ -16446,7 +19147,7 @@ function App() {
                     {
                       label: "Bulk Export",
                       icon: "download-outline",
-                      onPress: () => showToast('Exporting Payroll Report Excel...'),
+                      onPress: handleHrBulkExport,
                     },
                   ]}
                 />
@@ -16579,30 +19280,59 @@ function App() {
                     />
 
                     <View style={{ gap: 10 }}>
-                      {chatThreadsList.map(thread => (
-                        <TouchableOpacity
-                          key={thread.id}
-                          style={styles.studentCardContainer}
-                          onPress={() => setActiveChatThread(thread)}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center' }}>
-                              <IconComp name="chatbubbles-outline" size={22} color="#DC2626" />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                                <Text style={styles.studentCardNameText}>{thread.studentName}</Text>
-                                <Text style={{ fontSize: 11, color: '#94A3B8' }}>{thread.lastMessageTime}</Text>
+                      {(() => {
+                        const filteredThreads = chatThreadsList.filter(thread => {
+                          if (!chatSearchQuery.trim()) return true;
+                          const q = chatSearchQuery.toLowerCase();
+                          return (
+                            (thread.studentName && thread.studentName.toLowerCase().includes(q)) ||
+                            (thread.parentName && thread.parentName.toLowerCase().includes(q)) ||
+                            (thread.teacherName && thread.teacherName.toLowerCase().includes(q)) ||
+                            (thread.lastMessage && thread.lastMessage.toLowerCase().includes(q))
+                          );
+                        });
+
+                        if (filteredThreads.length === 0) {
+                          return (
+                            <View style={styles.emptyModuleCardContainer}>
+                              <View style={styles.emptyIconCircleLarge}>
+                                <IconComp name="chatbubble-ellipses-outline" size={36} color="#94A3B8" />
                               </View>
-                              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                                Parent: {thread.parentName} • Staff: {thread.teacherName}
-                              </Text>
-                              <Text style={{ fontSize: 13, color: '#334155', marginTop: 4 }} numberOfLines={1}>
-                                {thread.lastMessage}
+                              <Text style={styles.emptyModuleTitle}>No conversations found</Text>
+                              <Text style={styles.emptyModuleSub}>
+                                {chatSearchQuery.trim()
+                                  ? `No threads match "${chatSearchQuery}".`
+                                  : 'No conversations available to monitor.'}
                               </Text>
                             </View>
-                          </View>
-                        </TouchableOpacity>
-                      ))}
+                          );
+                        }
+
+                        return filteredThreads.map(thread => (
+                          <TouchableOpacity
+                            key={thread.id}
+                            style={styles.studentCardContainer}
+                            onPress={() => setActiveChatThread(thread)}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center' }}>
+                                <IconComp name="chatbubbles-outline" size={22} color="#DC2626" />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                                  <Text style={styles.studentCardNameText}>{thread.studentName}</Text>
+                                  <Text style={{ fontSize: 11, color: '#94A3B8' }}>{thread.lastMessageTime}</Text>
+                                </View>
+                                <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                                  Parent: {thread.parentName} • Staff: {thread.teacherName}
+                                </Text>
+                                <Text style={{ fontSize: 13, color: '#334155', marginTop: 4 }} numberOfLines={1}>
+                                  {thread.lastMessage}
+                                </Text>
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        ));
+                      })()}
                     </View>
                   </ScrollView>
                 ) : (
@@ -16685,114 +19415,419 @@ function App() {
               </View>
             )}
 
-            {/* --- MODULE 3: TIMETABLES --- */}
-            {activeModuleModal === 'Timetables' && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="calendar-outline"
-                  title="Timetable Management"
-                  subtitle="Structure the weekly schedule for each class."
-                />
+            {/* --- MODULE 3: TIMETABLES (MATCHING IMAGE 1 & IMAGE 3) --- */}
+            {activeModuleModal === 'Timetables' && (() => {
+              const allClassesList = classList && classList.length > 0
+                ? classList.map(c => `${c.name} - Section ${c.section || 'A'}`)
+                : ['Grade - 10 - Section B', 'grade - 3 - Section A', 'PRE KG - Section A'];
+              if (!allClassesList.includes('Grade - 10 - Section B')) {
+                allClassesList.unshift('Grade - 10 - Section B');
+              }
 
-                {/* Class Selector Pills */}
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B', marginBottom: 6 }}>SELECT CLASS</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 16 }}>
-                  {['grade - 3 - Section A', 'PRE KG - Section A'].map(cName => (
-                    <TouchableOpacity
-                      key={cName}
-                      style={[
-                        styles.filterChipItem,
-                        timetableClassSelected === cName && styles.filterChipItemActive,
-                      ]}
-                      onPress={() => setTimetableClassSelected(cName)}>
-                      <Text style={[styles.filterChipText, timetableClassSelected === cName && styles.filterChipTextActive]}>
-                        {cName}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+              const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
-                {/* Day Navigation Tabs */}
-                <View style={styles.moduleTabRow}>
-                  {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(day => (
-                    <TouchableOpacity
-                      key={day}
-                      style={[styles.moduleTabBtn, timetableMasterDay === day && styles.moduleTabBtnActive]}
-                      onPress={() => setTimetableMasterDay(day)}>
-                      <Text style={[styles.moduleTabText, timetableMasterDay === day && styles.moduleTabTextActive]}>
-                        {day}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+              return (
+                <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  <ModuleHeaderCard
+                    icon="calendar-outline"
+                    title="Timetable Management"
+                    subtitle="Structure the weekly schedule for each class."
+                  />
 
-                {/* Master Timetable Section */}
-                <View style={styles.studentCardContainer}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <View>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A' }}>Master Timetable</Text>
-                      <Text style={{ fontSize: 12, color: '#64748B' }}>
-                        Overview for {timetableClassSelected} ({timetableMasterDay})
-                      </Text>
+                  {/* Top Control Bar: Class Selector Dropdown & Save Changes (Matching Image 1 & Image 3) */}
+                  <View style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      {/* Class Dropdown Button */}
+                      <View style={{ flex: 1, position: 'relative' }}>
+                        <TouchableOpacity
+                          style={{
+                            height: 44,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            paddingHorizontal: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            backgroundColor: '#FFFFFF',
+                          }}
+                          onPress={() => setShowTimetableClassDropdown(prev => !prev)}
+                          activeOpacity={0.8}>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: timetableClassSelected ? '#0F172A' : '#64748B' }} numberOfLines={1}>
+                            {timetableClassSelected || 'Select a Class...'}
+                          </Text>
+                          <IconComp name="chevron-down" size={16} color="#64748B" />
+                        </TouchableOpacity>
+
+                        {/* Dropdown Options Popup (Image 1 Matching) */}
+                        {showTimetableClassDropdown && (
+                          <View style={{
+                            position: 'absolute',
+                            top: 48,
+                            left: 0,
+                            right: 0,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            elevation: 8,
+                            shadowColor: '#000',
+                            shadowOpacity: 0.15,
+                            shadowRadius: 8,
+                            shadowOffset: { width: 0, height: 4 },
+                            maxHeight: 220,
+                            zIndex: 999,
+                            overflow: 'hidden',
+                          }}>
+                            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                              {/* Option to return to overview */}
+                              <TouchableOpacity
+                                style={{
+                                  paddingVertical: 10,
+                                  paddingHorizontal: 14,
+                                  backgroundColor: !timetableClassSelected ? '#faedf7' : '#FFFFFF',
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#F1F5F9',
+                                }}
+                                onPress={() => {
+                                  setTimetableClassSelected('');
+                                  setShowTimetableClassDropdown(false);
+                                }}>
+                                <Text style={{ fontSize: 13, fontWeight: !timetableClassSelected ? '800' : '600', color: !timetableClassSelected ? '#b07fa8' : '#64748B' }}>
+                                  Select a Class...
+                                </Text>
+                              </TouchableOpacity>
+
+                              {allClassesList.map(cName => {
+                                const isSelected = timetableClassSelected === cName;
+                                return (
+                                  <TouchableOpacity
+                                    key={cName}
+                                    style={{
+                                      paddingVertical: 10,
+                                      paddingHorizontal: 14,
+                                      backgroundColor: isSelected ? '#faedf7' : '#FFFFFF',
+                                      borderBottomWidth: 1,
+                                      borderBottomColor: '#F1F5F9',
+                                    }}
+                                    onPress={() => {
+                                      setTimetableClassSelected(cName);
+                                      setShowTimetableClassDropdown(false);
+                                    }}>
+                                    <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#b07fa8' : '#0F172A' }}>
+                                      {cName}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Save Changes Button */}
+                      <TouchableOpacity
+                        style={{
+                          height: 44,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          backgroundColor: timetableClassSelected ? '#986794' : '#CBD5E1',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          opacity: timetableClassSelected ? 1 : 0.7,
+                        }}
+                        onPress={handleSaveTimetableChanges}
+                        disabled={!timetableClassSelected || isSavingTimetable}>
+                        {isSavingTimetable ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>Save Changes</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      style={styles.emptyActionPurpleBtn}
-                      onPress={() => setShowAddSlotModal(true)}>
-                      <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                      <Text style={styles.emptyActionBtnText}>Add Period</Text>
-                    </TouchableOpacity>
                   </View>
 
-                  {(!timetablesData[timetableClassSelected] ||
-                    !timetablesData[timetableClassSelected][timetableMasterDay] ||
-                    timetablesData[timetableClassSelected][timetableMasterDay].length === 0) ? (
-                    <View style={{ padding: 24, alignItems: 'center' }}>
-                      <IconComp name="time-outline" size={32} color="#CBD5E1" />
-                      <Text style={{ fontSize: 14, color: '#64748B', marginTop: 8 }}>
-                        No periods scheduled for {timetableMasterDay}.
-                      </Text>
+                  {/* ===================================================================== */}
+                  {/* VIEW 1: MASTER TIMETABLE OVERVIEW (MATCHING REFERENCE IMAGE 1) */}
+                  {/* ===================================================================== */}
+                  {!timetableClassSelected ? (
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, gap: 14 }}>
+                      <View>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>Master Timetable</Text>
+                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                          Overview of all classes for {timetableMasterDay}
+                        </Text>
+                      </View>
+
+                      {/* Day Navigation Tabs (Image 1 Matching) */}
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                        {daysOfWeek.map(day => (
+                          <TouchableOpacity
+                            key={day}
+                            style={{
+                              paddingVertical: 8,
+                              paddingHorizontal: 14,
+                              borderRadius: 10,
+                              backgroundColor: timetableMasterDay === day ? '#986794' : '#F8FAFC',
+                              borderWidth: 1,
+                              borderColor: timetableMasterDay === day ? '#986794' : '#CBD5E1',
+                            }}
+                            onPress={() => setTimetableMasterDay(day)}>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: timetableMasterDay === day ? '#FFFFFF' : '#334155' }}>
+                              {day}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+
+                      {/* Class Rows List (Image 1 Exact Layout) */}
+                      <View style={{ gap: 12, marginTop: 6 }}>
+                        {allClassesList.map(cName => {
+                          const classDaySchedule = (timetablesData[cName] && timetablesData[cName][timetableMasterDay]) || [];
+                          return (
+                            <View
+                              key={cName}
+                              style={{
+                                borderRadius: 14,
+                                borderWidth: 1,
+                                borderColor: '#E2E8F0',
+                                backgroundColor: '#FFFFFF',
+                                overflow: 'hidden',
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 1 },
+                                shadowOpacity: 0.04,
+                                shadowRadius: 3,
+                                elevation: 1,
+                              }}>
+                              {/* Class Row Header (Image 1 Matching) */}
+                              <View style={{
+                                backgroundColor: '#F8FAFC',
+                                paddingHorizontal: 14,
+                                paddingVertical: 10,
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#E2E8F0',
+                                flexDirection: 'row',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                              }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#986794' }} />
+                                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                                    {cName}
+                                  </Text>
+                                </View>
+
+                                {/* Edit Timetable Button (Image 1 Matching) */}
+                                <TouchableOpacity
+                                  style={{
+                                    backgroundColor: '#faedf7',
+                                    borderWidth: 1,
+                                    borderColor: '#eec9db',
+                                    borderRadius: 8,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 5,
+                                  }}
+                                  onPress={() => setTimetableClassSelected(cName)}>
+                                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>
+                                    Edit Timetable
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+
+                              {/* Class Row Content */}
+                              <View style={{ padding: 14 }}>
+                                {classDaySchedule.length === 0 ? (
+                                  <Text style={{ fontSize: 13, color: '#64748B', fontStyle: 'italic' }}>
+                                    No periods scheduled for {timetableMasterDay}.
+                                  </Text>
+                                ) : (
+                                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                                    {classDaySchedule.map((slot: any) => (
+                                      <View
+                                        key={slot.id}
+                                        style={{
+                                          padding: 10,
+                                          borderRadius: 10,
+                                          backgroundColor: '#F8FAFC',
+                                          borderWidth: 1,
+                                          borderColor: '#E2E8F0',
+                                          width: 170,
+                                        }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                                          <IconComp name="time-outline" size={12} color="#986794" />
+                                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#986794' }}>
+                                            {slot.startTime} - {slot.endTime}
+                                          </Text>
+                                        </View>
+                                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                                          {slot.subject}
+                                        </Text>
+                                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }} numberOfLines={1}>
+                                          {slot.teacher || 'Not Assigned'}
+                                        </Text>
+                                      </View>
+                                    ))}
+                                  </ScrollView>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
                     </View>
                   ) : (
-                    <View style={{ gap: 10 }}>
-                      {timetablesData[timetableClassSelected][timetableMasterDay].map((slot: any) => (
-                        <View key={slot.id} style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <IconComp name="time-outline" size={16} color="#b07fa8" />
-                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#b07fa8' }}>
-                                {slot.startTime} - {slot.endTime}
+                    /* ===================================================================== */
+                    /* VIEW 2: MOBILE TIMETABLE EDITOR (MATCHING REFERENCE IMAGE 3) */
+                    /* ===================================================================== */
+                    <View style={{ gap: 14 }}>
+                      {/* Sub-Header Notice */}
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                          Weekly Schedule
+                        </Text>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                          onPress={() => setTimetableClassSelected('')}>
+                          <IconComp name="arrow-back" size={14} color="#986794" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>Back to Overview</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Day-by-Day Cards (Monday to Friday stacked vertically for mobile) */}
+                      {daysOfWeek.map(day => {
+                        const daySlots = (timetablesData[timetableClassSelected] && timetablesData[timetableClassSelected][day]) || [];
+                        return (
+                          <View
+                            key={day}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 16,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              padding: 14,
+                              shadowColor: '#000',
+                              shadowOffset: { width: 0, height: 1 },
+                              shadowOpacity: 0.04,
+                              shadowRadius: 4,
+                              elevation: 1,
+                            }}>
+                            {/* Day Header Row */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#1E293B', letterSpacing: 0.8, textTransform: 'uppercase' }}>
+                                {day}
                               </Text>
+                              <TouchableOpacity
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  backgroundColor: '#faedf7',
+                                  paddingVertical: 4,
+                                  paddingHorizontal: 8,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: '#eec9db',
+                                }}
+                                onPress={() => handleOpenAddPeriodModal(day)}>
+                                <IconComp name="add" size={14} color="#986794" />
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#986794' }}>Add Period</Text>
+                              </TouchableOpacity>
                             </View>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setTimetablesData((prev: any) => {
-                                  const updatedDay = prev[timetableClassSelected][timetableMasterDay].filter((s: any) => s.id !== slot.id);
-                                  return {
-                                    ...prev,
-                                    [timetableClassSelected]: {
-                                      ...prev[timetableClassSelected],
-                                      [timetableMasterDay]: updatedDay,
-                                    },
-                                  };
-                                });
-                                showToast('Period removed');
+
+                            {/* Day Content: Free Day or Period Cards */}
+                            {daySlots.length === 0 ? (
+                              <View style={{
+                                borderWidth: 1.5,
+                                borderColor: '#CBD5E1',
+                                borderStyle: 'dashed',
+                                borderRadius: 12,
+                                paddingVertical: 20,
+                                alignItems: 'center',
+                                backgroundColor: '#F8FAFC',
                               }}>
-                              <IconComp name="trash-outline" size={16} color="#EF4444" />
-                            </TouchableOpacity>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#94A3B8' }}>Free Day</Text>
+                              </View>
+                            ) : (
+                              <View style={{ gap: 8 }}>
+                                {daySlots.map((slot: any) => (
+                                  <View
+                                    key={slot.id}
+                                    style={{
+                                      backgroundColor: '#FFFFFF',
+                                      borderWidth: 1,
+                                      borderColor: '#E2E8F0',
+                                      borderRadius: 12,
+                                      padding: 12,
+                                      shadowColor: '#000',
+                                      shadowOffset: { width: 0, height: 1 },
+                                      shadowOpacity: 0.03,
+                                      shadowRadius: 2,
+                                      elevation: 1,
+                                    }}>
+                                    {/* Top Row: Time & Actions */}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <IconComp name="time-outline" size={14} color="#986794" />
+                                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>
+                                          {slot.startTime} - {slot.endTime}
+                                        </Text>
+                                      </View>
+
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <TouchableOpacity
+                                          style={{ padding: 4 }}
+                                          onPress={() => handleOpenEditPeriodModal(day, slot)}>
+                                          <IconComp name="create-outline" size={16} color="#64748B" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={{ padding: 4 }}
+                                          onPress={() => handleDeleteTimetableSlot(day, slot.id)}>
+                                          <IconComp name="trash-outline" size={16} color="#EF4444" />
+                                        </TouchableOpacity>
+                                      </View>
+                                    </View>
+
+                                    {/* Middle Row: Subject */}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                                      <IconComp name="book-outline" size={15} color="#0F172A" />
+                                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                                        {slot.subject}
+                                      </Text>
+                                    </View>
+
+                                    {/* Bottom Row: Teacher Badge */}
+                                    <View style={{ flexDirection: 'row' }}>
+                                      <View style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        gap: 5,
+                                        backgroundColor: '#F1F5F9',
+                                        borderRadius: 6,
+                                        paddingHorizontal: 8,
+                                        paddingVertical: 3,
+                                      }}>
+                                        <IconComp name="person-outline" size={12} color="#64748B" />
+                                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>
+                                          {slot.teacher || 'Not Assigned'}
+                                        </Text>
+                                      </View>
+                                    </View>
+                                  </View>
+                                ))}
+                              </View>
+                            )}
                           </View>
-                          <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A', marginTop: 4 }}>
-                            {slot.subject}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                            Teacher: {slot.teacher}
-                          </Text>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   )}
-                </View>
-              </ScrollView>
-            )}
+                </ScrollView>
+              );
+            })()}
 
             {/* --- MODULE 4: ACADEMIC CALENDAR --- */}
             {activeModuleModal === 'Calendar' && (
@@ -16803,35 +19838,151 @@ function App() {
                   subtitle="Manage academic events, holidays, and examination dates."
                 />
 
-                {/* Month Navigator Header Bar */}
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {/* Month & Year Navigator Header Bar (Matching Image 1) */}
+                <View style={{ backgroundColor: '#FFFFFF', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <TouchableOpacity
-                      style={styles.arrowIconButton}
+                      style={[styles.arrowIconButton, { width: 36, height: 36, borderRadius: 18 }]}
                       onPress={handleCalendarPrevMonth}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                       activeOpacity={0.7}>
-                      <IconComp name="chevron-back-outline" size={18} color="#334155" />
+                      <IconComp name="chevron-back" size={20} color="#0F172A" />
                     </TouchableOpacity>
-                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A', minWidth: 140, textAlign: 'center' }}>
-                      {calendarCurrentMonth}
-                    </Text>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      {/* Month Pill Selector */}
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 10,
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                        }}
+                        onPress={() => {
+                          setAdminCalendarPickerMode(prev => prev === 'month' ? 'none' : 'month');
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                          {MONTH_NAMES[calendarDate.getMonth()]}
+                        </Text>
+                        <IconComp name="chevron-down" size={13} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Year Pill Selector */}
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 10,
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                        }}
+                        onPress={() => {
+                          setAdminCalendarPickerMode(prev => prev === 'year' ? 'none' : 'year');
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                          {calendarDate.getFullYear()}
+                        </Text>
+                        <IconComp name="chevron-down" size={13} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Today Jump Button */}
+                      <TouchableOpacity
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 10,
+                          backgroundColor: '#faedf7',
+                          borderWidth: 1,
+                          borderColor: '#b07fa8',
+                        }}
+                        onPress={handleCalendarToday}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#b07fa8' }}>
+                          Today
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
                     <TouchableOpacity
-                      style={styles.arrowIconButton}
+                      style={[styles.arrowIconButton, { width: 36, height: 36, borderRadius: 18 }]}
                       onPress={handleCalendarNextMonth}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                       activeOpacity={0.7}>
-                      <IconComp name="chevron-forward-outline" size={18} color="#334155" />
+                      <IconComp name="chevron-forward" size={20} color="#0F172A" />
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.smallWhiteOutlineBtn, { borderColor: '#b07fa8' }]}
-                    onPress={() => {
-                      setCalendarDate(new Date(2026, 8, 1));
-                      setCalendarSelectedDayNum(new Date().getDate());
-                    }}>
-                    <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Today</Text>
-                  </TouchableOpacity>
+
+                  {/* Month Selection Popup Grid */}
+                  {adminCalendarPickerMode === 'month' && (
+                    <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between' }}>
+                        {MONTH_NAMES.map((mName, idx) => {
+                          const isCur = calendarDate.getMonth() === idx;
+                          return (
+                            <TouchableOpacity
+                              key={mName}
+                              style={{
+                                width: '31%',
+                                paddingVertical: 8,
+                                borderRadius: 8,
+                                alignItems: 'center',
+                                backgroundColor: isCur ? '#b07fa8' : '#F8FAFC',
+                                borderWidth: 1,
+                                borderColor: isCur ? '#b07fa8' : '#E2E8F0',
+                              }}
+                              onPress={() => {
+                                setCalendarDate(new Date(calendarDate.getFullYear(), idx, 1));
+                                setAdminCalendarPickerMode('none');
+                              }}>
+                              <Text style={{ fontSize: 12, fontWeight: isCur ? '800' : '600', color: isCur ? '#FFFFFF' : '#0F172A' }}>
+                                {mName}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Year Selection Popup Grid */}
+                  {adminCalendarPickerMode === 'year' && (
+                    <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                      <ScrollView style={{ maxHeight: 180 }} nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between' }}>
+                          {calendarYearsList.map(yNum => {
+                            const isCur = calendarDate.getFullYear() === yNum;
+                            return (
+                              <TouchableOpacity
+                                key={yNum}
+                                style={{
+                                  width: '31%',
+                                  paddingVertical: 8,
+                                  borderRadius: 8,
+                                  alignItems: 'center',
+                                  backgroundColor: isCur ? '#b07fa8' : '#F8FAFC',
+                                  borderWidth: 1,
+                                  borderColor: isCur ? '#b07fa8' : '#E2E8F0',
+                                }}
+                                onPress={() => {
+                                  setCalendarDate(new Date(yNum, calendarDate.getMonth(), 1));
+                                  setAdminCalendarPickerMode('none');
+                                }}>
+                                <Text style={{ fontSize: 13, fontWeight: isCur ? '800' : '600', color: isCur ? '#FFFFFF' : '#0F172A' }}>
+                                  {yNum}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </ScrollView>
+                    </View>
+                  )}
                 </View>
 
                 {/* View Mode Selector Tabs: Day | Week | Month | Year */}
@@ -16856,10 +20007,10 @@ function App() {
 
                 {/* 7-Column Calendar Month Grid Container */}
                 <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }}>
-                  {/* Days Initials Row: S M T W T F S */}
+                  {/* Days Initials Row: Su Mo Tu We Th Fr Sa (Matching Image 1, Su in red) */}
                   <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 8, marginBottom: 10 }}>
-                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, idx) => (
-                      <Text key={idx} style={{ flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#94A3B8' }}>
+                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, idx) => (
+                      <Text key={idx} style={{ flex: 1, textAlign: 'center', fontSize: 13, fontWeight: '700', color: idx === 0 ? '#EF4444' : '#64748B' }}>
                         {d}
                       </Text>
                     ))}
@@ -16872,6 +20023,7 @@ function App() {
                     const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
                     const daysInMonth = new Date(year, month + 1, 0).getDate();
                     const daysInPrevMonth = new Date(year, month, 0).getDate();
+                    const realToday = new Date();
                     const cells: React.ReactElement[] = [];
                     // Offset cells from previous month
                     for (let i = firstDay - 1; i >= 0; i--) {
@@ -16885,6 +20037,7 @@ function App() {
                     // Current month days
                     for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
                       const isSelected = calendarSelectedDayNum === dayNum;
+                      const isTodayCell = realToday.getFullYear() === year && realToday.getMonth() === month && realToday.getDate() === dayNum;
                       const dayOfWeek = new Date(year, month, dayNum).getDay();
                       const isSunday = dayOfWeek === 0;
                       cells.push(
@@ -16897,15 +20050,17 @@ function App() {
                               width: 32,
                               height: 32,
                               borderRadius: 16,
-                              backgroundColor: isSelected ? '#b07fa8' : 'transparent',
+                              backgroundColor: isSelected ? '#b07fa8' : isTodayCell ? '#faedf7' : 'transparent',
+                              borderWidth: isTodayCell && !isSelected ? 1.5 : 0,
+                              borderColor: '#b07fa8',
                               justifyContent: 'center',
                               alignItems: 'center',
                             }}>
                             <Text
                               style={{
                                 fontSize: 13,
-                                fontWeight: isSelected ? '800' : '600',
-                                color: isSelected ? '#FFFFFF' : isSunday ? '#DC2626' : '#1E293B',
+                                fontWeight: isSelected || isTodayCell ? '800' : '600',
+                                color: isSelected ? '#FFFFFF' : isTodayCell ? '#b07fa8' : isSunday ? '#DC2626' : '#1E293B',
                               }}>
                               {dayNum}
                             </Text>
@@ -16918,7 +20073,7 @@ function App() {
                 </View>
 
                 {/* Selected Date Activities / Events Details Bar */}
-                <View style={{ backgroundColor: '#b07fa8', borderRadius: 16, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <View style={{ backgroundColor: '#b07fa8', borderRadius: 16, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                   <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF' }}>
                     Activities for {calendarSelectedDayNum} {calendarCurrentMonth}
                   </Text>
@@ -16928,37 +20083,6 @@ function App() {
                     <IconComp name="add-outline" size={14} color="#b07fa8" />
                     <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Add Event</Text>
                   </TouchableOpacity>
-                </View>
-
-                {/* Events list for selected date or month agenda */}
-                <View style={{ gap: 10 }}>
-                  {calendarEventsList.map(ev => (
-                    <View key={ev.id} style={styles.noticeCardItem}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                        <View
-                          style={[
-                            styles.priorityPill,
-                            {
-                              backgroundColor:
-                                ev.type === 'holiday' ? '#FEE2E2' : ev.type === 'exam' ? '#FFEDD5' : '#faedf7',
-                            },
-                          ]}>
-                          <Text
-                            style={[
-                              styles.priorityPillText,
-                              {
-                                color:
-                                  ev.type === 'holiday' ? '#DC2626' : ev.type === 'exam' ? '#D97706' : '#b07fa8',
-                              },
-                            ]}>
-                            {ev.type.toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>{ev.start}</Text>
-                      </View>
-                      <Text style={styles.noticeItemTitle}>{ev.title}</Text>
-                    </View>
-                  ))}
                 </View>
               </ScrollView>
             )}
@@ -16970,6 +20094,11 @@ function App() {
                   icon="document-text-outline"
                   title="Examinations & Results"
                   subtitle="Manage school-wide exams and generate report cards."
+                  primaryButton={examActiveSubTab === 'manage' ? {
+                    label: "+ Create Exam",
+                    icon: "add-outline",
+                    onPress: () => setShowCreateExamModal(true),
+                  } : undefined}
                 />
 
                 {/* Sub-Tabs Row */}
@@ -17002,7 +20131,7 @@ function App() {
                         </View>
                         <Text style={styles.studentCardNameText}>{exam.name}</Text>
                         <Text style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>
-                          Subject: {exam.subject} • Max Marks: {exam.maxMarks}
+                          Type: {exam.examType || 'Custom Exam'} • Subject: {exam.subject} • Max Marks: {exam.maxMarks}
                         </Text>
                         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
                           <TouchableOpacity
@@ -17018,34 +20147,259 @@ function App() {
                     ))}
                   </View>
                 ) : (
-                  <View style={styles.studentCardContainer}>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 10 }}>
-                      Generate Report Cards
-                    </Text>
-                    <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 12 }}>
-                      Select an exam and class to view marks and publish report cards to the parent portal.
-                    </Text>
-                    <View style={{ gap: 10, marginBottom: 16 }}>
-                      {generatedReportCards.map(rc => (
-                        <View key={rc.id} style={{ padding: 12, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{rc.studentName}</Text>
-                            <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
-                              <Text style={[styles.priorityPillText, { color: '#b07fa8' }]}>Grade {rc.grade}</Text>
-                            </View>
-                          </View>
-                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                            Marks: {rc.marksObtained} / {rc.maxMarks} ({rc.percentage}%)
-                          </Text>
+                  <View style={{ gap: 16 }}>
+                    {/* Control Card (Matches Image 3) */}
+                    <View style={styles.studentCardContainer}>
+                      {/* Select Exam Dropdown */}
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                        Select Exam
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          height: 44,
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1.5,
+                          borderColor: showExamDropdown ? '#b07fa8' : '#E2E8F0',
+                          borderRadius: 10,
+                          paddingHorizontal: 14,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: showExamDropdown ? 4 : 14,
+                        }}
+                        onPress={() => {
+                          setShowExamDropdown(!showExamDropdown);
+                          setShowClassDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: reportSelectedExam ? '#0F172A' : '#94A3B8', fontWeight: reportSelectedExam ? '700' : '500' }}>
+                          {reportSelectedExam || '-- Choose Exam --'}
+                        </Text>
+                        <IconComp name={showExamDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
+                      </TouchableOpacity>
+                      {showExamDropdown && (
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          borderRadius: 10,
+                          marginBottom: 14,
+                          overflow: 'hidden',
+                          elevation: 4,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                        }}>
+                          {examsList.map(e => (
+                            <TouchableOpacity
+                              key={e.id}
+                              style={{
+                                paddingVertical: 11,
+                                paddingHorizontal: 14,
+                                backgroundColor: reportSelectedExam === e.name ? '#f6eef5' : '#FFFFFF',
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#F1F5F9',
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                              }}
+                              onPress={() => {
+                                setReportSelectedExam(e.name);
+                                setShowExamDropdown(false);
+                                setHasGeneratedReportView(false);
+                              }}>
+                              <Text style={{ fontSize: 13, color: reportSelectedExam === e.name ? '#b07fa8' : '#0F172A', fontWeight: reportSelectedExam === e.name ? '700' : '500' }}>
+                                {e.name}
+                              </Text>
+                              {reportSelectedExam === e.name && <IconComp name="checkmark" size={16} color="#b07fa8" />}
+                            </TouchableOpacity>
+                          ))}
                         </View>
-                      ))}
+                      )}
+
+                      {/* Select Class Dropdown */}
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                        Select Class
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          height: 44,
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1.5,
+                          borderColor: showClassDropdown ? '#b07fa8' : '#E2E8F0',
+                          borderRadius: 10,
+                          paddingHorizontal: 14,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: showClassDropdown ? 4 : 16,
+                        }}
+                        onPress={() => {
+                          setShowClassDropdown(!showClassDropdown);
+                          setShowExamDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: reportSelectedClass ? '#0F172A' : '#94A3B8', fontWeight: reportSelectedClass ? '700' : '500' }}>
+                          {reportSelectedClass || '-- Choose Class --'}
+                        </Text>
+                        <IconComp name={showClassDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
+                      </TouchableOpacity>
+                      {showClassDropdown && (
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#CBD5E1',
+                          borderRadius: 10,
+                          marginBottom: 16,
+                          overflow: 'hidden',
+                          elevation: 4,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                        }}>
+                          {classList.map(c => {
+                            const cLabel = `${c.name} - ${c.section}`;
+                            return (
+                              <TouchableOpacity
+                                key={c.id}
+                                style={{
+                                  paddingVertical: 11,
+                                  paddingHorizontal: 14,
+                                  backgroundColor: reportSelectedClass === cLabel ? '#f6eef5' : '#FFFFFF',
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#F1F5F9',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                }}
+                                onPress={() => {
+                                  setReportSelectedClass(cLabel);
+                                  setShowClassDropdown(false);
+                                  setHasGeneratedReportView(false);
+                                }}>
+                                <Text style={{ fontSize: 13, color: reportSelectedClass === cLabel ? '#b07fa8' : '#0F172A', fontWeight: reportSelectedClass === cLabel ? '700' : '500' }}>
+                                  {cLabel}
+                                </Text>
+                                {reportSelectedClass === cLabel && <IconComp name="checkmark" size={16} color="#b07fa8" />}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+
+                      {/* Action Buttons: Generate View & Customize Design (Matches Image 3) */}
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            backgroundColor: (reportSelectedExam && reportSelectedClass) ? '#b07fa8' : '#E2E8F0',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                          disabled={!reportSelectedExam || !reportSelectedClass}
+                          onPress={() => setHasGeneratedReportView(true)}>
+                          <IconComp name="document-text-outline" size={16} color={(reportSelectedExam && reportSelectedClass) ? '#FFFFFF' : '#94A3B8'} />
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: (reportSelectedExam && reportSelectedClass) ? '#FFFFFF' : '#94A3B8' }}>
+                            Generate View
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 42,
+                            borderRadius: 10,
+                            backgroundColor: '#0F172A',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                          onPress={() => setShowTemplateBuilderModal(true)}>
+                          <IconComp name="color-palette-outline" size={16} color="#FFFFFF" />
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                            Customize Design
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <TouchableOpacity
-                      style={styles.emptyActionPurpleBtn}
-                      onPress={() => showToast('Report cards published successfully to Parent Portal!')}>
-                      <IconComp name="cloud-upload-outline" size={16} color="#FFFFFF" />
-                      <Text style={styles.emptyActionBtnText}>Publish Report Cards</Text>
-                    </TouchableOpacity>
+
+                    {/* Results or Empty State (Matches Image 3) */}
+                    {!hasGeneratedReportView ? (
+                      <View style={[styles.studentCardContainer, { alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }]}>
+                        <IconComp name="document-text-outline" size={56} color="#CBD5E1" />
+                        <Text style={{ fontSize: 14, color: '#64748B', fontWeight: '500', marginTop: 12, textAlign: 'center' }}>
+                          Select an exam and class to view report cards
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={{ gap: 14 }}>
+                        {/* Summary Header */}
+                        <View style={[styles.studentCardContainer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{reportSelectedExam}</Text>
+                            <Text style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>Class: {reportSelectedClass}</Text>
+                          </View>
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#b07fa8',
+                              paddingHorizontal: 14,
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                            onPress={() => showToast('Report cards published successfully to Parent Portal!')}>
+                            <IconComp name="cloud-upload-outline" size={15} color="#FFFFFF" />
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Publish Cards</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* Individual Student Report Cards Preview Cards */}
+                        {generatedReportCards.map(rc => (
+                          <View key={rc.id} style={[styles.studentCardContainer, { borderLeftWidth: 4, borderLeftColor: reportTemplate.themeColor || '#b07fa8' }]}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                              <View>
+                                <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>{rc.studentName}</Text>
+                                <Text style={{ fontSize: 12, color: '#64748B' }}>Roll / Adm No: {rc.rollNo} • Attendance: {rc.attendance}</Text>
+                              </View>
+                              <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
+                                <Text style={[styles.priorityPillText, { color: '#b07fa8', fontWeight: '800' }]}>Grade {rc.grade}</Text>
+                              </View>
+                            </View>
+
+                            {/* Marks breakdown table */}
+                            <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#E2E8F0', marginVertical: 8 }}>
+                              <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 4, marginBottom: 4 }}>
+                                <Text style={{ flex: 2, fontSize: 11, fontWeight: '700', color: '#64748B' }}>SUBJECT</Text>
+                                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: '#64748B', textAlign: 'center' }}>MAX</Text>
+                                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: '#64748B', textAlign: 'center' }}>OBT</Text>
+                                <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: '#64748B', textAlign: 'right' }}>GRADE</Text>
+                              </View>
+                              {rc.subjects.map((s: any, sIdx: number) => (
+                                <View key={sIdx} style={{ flexDirection: 'row', paddingVertical: 3 }}>
+                                  <Text style={{ flex: 2, fontSize: 12, color: '#0F172A' }}>{s.name}</Text>
+                                  <Text style={{ flex: 1, fontSize: 12, color: '#64748B', textAlign: 'center' }}>{s.maxMarks}</Text>
+                                  <Text style={{ flex: 1, fontSize: 12, color: '#0F172A', fontWeight: '700', textAlign: 'center' }}>{s.marksObt}</Text>
+                                  <Text style={{ flex: 1, fontSize: 12, color: '#b07fa8', fontWeight: '700', textAlign: 'right' }}>{s.grade}</Text>
+                                </View>
+                              ))}
+                              <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 6, marginTop: 4, justifyContent: 'space-between' }}>
+                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F172A' }}>TOTAL: {rc.marksObtained} / {rc.maxMarks}</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803D' }}>{rc.percentage}%</Text>
+                              </View>
+                            </View>
+
+                            <Text style={{ fontSize: 11, fontStyle: 'italic', color: '#64748B' }}>
+                              Remarks: "{rc.remarks}"
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 )}
               </ScrollView>
@@ -17061,54 +20415,147 @@ function App() {
                   subtitle="View class-wise homework and student submissions."
                 />
 
-                {/* Class Filter Row */}
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-                  {['', 'Grade 3', 'Grade 4', 'PRE KG'].map(cls => (
-                    <TouchableOpacity
-                      key={cls}
-                      style={[styles.filterChipItem, hwClassFilter === cls && styles.filterChipItemActive]}
-                      onPress={() => setHwClassFilter(cls)}>
-                      <Text style={[styles.filterChipText, hwClassFilter === cls && styles.filterChipTextActive]}>
-                        {cls === '' ? 'All Classes' : cls}
+                {/* Class Filter Dropdown (Real Working Dropdown using existing classes) */}
+                <View style={{ marginBottom: 16, zIndex: 50 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                    Filter by Class
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1.5,
+                      borderColor: showAdminHwClassDropdown ? '#b07fa8' : '#E2E8F0',
+                      borderRadius: 12,
+                      paddingHorizontal: 14,
+                      paddingVertical: 12,
+                    }}
+                    activeOpacity={0.8}
+                    onPress={() => setShowAdminHwClassDropdown(!showAdminHwClassDropdown)}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <IconComp name="filter-outline" size={16} color="#b07fa8" />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                        {hwClassFilter ? hwClassFilter : 'All Classes'}
                       </Text>
-                    </TouchableOpacity>
-                  ))}
+                    </View>
+                    <IconComp name={showAdminHwClassDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
+                  </TouchableOpacity>
+
+                  {showAdminHwClassDropdown && (
+                    <View style={{
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 12,
+                      marginTop: 6,
+                      overflow: 'hidden',
+                    }}>
+                      <TouchableOpacity
+                        style={{
+                          paddingVertical: 12,
+                          paddingHorizontal: 14,
+                          backgroundColor: hwClassFilter === '' ? '#faedf7' : '#FFFFFF',
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#F1F5F9',
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                        onPress={() => {
+                          setHwClassFilter('');
+                          setShowAdminHwClassDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: hwClassFilter === '' ? '800' : '600', color: hwClassFilter === '' ? '#b07fa8' : '#334155' }}>
+                          All Classes
+                        </Text>
+                        {hwClassFilter === '' && <IconComp name="checkmark" size={16} color="#b07fa8" />}
+                      </TouchableOpacity>
+
+                      {classList.map(c => {
+                        const fullClassName = `${c.name} - ${c.section}`;
+                        const isSelected = hwClassFilter === fullClassName || hwClassFilter === c.name || hwClassFilter === c.id;
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            style={{
+                              paddingVertical: 12,
+                              paddingHorizontal: 14,
+                              backgroundColor: isSelected ? '#faedf7' : '#FFFFFF',
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                              flexDirection: 'row',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                            }}
+                            onPress={() => {
+                              setHwClassFilter(fullClassName);
+                              setShowAdminHwClassDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#b07fa8' : '#334155' }}>
+                              {fullClassName}
+                            </Text>
+                            {isSelected && <IconComp name="checkmark" size={16} color="#b07fa8" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
 
                 {/* Homework Cards or Empty State */}
-                {adminHomeworkList.length === 0 ? (
-                  <View style={styles.emptyModuleCardContainer}>
-                    <View style={styles.emptyIconCircleLarge}>
-                      <IconComp name="book-open-outline" size={40} color="#94A3B8" />
-                    </View>
-                    <Text style={styles.emptyModuleTitle}>No homework found</Text>
-                    <Text style={styles.emptyModuleSub}>
-                      {hwClassFilter ? 'No homework has been assigned to this class yet.' : 'No homework has been assigned in the school.'}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={{ gap: 12 }}>
-                    {adminHomeworkList.map((hw: any) => (
-                      <TouchableOpacity
-                        key={hw.id}
-                        style={styles.noticeCardItem}
-                        onPress={() => { setHwSelected(hw); setHwTrackingModal(true); }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
-                            <Text style={[styles.priorityPillText, { color: '#b07fa8' }]}>{hw.className} • {hw.subject}</Text>
+                {(() => {
+                  const filteredHwList = (realHomeworksList.length > 0 ? realHomeworksList : adminHomeworkList).filter((hw: any) => {
+                    if (!hwClassFilter) return true;
+                    const cFilter = hwClassFilter.toLowerCase();
+                    return (
+                      (hw.className && hw.className.toLowerCase().includes(cFilter)) ||
+                      (hw.classId && hw.classId.toLowerCase() === cFilter) ||
+                      (hw.class && hw.class.toLowerCase().includes(cFilter))
+                    );
+                  });
+
+                  if (filteredHwList.length === 0) {
+                    return (
+                      <View style={styles.emptyModuleCardContainer}>
+                        <View style={styles.emptyIconCircleLarge}>
+                          <IconComp name="book-open-outline" size={40} color="#94A3B8" />
+                        </View>
+                        <Text style={styles.emptyModuleTitle}>No homework found</Text>
+                        <Text style={styles.emptyModuleSub}>
+                          {hwClassFilter ? `No homework has been assigned to ${hwClassFilter} yet.` : 'No homework has been assigned in the school.'}
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View style={{ gap: 12 }}>
+                      {filteredHwList.map((hw: any) => (
+                        <TouchableOpacity
+                          key={hw.id}
+                          style={styles.noticeCardItem}
+                          onPress={() => { setHwSelected(hw); setHwTrackingModal(true); }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <View style={[styles.priorityPill, { backgroundColor: '#faedf7' }]}>
+                              <Text style={[styles.priorityPillText, { color: '#b07fa8' }]}>
+                                {hw.className || hw.class || 'Class'} • {hw.subject || (hw.selectedSubjects && hw.selectedSubjects.join(', ')) || 'General'}
+                              </Text>
+                            </View>
+                            <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>Due: {hw.dueDate}</Text>
                           </View>
-                          <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>Due: {hw.dueDate}</Text>
-                        </View>
-                        <Text style={styles.noticeItemTitle}>{hw.title}</Text>
-                        <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>{hw.description}</Text>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
-                          <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>✓ Active</Text>
-                          <Text style={{ fontSize: 12, color: '#b07fa8', fontWeight: '700' }}>View Tracking →</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
+                          <Text style={styles.noticeItemTitle}>{hw.title}</Text>
+                          {hw.description ? <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>{hw.description}</Text> : null}
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                            <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>✓ Active</Text>
+                            <Text style={{ fontSize: 12, color: '#b07fa8', fontWeight: '700' }}>View Tracking →</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  );
+                })()}
               </ScrollView>
             )}
 
@@ -19757,18 +23204,18 @@ function App() {
                 </View>
 
                 {customModuleTab === 'schema' ? (
-                  <>
-                    {/* Controls Row: Target Module Dropdown + Import Dropdown + Import & Save Schema (Matches Images 4 & 5) */}
-                    <View style={[styles.customModControlsCard, { zIndex: 100 }]}>
-                      {/* Row with Target Module Dropdown (Image 4) */}
-                      <View style={{ marginBottom: 12, position: 'relative', zIndex: 30 }}>
+                  <View style={{ gap: 14 }}>
+                    {/* Controls Row: Target Module Dropdown + Import Dropdown + Import & Save Schema (Matches Image 2) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 10, zIndex: 100 }}>
+                      {/* Row 1: Target Module Selector (Image 2 Matching) */}
+                      <View style={{ position: 'relative', zIndex: 30 }}>
                         <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', marginBottom: 4 }}>TARGET MODULE</Text>
                         <TouchableOpacity
                           style={{
                             flexDirection: 'row',
                             justifyContent: 'space-between',
                             alignItems: 'center',
-                            height: 42,
+                            height: 44,
                             paddingHorizontal: 12,
                             backgroundColor: '#FFFFFF',
                             borderRadius: 10,
@@ -19776,18 +23223,18 @@ function App() {
                             borderColor: '#CBD5E1',
                           }}
                           onPress={() => {
-                            setShowTargetModuleDropdown(!showTargetModuleDropdown);
+                            setShowTargetModuleDropdown(prev => !prev);
                             setShowImportModuleDropdown(false);
                           }}>
                           <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedCustomModuleTarget}</Text>
                           <IconComp name="chevron-down" size={16} color="#64748B" />
                         </TouchableOpacity>
 
-                        {/* Dropdown Options for Target Module (Image 4 matching) */}
+                        {/* Dropdown Options for Target Module (Image 2 matching) */}
                         {showTargetModuleDropdown && (
                           <View style={{
                             position: 'absolute',
-                            top: 65,
+                            top: 68,
                             left: 0,
                             right: 0,
                             backgroundColor: '#FFFFFF',
@@ -19799,32 +23246,35 @@ function App() {
                             shadowOpacity: 0.15,
                             shadowRadius: 8,
                             shadowOffset: { width: 0, height: 4 },
-                            maxHeight: 220,
+                            maxHeight: 240,
                             zIndex: 999,
+                            overflow: 'hidden',
                           }}>
                             <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
-                              {SCHEMA_MODULE_LIST.map((modName, idx) => {
-                                const isSelected = selectedCustomModuleTarget === modName;
+                              {[...CORE_FORM_MODULES, ...customModulesList.map(c => ({ id: c.id, name: `[Custom] ${c.name}` }))].map((mod, idx) => {
+                                const isSelected = selectedCustomModuleId === mod.id || selectedCustomModuleTarget === mod.name;
                                 return (
                                   <TouchableOpacity
-                                    key={modName}
+                                    key={mod.id}
                                     style={{
-                                      paddingVertical: 10,
+                                      paddingVertical: 11,
                                       paddingHorizontal: 14,
-                                      backgroundColor: isSelected ? '#2563EB' : (idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF'),
-                                      borderBottomWidth: idx < SCHEMA_MODULE_LIST.length - 1 ? 1 : 0,
+                                      backgroundColor: isSelected ? '#faedf7' : (idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF'),
+                                      borderBottomWidth: 1,
                                       borderBottomColor: '#F1F5F9',
                                     }}
                                     onPress={() => {
-                                      setSelectedCustomModuleTarget(modName);
+                                      setSelectedCustomModuleTarget(mod.name);
+                                      setSelectedCustomModuleId(mod.id);
                                       setShowTargetModuleDropdown(false);
+                                      loadModuleSchema(mod.id);
                                     }}>
                                     <Text style={{
                                       fontSize: 13,
-                                      fontWeight: isSelected ? '800' : '500',
-                                      color: isSelected ? '#FFFFFF' : '#0F172A',
+                                      fontWeight: isSelected ? '800' : '600',
+                                      color: isSelected ? '#b07fa8' : '#0F172A',
                                     }}>
-                                      {modName}
+                                      {mod.name}
                                     </Text>
                                   </TouchableOpacity>
                                 );
@@ -19834,7 +23284,7 @@ function App() {
                         )}
                       </View>
 
-                      {/* Row with Import Dropdown (Image 5) + Import + Save Schema Button */}
+                      {/* Row 2: Import Dropdown + Import + Save Schema Button (Image 2 Matching) */}
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, position: 'relative', zIndex: 20 }}>
                         {/* Import Dropdown */}
                         <View style={{ flex: 1, position: 'relative' }}>
@@ -19843,15 +23293,15 @@ function App() {
                               flexDirection: 'row',
                               justifyContent: 'space-between',
                               alignItems: 'center',
-                              height: 40,
+                              height: 42,
                               paddingHorizontal: 10,
                               backgroundColor: '#FFFFFF',
-                              borderRadius: 8,
+                              borderRadius: 10,
                               borderWidth: 1,
                               borderColor: '#CBD5E1',
                             }}
                             onPress={() => {
-                              setShowImportModuleDropdown(!showImportModuleDropdown);
+                              setShowImportModuleDropdown(prev => !prev);
                               setShowTargetModuleDropdown(false);
                             }}>
                             <Text style={{ fontSize: 11, fontWeight: '600', color: selectedImportModule ? '#0F172A' : '#64748B' }} numberOfLines={1}>
@@ -19860,15 +23310,15 @@ function App() {
                             <IconComp name="chevron-down" size={14} color="#64748B" />
                           </TouchableOpacity>
 
-                          {/* Dropdown Options for Import Module (Image 5 matching) */}
+                          {/* Dropdown Options for Import Module */}
                           {showImportModuleDropdown && (
                             <View style={{
                               position: 'absolute',
-                              top: 44,
+                              top: 46,
                               left: 0,
                               right: 0,
                               backgroundColor: '#FFFFFF',
-                              borderRadius: 8,
+                              borderRadius: 10,
                               borderWidth: 1,
                               borderColor: '#CBD5E1',
                               elevation: 8,
@@ -19878,13 +23328,14 @@ function App() {
                               shadowOffset: { width: 0, height: 4 },
                               maxHeight: 200,
                               zIndex: 999,
+                              overflow: 'hidden',
                             }}>
                               <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
                                 <TouchableOpacity
                                   style={{
                                     paddingVertical: 9,
                                     paddingHorizontal: 12,
-                                    backgroundColor: !selectedImportModule ? '#2563EB' : '#FFFFFF',
+                                    backgroundColor: !selectedImportModule ? '#faedf7' : '#FFFFFF',
                                     borderBottomWidth: 1,
                                     borderBottomColor: '#F1F5F9',
                                   }}
@@ -19892,37 +23343,39 @@ function App() {
                                     setSelectedImportModule('');
                                     setShowImportModuleDropdown(false);
                                   }}>
-                                  <Text style={{ fontSize: 12, fontWeight: !selectedImportModule ? '800' : '500', color: !selectedImportModule ? '#FFFFFF' : '#64748B' }}>
+                                  <Text style={{ fontSize: 12, fontWeight: !selectedImportModule ? '800' : '500', color: !selectedImportModule ? '#b07fa8' : '#64748B' }}>
                                     -- Select Module to Import --
                                   </Text>
                                 </TouchableOpacity>
 
-                                {SCHEMA_MODULE_LIST.filter(m => m !== selectedCustomModuleTarget).map((modName, idx) => {
-                                  const isSelected = selectedImportModule === modName;
-                                  return (
-                                    <TouchableOpacity
-                                      key={modName}
-                                      style={{
-                                        paddingVertical: 9,
-                                        paddingHorizontal: 12,
-                                        backgroundColor: isSelected ? '#2563EB' : '#FFFFFF',
-                                        borderBottomWidth: 1,
-                                        borderBottomColor: '#F1F5F9',
-                                      }}
-                                      onPress={() => {
-                                        setSelectedImportModule(modName);
-                                        setShowImportModuleDropdown(false);
-                                      }}>
-                                      <Text style={{
-                                        fontSize: 12,
-                                        fontWeight: isSelected ? '800' : '500',
-                                        color: isSelected ? '#FFFFFF' : '#0F172A',
-                                      }}>
-                                        {modName}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  );
-                                })}
+                                {[...CORE_FORM_MODULES, ...customModulesList.map(c => ({ id: c.id, name: `[Custom] ${c.name}` }))]
+                                  .filter(m => m.name !== selectedCustomModuleTarget && m.id !== selectedCustomModuleId)
+                                  .map(mod => {
+                                    const isSelected = selectedImportModule === mod.name;
+                                    return (
+                                      <TouchableOpacity
+                                        key={mod.id}
+                                        style={{
+                                          paddingVertical: 9,
+                                          paddingHorizontal: 12,
+                                          backgroundColor: isSelected ? '#faedf7' : '#FFFFFF',
+                                          borderBottomWidth: 1,
+                                          borderBottomColor: '#F1F5F9',
+                                        }}
+                                        onPress={() => {
+                                          setSelectedImportModule(mod.name);
+                                          setShowImportModuleDropdown(false);
+                                        }}>
+                                        <Text style={{
+                                          fontSize: 12,
+                                          fontWeight: isSelected ? '800' : '500',
+                                          color: isSelected ? '#b07fa8' : '#0F172A',
+                                        }}>
+                                          {mod.name}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
                               </ScrollView>
                             </View>
                           )}
@@ -19934,10 +23387,10 @@ function App() {
                             flexDirection: 'row',
                             alignItems: 'center',
                             gap: 4,
-                            backgroundColor: '#64748B',
-                            height: 40,
+                            backgroundColor: '#334155',
+                            height: 42,
                             paddingHorizontal: 12,
-                            borderRadius: 8,
+                            borderRadius: 10,
                           }}
                           onPress={() => {
                             if (selectedImportModule) {
@@ -19950,114 +23403,384 @@ function App() {
                           <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Import</Text>
                         </TouchableOpacity>
 
-                        {/* Save Schema Button (Purple button matching Image 4, generic Save deleted) */}
+                        {/* Save Schema Button (Purple button matching Image 2) */}
                         <TouchableOpacity
                           style={{
                             flexDirection: 'row',
                             alignItems: 'center',
                             gap: 6,
-                            backgroundColor: '#b07fa8',
-                            height: 40,
+                            backgroundColor: '#986794',
+                            height: 42,
                             paddingHorizontal: 14,
-                            borderRadius: 8,
+                            borderRadius: 10,
                           }}
-                          onPress={handleSaveSchema}>
-                          <IconComp name="save-outline" size={15} color="#FFFFFF" />
-                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Save Schema</Text>
+                          onPress={handleSaveSchema}
+                          disabled={isSavingSchema}>
+                          {isSavingSchema ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <IconComp name="save-outline" size={15} color="#FFFFFF" />
+                              <Text style={{ fontSize: 12, fontWeight: '800', color: '#FFFFFF' }}>Save Schema</Text>
+                            </>
+                          )}
                         </TouchableOpacity>
                       </View>
                     </View>
 
-                    {/* Module Structure Card */}
-                    <View style={styles.customModStructureCard}>
-                      <View style={styles.customModStructureHeader}>
+                    {/* Module Structure Card (Image 2 Exact Layout) */}
+                    <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, gap: 14 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                          <IconComp name="folder-outline" size={18} color="#D97706" />
-                          <Text style={styles.customModStructureTitle}>Module Structure</Text>
+                          <IconComp name="folder-outline" size={20} color="#986794" />
+                          <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Module Structure</Text>
                         </View>
 
                         <TouchableOpacity
-                          style={styles.customModAddSectionBtn}
-                          onPress={() => setShowAddSectionModal(true)}>
-                          <IconComp name="add-outline" size={14} color="#b07fa8" />
-                          <Text style={styles.customModAddSectionBtnText}>+ Add Section</Text>
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: '#faedf7',
+                            borderWidth: 1,
+                            borderColor: '#eec9db',
+                            borderRadius: 8,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                          }}
+                          onPress={handleAddSectionDirect}>
+                          <IconComp name="add-outline" size={14} color="#986794" />
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>+ Add Section</Text>
                         </TouchableOpacity>
                       </View>
 
-                      {/* Empty State Matching Pic 3 */}
-                      {customModuleSections.length === 0 ? (
-                        <View style={styles.customModEmptyContainer}>
-                          <View style={styles.customModEmptyIconBox}>
-                            <IconComp name="folder-open-outline" size={44} color="#CBD5E1" />
-                          </View>
-                          <Text style={styles.customModEmptyTitle}>No sections defined yet</Text>
-                          <Text style={styles.customModEmptySub}>
+                      {/* Loading or Empty State */}
+                      {isLoadingSchema ? (
+                        <View style={{ padding: 30, alignItems: 'center' }}>
+                          <ActivityIndicator size="small" color="#986794" />
+                          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 8 }}>Loading schema...</Text>
+                        </View>
+                      ) : customModuleSections.length === 0 ? (
+                        <View style={{
+                          borderWidth: 1.5,
+                          borderColor: '#CBD5E1',
+                          borderStyle: 'dashed',
+                          borderRadius: 14,
+                          padding: 24,
+                          alignItems: 'center',
+                          backgroundColor: '#F8FAFC',
+                          gap: 8,
+                        }}>
+                          <IconComp name="folder-open-outline" size={40} color="#CBD5E1" />
+                          <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>No sections defined yet</Text>
+                          <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center' }}>
                             Start building this module by adding a section.
                           </Text>
                           <TouchableOpacity
-                            style={styles.customModFirstSectionBtn}
-                            onPress={() => setShowAddSectionModal(true)}>
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              backgroundColor: '#334155',
+                              paddingHorizontal: 14,
+                              paddingVertical: 8,
+                              borderRadius: 10,
+                              marginTop: 4,
+                            }}
+                            onPress={handleAddSectionDirect}>
                             <IconComp name="add" size={16} color="#FFFFFF" />
-                            <Text style={styles.customModFirstSectionBtnText}>+ Add Your First Section</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ Add Your First Section</Text>
                           </TouchableOpacity>
                         </View>
                       ) : (
-                        /* Render Sections and Fields */
-                        <View style={{ gap: 12, marginTop: 12 }}>
-                          {customModuleSections.map(sec => (
-                            <View key={sec.id} style={styles.customModSectionItemCard}>
-                              <View style={styles.customModSectionItemHeader}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                                  <IconComp name="reorder-two-outline" size={16} color="#64748B" />
-                                  <Text style={styles.customModSectionItemTitle}>{sec.title}</Text>
-                                  <View style={styles.customModFieldCountBadge}>
-                                    <Text style={styles.customModFieldCountText}>{sec.fields?.length || 0} fields</Text>
-                                  </View>
+                        /* Render Sections and Fields (Matching Image 2 Exact UI) */
+                        <View style={{ gap: 14 }}>
+                          {customModuleSections.map((sec, sIndex) => (
+                            <View
+                              key={sec.id}
+                              style={{
+                                backgroundColor: '#FFFFFF',
+                                borderRadius: 16,
+                                borderWidth: 1,
+                                borderColor: '#E2E8F0',
+                                padding: 14,
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 1 },
+                                shadowOpacity: 0.04,
+                                shadowRadius: 3,
+                                elevation: 1,
+                              }}>
+                              {/* Section Header Row (Image 2 Matching) */}
+                              <View style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                paddingBottom: 12,
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#F1F5F9',
+                              }}>
+                                {/* Up / Down Reorder Arrows */}
+                                <View style={{ flexDirection: 'column', gap: 2 }}>
+                                  <TouchableOpacity
+                                    style={{ padding: 2, opacity: sIndex === 0 ? 0.3 : 1 }}
+                                    disabled={sIndex === 0}
+                                    onPress={() => handleMoveSection(sIndex, 'up')}>
+                                    <IconComp name="arrow-up" size={14} color="#64748B" />
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={{ padding: 2, opacity: sIndex === customModuleSections.length - 1 ? 0.3 : 1 }}
+                                    disabled={sIndex === customModuleSections.length - 1}
+                                    onPress={() => handleMoveSection(sIndex, 'down')}>
+                                    <IconComp name="arrow-down" size={14} color="#64748B" />
+                                  </TouchableOpacity>
                                 </View>
 
+                                {/* Section Name Input (Image 2 Matching) */}
+                                <TextInput
+                                  style={{
+                                    flex: 1,
+                                    fontSize: 14,
+                                    fontWeight: '800',
+                                    color: '#0F172A',
+                                    backgroundColor: '#F8FAFC',
+                                    borderWidth: 1,
+                                    borderColor: '#CBD5E1',
+                                    borderRadius: 10,
+                                    paddingHorizontal: 12,
+                                    height: 40,
+                                  }}
+                                  value={sec.title}
+                                  onChangeText={t => handleUpdateSectionTitle(sec.id, t)}
+                                  placeholder="Section Title"
+                                  placeholderTextColor="#94A3B8"
+                                />
+
+                                {/* + Add Field Button (Image 2 Matching) */}
                                 <TouchableOpacity
-                                  style={{ padding: 4 }}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    backgroundColor: '#faedf7',
+                                    borderWidth: 1,
+                                    borderColor: '#eec9db',
+                                    borderRadius: 8,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 7,
+                                  }}
+                                  onPress={() => handleAddFieldDirect(sec.id)}>
+                                  <IconComp name="add" size={14} color="#986794" />
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#986794' }}>+ Add Field</Text>
+                                </TouchableOpacity>
+
+                                {/* Delete Section Trash Icon */}
+                                <TouchableOpacity
+                                  style={{ padding: 6 }}
                                   onPress={() => handleDeleteSection(sec.id)}>
-                                  <IconComp name="trash-outline" size={16} color="#EF4444" />
+                                  <IconComp name="trash-outline" size={16} color="#94A3B8" />
                                 </TouchableOpacity>
                               </View>
 
-                              {/* Fields inside section */}
-                              <View style={{ gap: 6, marginVertical: 6 }}>
-                                {sec.fields?.map((f: any) => (
-                                  <View key={f.id} style={styles.customModFieldRowItem}>
-                                    <Text style={styles.customModFieldRowLabel}>
-                                      {f.label} {f.required && <Text style={{ color: '#EF4444' }}>*</Text>}
-                                    </Text>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                      <View style={styles.customModFieldTypeBadge}>
-                                        <Text style={styles.customModFieldTypeBadgeText}>{f.type}</Text>
-                                      </View>
-                                      <TouchableOpacity
-                                        style={{ padding: 4 }}
-                                        onPress={() => handleDeleteField(sec.id, f.id)}>
-                                        <IconComp name="close-circle" size={14} color="#94A3B8" />
-                                      </TouchableOpacity>
-                                    </View>
+                              {/* Fields Inside Section (Image 2 Exact Layout) */}
+                              <View style={{ gap: 10, marginTop: 12 }}>
+                                {(!sec.fields || sec.fields.length === 0) ? (
+                                  <View style={{ padding: 12, alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', borderStyle: 'dashed' }}>
+                                    <Text style={{ fontSize: 12, color: '#94A3B8' }}>No fields in this section.</Text>
                                   </View>
-                                ))}
-                              </View>
+                                ) : (
+                                  sec.fields.map((field: any, fIndex: number) => {
+                                    const pickerKey = `${sec.id}_${field.id}`;
+                                    const isPickerOpen = activeFieldTypePicker?.secId === sec.id && activeFieldTypePicker?.fieldId === field.id;
+                                    const curTypeObj = FORM_FIELD_TYPES.find(t => t.value === field.type) || { value: 'text', label: 'Text Input' };
 
-                              <TouchableOpacity
-                                style={styles.customModAddFieldBtn}
-                                onPress={() => {
-                                  setTargetSectionIdForField(sec.id);
-                                  setShowAddFieldModal(true);
-                                }}>
-                                <IconComp name="add-circle-outline" size={14} color="#b07fa8" />
-                                <Text style={styles.customModAddFieldBtnText}>Add Field</Text>
-                              </TouchableOpacity>
+                                    return (
+                                      <View
+                                        key={field.id}
+                                        style={{
+                                          backgroundColor: '#F8FAFC',
+                                          borderRadius: 14,
+                                          borderWidth: 1,
+                                          borderColor: '#E2E8F0',
+                                          padding: 12,
+                                          gap: 10,
+                                        }}>
+                                        {/* Field Reorder & Label & Type (Image 2 Matching) */}
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                          {/* Up / Down Reorder Arrows */}
+                                          <View style={{ flexDirection: 'column', gap: 2 }}>
+                                            <TouchableOpacity
+                                              style={{ padding: 2, opacity: fIndex === 0 ? 0.3 : 1 }}
+                                              disabled={fIndex === 0}
+                                              onPress={() => handleMoveField(sec.id, fIndex, 'up')}>
+                                              <IconComp name="arrow-up" size={12} color="#64748B" />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                              style={{ padding: 2, opacity: fIndex === sec.fields.length - 1 ? 0.3 : 1 }}
+                                              disabled={fIndex === sec.fields.length - 1}
+                                              onPress={() => handleMoveField(sec.id, fIndex, 'down')}>
+                                              <IconComp name="arrow-down" size={12} color="#64748B" />
+                                            </TouchableOpacity>
+                                          </View>
+
+                                          {/* Field Label Input */}
+                                          <View style={{ flex: 1 }}>
+                                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', marginBottom: 2 }}>Field Label</Text>
+                                            <TextInput
+                                              style={{
+                                                height: 38,
+                                                borderRadius: 8,
+                                                borderWidth: 1,
+                                                borderColor: '#CBD5E1',
+                                                paddingHorizontal: 10,
+                                                fontSize: 12,
+                                                fontWeight: '600',
+                                                color: '#0F172A',
+                                                backgroundColor: '#FFFFFF',
+                                              }}
+                                              value={field.label}
+                                              onChangeText={t => handleUpdateField(sec.id, field.id, 'label', t)}
+                                              placeholder="Field Label"
+                                              placeholderTextColor="#94A3B8"
+                                            />
+                                          </View>
+
+                                          {/* Field Type Dropdown (Image 2 Matching) */}
+                                          <View style={{ flex: 1, position: 'relative' }}>
+                                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', marginBottom: 2 }}>Field Type</Text>
+                                            <TouchableOpacity
+                                              style={{
+                                                height: 38,
+                                                borderRadius: 8,
+                                                borderWidth: 1,
+                                                borderColor: '#CBD5E1',
+                                                paddingHorizontal: 10,
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                backgroundColor: '#FFFFFF',
+                                              }}
+                                              onPress={() => {
+                                                if (isPickerOpen) {
+                                                  setActiveFieldTypePicker(null);
+                                                } else {
+                                                  setActiveFieldTypePicker({ secId: sec.id, fieldId: field.id });
+                                                }
+                                              }}>
+                                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }} numberOfLines={1}>
+                                                {curTypeObj.label}
+                                              </Text>
+                                              <IconComp name="chevron-down" size={14} color="#64748B" />
+                                            </TouchableOpacity>
+
+                                            {/* Type Picker Popup */}
+                                            {isPickerOpen && (
+                                              <View style={{
+                                                position: 'absolute',
+                                                top: 56,
+                                                left: 0,
+                                                right: 0,
+                                                backgroundColor: '#FFFFFF',
+                                                borderRadius: 8,
+                                                borderWidth: 1,
+                                                borderColor: '#CBD5E1',
+                                                elevation: 8,
+                                                shadowColor: '#000',
+                                                shadowOpacity: 0.15,
+                                                shadowRadius: 6,
+                                                shadowOffset: { width: 0, height: 3 },
+                                                maxHeight: 180,
+                                                zIndex: 999,
+                                                overflow: 'hidden',
+                                              }}>
+                                                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                                                  {FORM_FIELD_TYPES.map(t => (
+                                                    <TouchableOpacity
+                                                      key={t.value}
+                                                      style={{
+                                                        paddingVertical: 8,
+                                                        paddingHorizontal: 10,
+                                                        backgroundColor: field.type === t.value ? '#faedf7' : '#FFFFFF',
+                                                        borderBottomWidth: 1,
+                                                        borderBottomColor: '#F1F5F9',
+                                                      }}
+                                                      onPress={() => {
+                                                        handleUpdateField(sec.id, field.id, 'type', t.value);
+                                                        setActiveFieldTypePicker(null);
+                                                      }}>
+                                                      <Text style={{ fontSize: 11, fontWeight: field.type === t.value ? '800' : '500', color: field.type === t.value ? '#986794' : '#0F172A' }}>
+                                                        {t.label}
+                                                      </Text>
+                                                    </TouchableOpacity>
+                                                  ))}
+                                                </ScrollView>
+                                              </View>
+                                            )}
+                                          </View>
+                                        </View>
+
+                                        {/* If Dropdown (Select): Options Input */}
+                                        {field.type === 'select' && (
+                                          <View>
+                                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B', marginBottom: 2 }}>Options (comma separated)</Text>
+                                            <TextInput
+                                              style={{
+                                                height: 36,
+                                                borderRadius: 8,
+                                                borderWidth: 1,
+                                                borderColor: '#CBD5E1',
+                                                paddingHorizontal: 10,
+                                                fontSize: 11,
+                                                color: '#0F172A',
+                                                backgroundColor: '#FFFFFF',
+                                              }}
+                                              value={field.options || ''}
+                                              onChangeText={t => handleUpdateField(sec.id, field.id, 'options', t)}
+                                              placeholder="e.g. A+, O+, B-"
+                                              placeholderTextColor="#94A3B8"
+                                            />
+                                          </View>
+                                        )}
+
+                                        {/* Bottom Control Sub-Row: Required Toggle & Delete Field (Image 2 Matching) */}
+                                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 14 }}>
+                                          {/* Required Checkbox */}
+                                          <TouchableOpacity
+                                            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                                            onPress={() => handleUpdateField(sec.id, field.id, 'required', !field.required)}>
+                                            <View style={{
+                                              width: 18,
+                                              height: 18,
+                                              borderRadius: 4,
+                                              borderWidth: 1.5,
+                                              borderColor: field.required ? '#986794' : '#CBD5E1',
+                                              backgroundColor: field.required ? '#986794' : '#FFFFFF',
+                                              justifyContent: 'center',
+                                              alignItems: 'center',
+                                            }}>
+                                              {field.required && <IconComp name="checkmark" size={13} color="#FFFFFF" />}
+                                            </View>
+                                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>Req.</Text>
+                                          </TouchableOpacity>
+
+                                          {/* Delete Field Icon */}
+                                          <TouchableOpacity
+                                            style={{ padding: 4 }}
+                                            onPress={() => handleDeleteField(sec.id, field.id)}>
+                                            <IconComp name="trash-outline" size={16} color="#94A3B8" />
+                                          </TouchableOpacity>
+                                        </View>
+                                      </View>
+                                    );
+                                  })
+                                )}
+                              </View>
                             </View>
                           ))}
                         </View>
                       )}
                     </View>
-                  </>
+                  </View>
                 ) : (
                   /* Sidebar & Modules Manager View (Screenshot 3 Matching) */
                   <View style={styles.customModManagerCard}>
@@ -20387,6 +24110,25 @@ function App() {
                     </View>
                   </ScrollView>
                 </View>
+                <TouchableOpacity
+                  style={{
+                    marginTop: 16,
+                    backgroundColor: '#b07fa8',
+                    borderRadius: 12,
+                    paddingVertical: 13,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    shadowColor: '#b07fa8',
+                    shadowOpacity: 0.25,
+                    shadowRadius: 5,
+                    elevation: 3,
+                  }}
+                  onPress={handleSavePermissions}>
+                  <IconComp name="save-outline" size={18} color="#FFFFFF" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#FFFFFF' }}>Save Permissions</Text>
+                </TouchableOpacity>
               </ScrollView>
             )}
 
@@ -20630,78 +24372,36 @@ function App() {
                     <View style={{ flexDirection: 'row', gap: 12 }}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.envFieldLabel}>Working Hours Start</Text>
-                        <View style={styles.stepperContainer}>
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupWorkStart(adjustTime(setupWorkStart, -15))}>
-                            <IconComp name="remove-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                          <TextInput
-                            style={styles.stepperInput}
-                            value={setupWorkStart}
-                            onChangeText={setSetupWorkStart}
-                            placeholder="09:00"
-                            placeholderTextColor="#94A3B8"
-                          />
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupWorkStart(adjustTime(setupWorkStart, 15))}>
-                            <IconComp name="add-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                          style={styles.envTimePickerField}
+                          activeOpacity={0.8}
+                          onPress={() => openNativeTimePicker(setupWorkStart, setSetupWorkStart)}>
+                          <Text style={styles.envTimePickerFieldText}>{setupWorkStart || '09:00'}</Text>
+                          <IconComp name="time-outline" size={18} color="#64748B" />
+                        </TouchableOpacity>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.envFieldLabel}>Working Hours End</Text>
-                        <View style={styles.stepperContainer}>
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupWorkEnd(adjustTime(setupWorkEnd, -15))}>
-                            <IconComp name="remove-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                          <TextInput
-                            style={styles.stepperInput}
-                            value={setupWorkEnd}
-                            onChangeText={setSetupWorkEnd}
-                            placeholder="16:00"
-                            placeholderTextColor="#94A3B8"
-                          />
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupWorkEnd(adjustTime(setupWorkEnd, 15))}>
-                            <IconComp name="add-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                          style={styles.envTimePickerField}
+                          activeOpacity={0.8}
+                          onPress={() => openNativeTimePicker(setupWorkEnd, setSetupWorkEnd)}>
+                          <Text style={styles.envTimePickerFieldText}>{setupWorkEnd || '16:00'}</Text>
+                          <IconComp name="time-outline" size={18} color="#64748B" />
+                        </TouchableOpacity>
                       </View>
                     </View>
 
                     <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.envFieldLabel}>Cutoff Time (Late after this)</Text>
-                        <View style={styles.stepperContainer}>
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupGraceTime(adjustTime(setupGraceTime, -15))}>
-                            <IconComp name="remove-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                          <TextInput
-                            style={styles.stepperInput}
-                            value={setupGraceTime}
-                            onChangeText={setSetupGraceTime}
-                            placeholder="09:30"
-                            placeholderTextColor="#94A3B8"
-                          />
-                          <TouchableOpacity
-                            style={styles.stepperBtn}
-                            activeOpacity={0.7}
-                            onPress={() => setSetupGraceTime(adjustTime(setupGraceTime, 15))}>
-                            <IconComp name="add-outline" size={18} color="#475569" />
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                          style={styles.envTimePickerField}
+                          activeOpacity={0.8}
+                          onPress={() => openNativeTimePicker(setupGraceTime, setSetupGraceTime)}>
+                          <Text style={styles.envTimePickerFieldText}>{setupGraceTime || '09:30'}</Text>
+                          <IconComp name="time-outline" size={18} color="#64748B" />
+                        </TouchableOpacity>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.envFieldLabel}>Detention Threshold (Absences/Mo)</Text>
@@ -20926,38 +24626,208 @@ function App() {
           </View>
         </Modal>
 
-        {/* --- MODAL 2: CREATE CLASS MODAL --- */}
-        <Modal visible={showAddClassModal} transparent animationType="slide">
+        {/* --- MODAL: MANAGE CATEGORIES (MATCHING REFERENCE IMAGE 2) --- */}
+        <Modal visible={showCategoryModal} transparent animationType="fade">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="school-outline" size={20} color="#2563EB" />
-                <Text style={styles.modalCardTitle}>Create New Class</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Class Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. GRADE - 4"
-                placeholderTextColor="#94A3B8"
-                value={newClassName}
-                onChangeText={setNewClassName}
-              />
-              <Text style={styles.fieldLabelText}>Section</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                value={newClassSection}
-                onChangeText={setNewClassSection}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddClassModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '85%', padding: 0, overflow: 'hidden' }]}>
+              {/* Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                <View>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Manage Categories</Text>
+                  <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>Add or remove custom class categories</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowCategoryModal(false)} style={{ padding: 4 }}>
+                  <IconComp name="close" size={20} color="#94A3B8" />
                 </TouchableOpacity>
+              </View>
+
+              {/* Body */}
+              <View style={{ padding: 20 }}>
+                {/* Input + Add button */}
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                  <RNTextInput
+                    style={{
+                      flex: 1,
+                      height: 42,
+                      borderWidth: 1,
+                      borderColor: '#CBD5E1',
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      fontSize: 13,
+                      color: '#0F172A',
+                      backgroundColor: '#FFFFFF',
+                    }}
+                    placeholder="New category name..."
+                    placeholderTextColor="#94A3B8"
+                    value={newCategoryInput}
+                    onChangeText={setNewCategoryInput}
+                  />
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#0F172A',
+                      paddingHorizontal: 16,
+                      borderRadius: 10,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      gap: 4,
+                    }}
+                    onPress={handleAddCategory}
+                    disabled={isAddingCategory}>
+                    <IconComp name="add" size={16} color="#FFFFFF" />
+                    <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700' }}>
+                      {isAddingCategory ? 'Adding...' : 'Add'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Category Items List */}
+                <ScrollView style={{ maxHeight: 240 }} showsVerticalScrollIndicator={true}>
+                  <View style={{ gap: 8 }}>
+                    {categoriesList.map(cat => (
+                      <View
+                        key={cat.id}
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          paddingVertical: 12,
+                          paddingHorizontal: 14,
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>{cat.name}</Text>
+                        {cat.isDefault ? (
+                          <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B' }}>Default</Text>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            onPress={() => handleDeleteCategory(cat.id, cat.name)}
+                            style={{ padding: 4 }}>
+                            <IconComp name="trash-outline" size={16} color="#EF4444" />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+
+              {/* Footer */}
+              <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: '#F1F5F9', backgroundColor: '#F8FAFC', alignItems: 'flex-end' }}>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#2563EB' }]}
-                  onPress={handleAddClassSubmit}>
-                  <Text style={styles.modalSmallBtnText}>Create Class</Text>
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 20,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  onPress={() => setShowCategoryModal(false)}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* --- MODAL: BULK IMPORT CLASSES (MATCHING REFERENCE IMAGE 3) --- */}
+        <Modal visible={showClassBulkImportModal} transparent animationType="fade">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
+              {/* Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                <View>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Bulk Import Classes</Text>
+                  <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>Upload an Excel file to create multiple classes.</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowClassBulkImportModal(false)} style={{ padding: 4 }}>
+                  <IconComp name="close" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Body */}
+              <ScrollView style={{ padding: 20 }}>
+                {/* Instructions Box */}
+                <View style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 6 }}>Instructions:</Text>
+                  <Text style={{ fontSize: 12, color: '#475569', lineHeight: 18 }}>• Download the template file.</Text>
+                  <Text style={{ fontSize: 12, color: '#475569', lineHeight: 18 }}>• Fill in <Text style={{ fontWeight: '700' }}>Class Name</Text> and <Text style={{ fontWeight: '700' }}>Section</Text> (Mandatory).</Text>
+                  <Text style={{ fontSize: 12, color: '#475569', lineHeight: 18 }}>• Fill in <Text style={{ fontWeight: '700' }}>Category</Text> (Optional). New categories will be auto-created.</Text>
+                  <Text style={{ fontSize: 12, color: '#475569', lineHeight: 18 }}>• Upload the filled file below.</Text>
+
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}
+                    onPress={handleDownloadClassTemplate}>
+                    <IconComp name="download-outline" size={15} color="#b07fa8" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#b07fa8' }}>Download Template</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* File Upload Box */}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8 }}>Select Excel File</Text>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: '#CBD5E1',
+                  borderRadius: 10,
+                  padding: 6,
+                  backgroundColor: '#FFFFFF',
+                  marginBottom: 16,
+                }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#FCE7F3',
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 8,
+                      marginRight: 10,
+                    }}
+                    onPress={handleChooseImportFile}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#BE185D' }}>Choose File</Text>
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 12, color: bulkImportFile ? '#0F172A' : '#94A3B8', flex: 1 }} numberOfLines={1}>
+                    {bulkImportFile ? bulkImportFile.name : 'No file chosen'}
+                  </Text>
+                </View>
+              </ScrollView>
+
+              {/* Footer */}
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: '#F1F5F9', backgroundColor: '#F8FAFC' }}>
+                <TouchableOpacity
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 18,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  onPress={() => setShowClassBulkImportModal(false)}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 20,
+                    borderRadius: 10,
+                    backgroundColor: bulkImportFile ? '#b07fa8' : '#CBD5E1',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                  onPress={handleStartBulkImport}
+                  disabled={!bulkImportFile || isBulkImporting}>
+                  <IconComp name="cloud-upload-outline" size={15} color="#FFFFFF" />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                    {isBulkImporting ? 'Importing...' : 'Start Import'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -21196,146 +25066,113 @@ function App() {
                   onChangeText={setNoticeMessageInput}
                 />
 
-                {/* Field 3 & 4 Row: Target Audience & Priority */}
-                <View style={{ flexDirection: 'row', gap: 12, marginTop: 14, zIndex: 100 }}>
-                  {/* Left Column: Target Audience */}
-                  <View style={{ flex: 1, position: 'relative', zIndex: 100 }}>
-                    <Text style={styles.noticeFieldLabel}>Target Audience</Text>
-                    <TouchableOpacity
-                      style={[
-                        styles.noticeDropdownTrigger,
-                        showNoticeAudienceDropdown && styles.noticeDropdownTriggerActive,
-                      ]}
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setShowNoticeAudienceDropdown(!showNoticeAudienceDropdown);
-                        setShowNoticePriorityDropdown(false);
-                      }}>
-                      <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
-                        {noticeAudience === 'all'
-                          ? 'Everyone (Teachers, Parents)'
-                          : noticeAudience === 'teachers'
-                          ? 'Teachers Only'
-                          : 'Parents Only'}
-                      </Text>
-                      <IconComp name="chevron-down" size={16} color="#475569" />
-                    </TouchableOpacity>
+                {/* Field 3: Target Audience */}
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.noticeFieldLabel}>Target Audience</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.noticeDropdownTrigger,
+                      showNoticeAudienceDropdown && styles.noticeDropdownTriggerActive,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowNoticeAudienceDropdown(!showNoticeAudienceDropdown);
+                      setShowNoticePriorityDropdown(false);
+                    }}>
+                    <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
+                      {noticeAudience === 'all'
+                        ? 'Everyone (Teachers, Parents)'
+                        : noticeAudience === 'teachers'
+                        ? 'Teachers Only'
+                        : 'Parents Only'}
+                    </Text>
+                    <IconComp name={showNoticeAudienceDropdown ? "chevron-up" : "chevron-down"} size={16} color="#475569" />
+                  </TouchableOpacity>
 
-                    {showNoticeAudienceDropdown && (
-                      <View style={styles.noticeDropdownMenu}>
+                  {showNoticeAudienceDropdown && (
+                    <View style={styles.noticeInflowDropdownMenu}>
+                      {[
+                        { key: 'all', label: 'Everyone (Teachers, Parents)' },
+                        { key: 'teachers', label: 'Teachers Only' },
+                        { key: 'parents', label: 'Parents Only' },
+                      ].map(item => (
                         <TouchableOpacity
+                          key={item.key}
                           style={[
                             styles.noticeDropdownItem,
-                            noticeAudience === 'all' && styles.noticeDropdownItemActive,
+                            noticeAudience === item.key && styles.noticeDropdownItemActive,
+                            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }
                           ]}
                           onPress={() => {
-                            setNoticeAudience('all');
+                            setNoticeAudience(item.key as any);
                             setShowNoticeAudienceDropdown(false);
                           }}>
                           <Text
                             style={[
                               styles.noticeDropdownItemText,
-                              noticeAudience === 'all' && styles.noticeDropdownItemTextActive,
+                              noticeAudience === item.key && styles.noticeDropdownItemTextActive,
                             ]}>
-                            Everyone (Teachers, Parents)
+                            {item.label}
                           </Text>
+                          {noticeAudience === item.key && (
+                            <IconComp name="checkmark" size={16} color="#b07fa8" />
+                          )}
                         </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.noticeDropdownItem,
-                            noticeAudience === 'teachers' && styles.noticeDropdownItemActive,
-                          ]}
-                          onPress={() => {
-                            setNoticeAudience('teachers');
-                            setShowNoticeAudienceDropdown(false);
-                          }}>
-                          <Text
-                            style={[
-                              styles.noticeDropdownItemText,
-                              noticeAudience === 'teachers' && styles.noticeDropdownItemTextActive,
-                            ]}>
-                            Teachers Only
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.noticeDropdownItem,
-                            noticeAudience === 'parents' && styles.noticeDropdownItemActive,
-                          ]}
-                          onPress={() => {
-                            setNoticeAudience('parents');
-                            setShowNoticeAudienceDropdown(false);
-                          }}>
-                          <Text
-                            style={[
-                              styles.noticeDropdownItemText,
-                              noticeAudience === 'parents' && styles.noticeDropdownItemTextActive,
-                            ]}>
-                            Parents Only
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
 
-                  {/* Right Column: Priority */}
-                  <View style={{ flex: 1, position: 'relative', zIndex: 100 }}>
-                    <Text style={styles.noticeFieldLabel}>Priority</Text>
-                    <TouchableOpacity
-                      style={[
-                        styles.noticeDropdownTrigger,
-                        showNoticePriorityDropdown && styles.noticeDropdownTriggerActive,
-                      ]}
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setShowNoticePriorityDropdown(!showNoticePriorityDropdown);
-                        setShowNoticeAudienceDropdown(false);
-                      }}>
-                      <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
-                        {noticePriority === 'normal' ? 'Normal' : 'High (Urgent)'}
-                      </Text>
-                      <IconComp name="chevron-down" size={16} color="#475569" />
-                    </TouchableOpacity>
+                {/* Field 4: Priority */}
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.noticeFieldLabel}>Priority</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.noticeDropdownTrigger,
+                      showNoticePriorityDropdown && styles.noticeDropdownTriggerActive,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setShowNoticePriorityDropdown(!showNoticePriorityDropdown);
+                      setShowNoticeAudienceDropdown(false);
+                    }}>
+                    <Text style={styles.noticeDropdownTriggerText} numberOfLines={1}>
+                      {noticePriority === 'normal' ? 'Normal' : 'High (Urgent)'}
+                    </Text>
+                    <IconComp name={showNoticePriorityDropdown ? "chevron-up" : "chevron-down"} size={16} color="#475569" />
+                  </TouchableOpacity>
 
-                    {showNoticePriorityDropdown && (
-                      <View style={styles.noticeDropdownMenu}>
+                  {showNoticePriorityDropdown && (
+                    <View style={styles.noticeInflowDropdownMenu}>
+                      {[
+                        { key: 'normal', label: 'Normal' },
+                        { key: 'high', label: 'High (Urgent)' },
+                      ].map(item => (
                         <TouchableOpacity
+                          key={item.key}
                           style={[
                             styles.noticeDropdownItem,
-                            noticePriority === 'normal' && styles.noticeDropdownItemActive,
+                            noticePriority === item.key && styles.noticeDropdownItemActive,
+                            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }
                           ]}
                           onPress={() => {
-                            setNoticePriority('normal');
+                            setNoticePriority(item.key as any);
                             setShowNoticePriorityDropdown(false);
                           }}>
                           <Text
                             style={[
                               styles.noticeDropdownItemText,
-                              noticePriority === 'normal' && styles.noticeDropdownItemTextActive,
+                              noticePriority === item.key && styles.noticeDropdownItemTextActive,
                             ]}>
-                            Normal
+                            {item.label}
                           </Text>
+                          {noticePriority === item.key && (
+                            <IconComp name="checkmark" size={16} color="#b07fa8" />
+                          )}
                         </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.noticeDropdownItem,
-                            noticePriority === 'high' && styles.noticeDropdownItemActive,
-                          ]}
-                          onPress={() => {
-                            setNoticePriority('high');
-                            setShowNoticePriorityDropdown(false);
-                          }}>
-                          <Text
-                            style={[
-                              styles.noticeDropdownItemText,
-                              noticePriority === 'high' && styles.noticeDropdownItemTextActive,
-                            ]}>
-                            High (Urgent)
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
 
                 {/* Footer Buttons */}
@@ -21364,70 +25201,354 @@ function App() {
           </View>
         </Modal>
 
-        {/* --- MODAL: ADD HR PAYROLL RECORD --- */}
-        <Modal visible={showAddHrModal} transparent animationType="slide">
+        {/* --- MODAL: ADD HR PAYROLL RECORD (MATCHING REFERENCE IMAGE 5) --- */}
+        <Modal visible={showAddHrModal} transparent animationType="fade">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="cash-outline" size={20} color="#059669" />
-                <Text style={styles.modalCardTitle}>Add Payroll Record</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Staff Name *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Dr. Sarah Connor"
-                placeholderTextColor="#94A3B8"
-                value={hrStaffName}
-                onChangeText={v => setHrStaffName(sanitizeName(v))}
-              />
-              <Text style={styles.fieldLabelText}>Role / Designation</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Teacher"
-                placeholderTextColor="#94A3B8"
-                value={hrStaffRole}
-                onChangeText={setHrStaffRole}
-              />
-              <Text style={styles.fieldLabelText}>Base Salary (₹) *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="25000"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                value={hrBaseSalary}
-                onChangeText={v => setHrBaseSalary(sanitizeAmount(v))}
-              />
-              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddHrModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
+            <View style={[styles.modalCardContainer, { maxWidth: 480, width: '92%', maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
+              {/* Modal Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>Add Payroll Record</Text>
+                <TouchableOpacity onPress={() => setShowAddHrModal(false)} style={{ padding: 4 }}>
+                  <IconComp name="close" size={20} color="#94A3B8" />
                 </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                style={{ maxHeight: 520 }}
+                contentContainerStyle={{ padding: 20 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={true}>
+                {/* Field 1: Staff Member (Dropdown) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Staff Member</Text>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#059669' }]}
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 12,
+                  }}
                   onPress={() => {
-                    const sal = parseFloat(hrBaseSalary) || 0;
-                    const pf = Math.round(Math.min(sal, 15000) * 0.12);
-                    const net = sal - pf;
-                    const newRecord = {
-                      id: `pr_${Date.now()}`,
-                      teacherId: `t_${Date.now()}`,
-                      name: hrStaffName || 'Staff Member',
-                      role: hrStaffRole || 'Teacher',
-                      baseSalary: sal,
-                      pfCalculated: pf,
-                      esiCalculated: 0,
-                      deductions: pf,
-                      netPay: net,
-                      month: 'September 2026',
-                      status: hrPaymentStatus,
-                      createdAt: new Date().toISOString(),
-                    };
-                    setHrPayrollList([newRecord, ...hrPayrollList]);
-                    setShowAddHrModal(false);
-                    showToast('Payroll record added successfully!');
+                    setShowHrStaffDropdown(prev => !prev);
+                    setShowHrStatusDropdown(false);
                   }}>
-                  <Text style={styles.modalSmallBtnText}>Save Record</Text>
+                  <Text style={{ fontSize: 13, color: hrStaffName ? '#0F172A' : '#94A3B8', fontWeight: hrStaffName ? '600' : '400' }}>
+                    {hrStaffName || 'Select Staff...'}
+                  </Text>
+                  <IconComp name="chevron-down-outline" size={14} color="#64748B" />
+                </TouchableOpacity>
+
+                {/* Staff Member Dropdown List */}
+                {showHrStaffDropdown && (
+                  <View style={{
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 12,
+                    maxHeight: 180,
+                    overflow: 'hidden',
+                  }}>
+                    <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                      <TouchableOpacity
+                        style={{ paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}
+                        onPress={() => handleSelectStaffForPayroll('')}>
+                        <Text style={{ fontSize: 13, color: '#64748B' }}>Select Staff...</Text>
+                      </TouchableOpacity>
+                      {staffList.map(s => (
+                        <TouchableOpacity
+                          key={s.id}
+                          style={{
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#F1F5F9',
+                            backgroundColor: hrSelectedStaffId === s.id ? '#F8FAFC' : '#FFFFFF',
+                          }}
+                          onPress={() => handleSelectStaffForPayroll(s.id)}>
+                          <Text style={{ fontSize: 13, color: hrSelectedStaffId === s.id ? '#b07fa8' : '#0F172A', fontWeight: hrSelectedStaffId === s.id ? '700' : '500' }}>
+                            {s.name} ({s.role})
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Field 2: Role / Position */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Role / Position</Text>
+                <RNTextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 12,
+                  }}
+                  placeholder="e.g. Teacher"
+                  placeholderTextColor="#94A3B8"
+                  value={hrStaffRole}
+                  onChangeText={setHrStaffRole}
+                />
+
+                {/* Field 3: Base Salary (₹) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Base Salary (₹)</Text>
+                <RNTextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 12,
+                  }}
+                  placeholder="0"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  value={hrBaseSalary}
+                  onChangeText={handleSalaryChange}
+                />
+
+                {/* Field 4: Total Deductions (₹) */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Total Deductions (₹)</Text>
+                <RNTextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 4,
+                  }}
+                  placeholder="0"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                  value={hrDeductions}
+                  onChangeText={setHrDeductions}
+                />
+                <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 14, lineHeight: 16 }}>
+                  Includes 12% PF (₹{hrPfCalculated}) and 0.75% ESI (₹{hrEsiCalculated}). Edit if needed.
+                </Text>
+
+                {/* Field 5: Status Dropdown */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Status</Text>
+                <TouchableOpacity
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 16,
+                  }}
+                  onPress={() => {
+                    setShowHrStatusDropdown(prev => !prev);
+                    setShowHrStaffDropdown(false);
+                  }}>
+                  <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '600' }}>
+                    {hrPaymentStatus}
+                  </Text>
+                  <IconComp name="chevron-down-outline" size={14} color="#64748B" />
+                </TouchableOpacity>
+
+                {/* Status Dropdown Options */}
+                {showHrStatusDropdown && (
+                  <View style={{
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 16,
+                    overflow: 'hidden',
+                  }}>
+                    {(['Pending', 'Paid', 'Payslip Released'] as const).map(st => (
+                      <TouchableOpacity
+                        key={st}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#F1F5F9',
+                          backgroundColor: hrPaymentStatus === st ? '#F8FAFC' : '#FFFFFF',
+                        }}
+                        onPress={() => {
+                          setHrPaymentStatus(st);
+                          setShowHrStatusDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: hrPaymentStatus === st ? '#b07fa8' : '#0F172A', fontWeight: hrPaymentStatus === st ? '700' : '500' }}>
+                          {st}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* PAYROLL SUMMARY CARD (Matching Reference Image 5) */}
+                <View style={{
+                  backgroundColor: '#F8FAFC',
+                  padding: 14,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  marginBottom: 10,
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                    PAYROLL SUMMARY
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={{ fontSize: 13, color: '#475569', fontWeight: '500' }}>Base Salary</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>
+                      ₹{(parseFloat(hrBaseSalary) || 0).toLocaleString()}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <Text style={{ fontSize: 13, color: '#DC2626', fontWeight: '500' }}>Total Deductions</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#DC2626' }}>
+                      -₹{(parseFloat(hrDeductions) || 0).toLocaleString()}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#059669' }}>Net Balance (Payable)</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#059669' }}>
+                      ₹{((parseFloat(hrBaseSalary) || 0) - (parseFloat(hrDeductions) || 0)).toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {/* Modal Footer Buttons (Matching Image 5) */}
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#F1F5F9', backgroundColor: '#F8FAFC' }}>
+                <TouchableOpacity
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 18,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  onPress={() => setShowAddHrModal(false)}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    paddingVertical: 9,
+                    paddingHorizontal: 20,
+                    borderRadius: 10,
+                    backgroundColor: '#b07fa8',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={handleSavePayrollRecord}
+                  disabled={isSavingPayroll}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                    {isSavingPayroll ? 'Saving...' : 'Save Record'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* --- MODAL: HR SETTINGS (MATCHING REFERENCE IMAGE 1) --- */}
+        <Modal visible={showHrSettingsModal} transparent animationType="fade" onRequestClose={() => setShowHrSettingsModal(false)}>
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', padding: 22, borderRadius: 24 }]}>
+              {/* Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>HR Settings</Text>
+                <TouchableOpacity
+                  onPress={() => setShowHrSettingsModal(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Authorized Signature Label & Subtitle */}
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A', marginBottom: 4 }}>
+                Authorized Signature
+              </Text>
+              <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 18 }}>
+                This signature will appear on all generated payslips.
+              </Text>
+
+              {/* Signature File Picker & Upload Row (Image 1 Matching) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {/* File Picker Box */}
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 14,
+                    padding: 6,
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  onPress={handleChooseSignatureFile}
+                  activeOpacity={0.7}>
+                  <View
+                    style={{
+                      paddingVertical: 7,
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      backgroundColor: '#F1F5F9',
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                    }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>Choose File</Text>
+                  </View>
+                  <Text
+                    style={{ fontSize: 12, color: hrSignatureFile ? '#0F172A' : '#94A3B8', flex: 1, fontWeight: hrSignatureFile ? '600' : '400' }}
+                    numberOfLines={1}>
+                    {hrSignatureFile ? hrSignatureFile.name : 'No file chosen'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Upload Button */}
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: '#986794',
+                    paddingVertical: 10,
+                    paddingHorizontal: 16,
+                    borderRadius: 14,
+                    opacity: hrSignatureFile ? 1 : 0.6,
+                  }}
+                  onPress={handleUploadSignature}
+                  disabled={!hrSignatureFile || isUploadingSignature}>
+                  {isUploadingSignature ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <IconComp name="cloud-upload-outline" size={16} color="#FFFFFF" />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Upload</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>
@@ -21500,224 +25621,464 @@ function App() {
         </Modal>
 
         {/* --- MODAL: ADD TIMETABLE PERIOD --- */}
-        <Modal visible={showAddSlotModal} transparent animationType="slide">
+        {/* --- MODAL: ADD / EDIT TIMETABLE PERIOD --- */}
+        <Modal visible={showAddSlotModal} transparent animationType="slide" onRequestClose={() => setShowAddSlotModal(false)}>
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
+            <View style={[styles.modalCardContainer, { maxHeight: '85%' }]}>
               <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="time-outline" size={20} color="#b07fa8" />
-                <Text style={styles.modalCardTitle}>Add Timetable Period</Text>
+                <IconComp name="time-outline" size={20} color="#986794" />
+                <Text style={styles.modalCardTitle}>{editingSlotId ? 'Edit Timetable Period' : `Add Period to ${targetSlotDay}`}</Text>
               </View>
-              <Text style={styles.fieldLabelText}>Start Time</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="09:00 AM"
-                placeholderTextColor="#94A3B8"
-                value={slotStartTime}
-                onChangeText={setSlotStartTime}
-              />
-              <Text style={styles.fieldLabelText}>End Time</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="10:00 AM"
-                placeholderTextColor="#94A3B8"
-                value={slotEndTime}
-                onChangeText={setSlotEndTime}
-              />
-              <Text style={styles.fieldLabelText}>Subject *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Mathematics"
-                placeholderTextColor="#94A3B8"
-                value={slotSubject}
-                onChangeText={setSlotSubject}
-              />
-              <Text style={styles.fieldLabelText}>Assigned Teacher</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Jana D"
-                placeholderTextColor="#94A3B8"
-                value={slotTeacher}
-                onChangeText={setSlotTeacher}
-              />
-              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddSlotModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={() => {
-                    if (!slotSubject.trim()) {
-                      Alert.alert('Error', 'Please enter a subject name');
-                      return;
-                    }
-                    const newSlotObj = {
-                      id: `slot_${Date.now()}`,
-                      startTime: slotStartTime || '09:00 AM',
-                      endTime: slotEndTime || '10:00 AM',
-                      subject: slotSubject,
-                      teacher: slotTeacher || 'Unassigned',
-                    };
-                    setTimetablesData((prev: any) => {
-                      const currentClass = prev[timetableClassSelected] || {};
-                      const currentDaySlots = currentClass[timetableMasterDay] || [];
-                      return {
-                        ...prev,
-                        [timetableClassSelected]: {
-                          ...currentClass,
-                          [timetableMasterDay]: [...currentDaySlots, newSlotObj],
-                        },
-                      };
-                    });
-                    setShowAddSlotModal(false);
-                    showToast('Period added to timetable!');
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Add Period</Text>
-                </TouchableOpacity>
-              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <Text style={styles.fieldLabelText}>Start Time (e.g. 09:00 AM)</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="09:00 AM"
+                  placeholderTextColor="#94A3B8"
+                  value={slotStartTime}
+                  onChangeText={setSlotStartTime}
+                />
+
+                <Text style={styles.fieldLabelText}>End Time (e.g. 10:00 AM)</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="10:00 AM"
+                  placeholderTextColor="#94A3B8"
+                  value={slotEndTime}
+                  onChangeText={setSlotEndTime}
+                />
+
+                <Text style={styles.fieldLabelText}>Subject *</Text>
+                {subjectList && subjectList.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 8 }}>
+                    {subjectList.map(s => (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 8,
+                          backgroundColor: slotSubject === s.name ? '#faedf7' : '#F1F5F9',
+                          borderWidth: 1,
+                          borderColor: slotSubject === s.name ? '#eec9db' : '#CBD5E1',
+                        }}
+                        onPress={() => setSlotSubject(s.name)}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: slotSubject === s.name ? '#986794' : '#334155' }}>
+                          {s.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. Mathematics"
+                  placeholderTextColor="#94A3B8"
+                  value={slotSubject}
+                  onChangeText={setSlotSubject}
+                />
+
+                <Text style={styles.fieldLabelText}>Assigned Teacher</Text>
+                {staffList && staffList.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 8 }}>
+                    {staffList.map(st => (
+                      <TouchableOpacity
+                        key={st.id}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 8,
+                          backgroundColor: slotTeacher === st.name ? '#faedf7' : '#F1F5F9',
+                          borderWidth: 1,
+                          borderColor: slotTeacher === st.name ? '#eec9db' : '#CBD5E1',
+                        }}
+                        onPress={() => setSlotTeacher(st.name)}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: slotTeacher === st.name ? '#986794' : '#334155' }}>
+                          {st.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. Mrs. Sharma"
+                  placeholderTextColor="#94A3B8"
+                  value={slotTeacher}
+                  onChangeText={setSlotTeacher}
+                />
+
+                <View style={{ flexDirection: 'row', marginTop: 16, gap: 10 }}>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
+                    onPress={() => setShowAddSlotModal(false)}>
+                    <Text style={styles.modalSmallBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#986794' }]}
+                    onPress={handleSavePeriod}>
+                    <Text style={styles.modalSmallBtnText}>{editingSlotId ? 'Save Changes' : 'Add Period'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
 
-        {/* --- MODAL: ADD CALENDAR EVENT --- */}
-        <Modal visible={showAddEventModal} transparent animationType="slide">
+        {/* --- MODAL: ADD CALENDAR EVENT (MATCHING REFERENCE IMAGE 5) --- */}
+        <Modal visible={showAddEventModal} transparent animationType="slide" onRequestClose={() => setShowAddEventModal(false)}>
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="calendar-outline" size={20} color="#b07fa8" />
-                <Text style={styles.modalCardTitle}>Add Calendar Event</Text>
+            <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', padding: 20, borderRadius: 22 }]}>
+              {/* Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0F172A' }}>Add Event</Text>
+                <TouchableOpacity
+                  onPress={() => setShowAddEventModal(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
               </View>
-              <Text style={styles.fieldLabelText}>Event Title *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Science Exhibition"
-                placeholderTextColor="#94A3B8"
-                value={eventTitleInput}
-                onChangeText={setEventTitleInput}
-              />
-              <Text style={styles.fieldLabelText}>Category Type</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginVertical: 6 }}>
-                {(['event', 'holiday', 'exam'] as const).map(t => (
+
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {/* Field 1: Event Title * */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                  Event Title *
+                </Text>
+                <TextInput
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    fontSize: 13,
+                    color: '#0F172A',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 14,
+                  }}
+                  placeholder="e.g., Annual Sports Meet, Parent-Teacher Meeting"
+                  placeholderTextColor="#94A3B8"
+                  value={eventTitleInput}
+                  onChangeText={setEventTitleInput}
+                />
+
+                {/* Field 2: Event Type Dropdown */}
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                  Event Type
+                </Text>
+                <TouchableOpacity
+                  style={{
+                    height: 44,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: showEventTypeDropdown ? 6 : 14,
+                  }}
+                  onPress={() => setShowEventTypeDropdown(prev => !prev)}>
+                  <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '600' }}>
+                    {eventTypeInput}
+                  </Text>
+                  <IconComp name="chevron-down-outline" size={16} color="#64748B" />
+                </TouchableOpacity>
+
+                {showEventTypeDropdown && (
+                  <View style={{
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    backgroundColor: '#FFFFFF',
+                    marginBottom: 14,
+                    overflow: 'hidden',
+                  }}>
+                    {['General Event', 'Holiday', 'Exam', 'Meeting', 'Sports', 'Cultural'].map(typ => (
+                      <TouchableOpacity
+                        key={typ}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#F1F5F9',
+                          backgroundColor: eventTypeInput === typ ? '#F8FAFC' : '#FFFFFF',
+                        }}
+                        onPress={() => {
+                          setEventTypeInput(typ);
+                          setShowEventTypeDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: eventTypeInput === typ ? '#b07fa8' : '#0F172A', fontWeight: eventTypeInput === typ ? '700' : '500' }}>
+                          {typ}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* Field 3: Multiple Custom Dates Checkbox */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 }}
+                  onPress={() => setIsMultipleCustomDates(prev => !prev)}
+                  activeOpacity={0.7}>
+                  <View style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 6,
+                    borderWidth: 2,
+                    borderColor: isMultipleCustomDates ? '#b07fa8' : '#CBD5E1',
+                    backgroundColor: isMultipleCustomDates ? '#b07fa8' : '#FFFFFF',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                    {isMultipleCustomDates && <IconComp name="checkmark-outline" size={14} color="#FFFFFF" />}
+                  </View>
+                  <Text style={{ fontSize: 13, color: '#334155', fontWeight: '600' }}>
+                    Multiple custom dates?
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Date Selection Mode */}
+                {isMultipleCustomDates ? (
+                  <View style={{ marginBottom: 14 }}>
+                    <TouchableOpacity
+                      style={{
+                        height: 44,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                        borderRadius: 10,
+                        paddingHorizontal: 14,
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        backgroundColor: '#FFFFFF',
+                        marginBottom: 8,
+                      }}
+                      onPress={() => openDatePicker('adminEventStartDate', eventStartDate, 'Add Custom Date')}>
+                      <Text style={{ fontSize: 13, color: '#64748B' }}>Tap to pick a date...</Text>
+                      <IconComp name="add-circle-outline" size={18} color="#b07fa8" />
+                    </TouchableOpacity>
+
+                    {customDatesList.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {customDatesList.map((dItem, idx) => (
+                          <View
+                            key={idx}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              backgroundColor: '#faedf7',
+                              borderRadius: 8,
+                              paddingVertical: 4,
+                              paddingHorizontal: 8,
+                            }}>
+                            <Text style={{ fontSize: 12, color: '#b07fa8', fontWeight: '700' }}>{dItem}</Text>
+                            <TouchableOpacity onPress={() => setCustomDatesList(prev => prev.filter((_, i) => i !== idx))}>
+                              <IconComp name="close-circle" size={14} color="#b07fa8" />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+                    {/* Start Date */}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                        Start Date *
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          height: 44,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 10,
+                          paddingHorizontal: 12,
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        onPress={() => openDatePicker('adminEventStartDate', eventStartDate, 'Select Start Date')}>
+                        <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '600' }}>
+                          {eventStartDate}
+                        </Text>
+                        <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* End Date */}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                        End Date *
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          height: 44,
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 10,
+                          paddingHorizontal: 12,
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          backgroundColor: '#FFFFFF',
+                        }}
+                        onPress={() => openDatePicker('adminEventEndDate', eventEndDate, 'Select End Date')}>
+                        <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '600' }}>
+                          {eventEndDate}
+                        </Text>
+                        <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {/* Footer Buttons */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
                   <TouchableOpacity
-                    key={t}
-                    style={[
-                      styles.filterChipItem,
-                      eventTypeInput === t && styles.filterChipItemActive,
-                    ]}
-                    onPress={() => setEventTypeInput(t)}>
-                    <Text style={[styles.filterChipText, eventTypeInput === t && styles.filterChipTextActive]}>
-                      {t.toUpperCase()}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 18,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: '#CBD5E1',
+                      backgroundColor: '#FFFFFF',
+                    }}
+                    onPress={() => setShowAddEventModal(false)}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 22,
+                      borderRadius: 10,
+                      backgroundColor: '#986794',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onPress={handleSaveCalendarEvent}
+                    disabled={isSavingCalendarEvent}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                      {isSavingCalendarEvent ? 'Saving...' : 'Save Event'}
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={styles.fieldLabelText}>Start Date</Text>
-              <TouchableOpacity
-                style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                onPress={() => openDatePicker('adminAddEventDate', eventStartInput || '2026-09-15', 'Select Event Date')}
-                activeOpacity={0.8}>
-                <Text style={{ fontSize: 13, color: eventStartInput ? '#0F172A' : '#94A3B8' }}>
-                  {eventStartInput || '2026-09-15'}
-                </Text>
-                <IconComp name="calendar-outline" size={16} color="#B07FA8" />
-              </TouchableOpacity>
-              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowAddEventModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={() => {
-                    if (!eventTitleInput.trim()) {
-                      Alert.alert('Error', 'Please enter event title');
-                      return;
-                    }
-                    const newEv = {
-                      id: `ev_${Date.now()}`,
-                      title: eventTitleInput,
-                      start: eventStartInput || '2026-09-15',
-                      end: eventEndInput || '2026-09-15',
-                      type: eventTypeInput,
-                    };
-                    setCalendarEventsList([newEv, ...calendarEventsList]);
-                    setShowAddEventModal(false);
-                    setEventTitleInput('');
-                    showToast('Event added to calendar!');
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Save Event</Text>
-                </TouchableOpacity>
-              </View>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
 
-        {/* --- MODAL: CREATE EXAM --- */}
+        {/* --- MODAL: CREATE EXAM (Matches Image 4) --- */}
         <Modal visible={showCreateExamModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="document-text-outline" size={20} color="#b07fa8" />
-                <Text style={styles.modalCardTitle}>Create New Examination</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Exam Title *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Unit Test - 2"
-                placeholderTextColor="#94A3B8"
-                value={newExamName}
-                onChangeText={setNewExamName}
-              />
-              <Text style={styles.fieldLabelText}>Subject *</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="e.g. Mathematics"
-                placeholderTextColor="#94A3B8"
-                value={newExamSubject}
-                onChangeText={setNewExamSubject}
-              />
-              <Text style={styles.fieldLabelText}>Max Marks</Text>
-              <TextInput
-                style={styles.modalInputBox}
-                placeholder="50"
-                placeholderTextColor="#94A3B8"
-                keyboardType="number-pad"
-                value={newExamMaxMarks}
-                onChangeText={v => setNewExamMaxMarks(sanitizeNumeric(v, 3))}
-              />
-              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]}
-                  onPress={() => setShowCreateExamModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
-                  onPress={() => {
-                    if (!newExamName.trim()) {
-                      Alert.alert('Error', 'Please enter exam title');
-                      return;
-                    }
-                    const newEx = {
-                      id: `ex_${Date.now()}`,
-                      name: newExamName,
-                      examType: newExamType,
-                      subject: newExamSubject || 'General',
-                      maxMarks: parseInt(newExamMaxMarks, 10) || 50,
-                      startDate: newExamStartDate || '15/09/2026',
-                      endDate: newExamEndDate || '15/09/2026',
-                      status: 'ACTIVE',
-                    };
-                    setExamsList([newEx, ...examsList]);
-                    setShowCreateExamModal(false);
-                    setNewExamName('');
-                    showToast('Examination created successfully!');
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Create Exam</Text>
-                </TouchableOpacity>
-              </View>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', width: '92%', maxWidth: 480 }]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconComp name="document-text-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.modalCardTitle}>Create Exam</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowCreateExamModal(false)}>
+                    <IconComp name="close" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.fieldLabelText}>Exam Name *</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. Mid-Term 2026"
+                  placeholderTextColor="#94A3B8"
+                  value={newExamName}
+                  onChangeText={setNewExamName}
+                />
+
+                <Text style={styles.fieldLabelText}>Exam Type</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="Custom Exam"
+                  placeholderTextColor="#94A3B8"
+                  value={newExamType}
+                  onChangeText={setNewExamType}
+                />
+
+                <Text style={styles.fieldLabelText}>Max Marks</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="100"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  value={newExamMaxMarks}
+                  onChangeText={v => setNewExamMaxMarks(sanitizeNumeric(v, 3))}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabelText}>Start Date</Text>
+                    <TouchableOpacity
+                      style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                      onPress={() => {
+                        openNativeDatePicker(newExamStartDate || '2026-08-28', (selected) => setNewExamStartDate(selected));
+                      }}>
+                      <Text style={{ fontSize: 13, color: newExamStartDate ? '#0F172A' : '#94A3B8' }}>
+                        {newExamStartDate || 'dd-mm-yyyy'}
+                      </Text>
+                      <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabelText}>End Date</Text>
+                    <TouchableOpacity
+                      style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                      onPress={() => {
+                        openNativeDatePicker(newExamEndDate || '2026-08-28', (selected) => setNewExamEndDate(selected));
+                      }}>
+                      <Text style={{ fontSize: 13, color: newExamEndDate ? '#0F172A' : '#94A3B8' }}>
+                        {newExamEndDate || 'dd-mm-yyyy'}
+                      </Text>
+                      <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                    onPress={() => setShowCreateExamModal(false)}>
+                    <Text style={[styles.modalSmallBtnText, { color: '#475569' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                    onPress={() => {
+                      if (!newExamName.trim()) {
+                        Alert.alert('Error', 'Please enter exam name');
+                        return;
+                      }
+                      const newEx = {
+                        id: `ex_${Date.now()}`,
+                        name: newExamName.trim(),
+                        examType: newExamType || 'Custom Exam',
+                        subject: newExamSubject || 'General',
+                        maxMarks: parseInt(newExamMaxMarks, 10) || 100,
+                        startDate: newExamStartDate || '2026-08-28',
+                        endDate: newExamEndDate || '2026-08-28',
+                        status: 'ACTIVE',
+                      };
+                      setExamsList([newEx, ...examsList]);
+                      setShowCreateExamModal(false);
+                      setNewExamName('');
+                      showToast('Examination created successfully!');
+                    }}>
+                    <Text style={styles.modalSmallBtnText}>Create Exam</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -21879,91 +26240,953 @@ function App() {
           </View>
         </Modal>
 
-        {/* ===== MODAL: ADD NEW BOOK ===== */}
+        {/* ===== MODAL: CATALOG NEW BOOK (Matches Image 5) ===== */}
         <Modal visible={showAddBookModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="book-outline" size={20} color="#0284C7" />
-                <Text style={styles.modalCardTitle}>Add New Book</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Title *</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. To Kill a Mockingbird" placeholderTextColor="#94A3B8" value={newBookForm.title} onChangeText={v => setNewBookForm(p => ({ ...p, title: v }))} />
-              <Text style={styles.fieldLabelText}>Author *</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. Harper Lee" placeholderTextColor="#94A3B8" value={newBookForm.author} onChangeText={v => setNewBookForm(p => ({ ...p, author: v }))} />
-              <Text style={styles.fieldLabelText}>ISBN</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. 978-0060935467" placeholderTextColor="#94A3B8" value={newBookForm.isbn} onChangeText={v => setNewBookForm(p => ({ ...p, isbn: v }))} />
-              <Text style={styles.fieldLabelText}>Category</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. Fiction" placeholderTextColor="#94A3B8" value={newBookForm.category} onChangeText={v => setNewBookForm(p => ({ ...p, category: v }))} />
-              <Text style={styles.fieldLabelText}>Quantity</Text>
-              <TextInput style={styles.modalInputBox} placeholder="1" placeholderTextColor="#94A3B8" keyboardType="number-pad" value={newBookForm.totalQuantity} onChangeText={v => setNewBookForm(p => ({ ...p, totalQuantity: sanitizeNumeric(v, 4) }))} />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]} onPress={() => setShowAddBookModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', width: '92%', maxWidth: 480 }]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconComp name="book-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.modalCardTitle}>Catalog New Book</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowAddBookModal(false)}>
+                    <IconComp name="close" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.fieldLabelText}>Book Title *</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. To Kill a Mockingbird"
+                  placeholderTextColor="#94A3B8"
+                  value={newBookForm.title}
+                  onChangeText={v => setNewBookForm(p => ({ ...p, title: v }))}
+                />
+
+                <Text style={styles.fieldLabelText}>Author *</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. Harper Lee"
+                  placeholderTextColor="#94A3B8"
+                  value={newBookForm.author}
+                  onChangeText={v => setNewBookForm(p => ({ ...p, author: v }))}
+                />
+
+                <Text style={styles.fieldLabelText}>ISBN</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="e.g. 978-0060935467"
+                  placeholderTextColor="#94A3B8"
+                  value={newBookForm.isbn}
+                  onChangeText={v => setNewBookForm(p => ({ ...p, isbn: v }))}
+                />
+
+                {/* Category Dropdown (Matches Image 5) */}
+                <Text style={styles.fieldLabelText}>Category</Text>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#0284C7' }]}
-                  onPress={() => {
-                    if (!newBookForm.title.trim()) { Alert.alert('Error', 'Book title is required'); return; }
-                    setShowAddBookModal(false);
-                    showToast(`Book "${newBookForm.title}" added to library!`);
-                    setNewBookForm({ title: '', author: '', isbn: '', category: 'Fiction', totalQuantity: '1' });
-                  }}>
-                  <Text style={styles.modalSmallBtnText}>Add Book</Text>
+                  style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: showBookCategoryDropdown ? 4 : 12 }]}
+                  onPress={() => setShowBookCategoryDropdown(!showBookCategoryDropdown)}>
+                  <Text style={{ fontSize: 13, color: newBookForm.category ? '#0F172A' : '#94A3B8', fontWeight: '500' }}>
+                    {newBookForm.category || 'Select Category...'}
+                  </Text>
+                  <IconComp name={showBookCategoryDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
                 </TouchableOpacity>
-              </View>
+
+                {showBookCategoryDropdown && (
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    overflow: 'hidden',
+                    elevation: 4,
+                  }}>
+                    {libraryCategoriesList.map(cat => (
+                      <TouchableOpacity
+                        key={cat}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          backgroundColor: newBookForm.category === cat ? '#f6eef5' : '#FFFFFF',
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#F1F5F9',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                        onPress={() => {
+                          setNewBookForm(p => ({ ...p, category: cat }));
+                          setShowBookCategoryDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 12, color: newBookForm.category === cat ? '#b07fa8' : '#0F172A', fontWeight: newBookForm.category === cat ? '700' : '400' }}>
+                          {cat}
+                        </Text>
+                        {newBookForm.category === cat && <IconComp name="checkmark" size={14} color="#b07fa8" />}
+                      </TouchableOpacity>
+                    ))}
+                    {/* + Add New Category option */}
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 11,
+                        paddingHorizontal: 12,
+                        backgroundColor: '#FAFAFA',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                      onPress={() => {
+                        setShowBookCategoryDropdown(false);
+                        setShowAddCategoryInline(true);
+                      }}>
+                      <IconComp name="add-circle-outline" size={16} color="#b07fa8" />
+                      <Text style={{ fontSize: 12, color: '#b07fa8', fontWeight: '700' }}>+ Add New Category...</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Inline New Category Input */}
+                {showAddCategoryInline && (
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                    <TextInput
+                      style={[styles.modalInputBox, { flex: 1, marginBottom: 0 }]}
+                      placeholder="Enter new category name..."
+                      placeholderTextColor="#94A3B8"
+                      value={newBookCategoryInput}
+                      onChangeText={setNewBookCategoryInput}
+                    />
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#b07fa8', paddingHorizontal: 14, borderRadius: 8, justifyContent: 'center' }}
+                      onPress={() => {
+                        if (!newBookCategoryInput.trim()) return;
+                        const trimmed = newBookCategoryInput.trim();
+                        if (!libraryCategoriesList.includes(trimmed)) {
+                          setLibraryCategoriesList([...libraryCategoriesList, trimmed]);
+                        }
+                        setNewBookForm(p => ({ ...p, category: trimmed }));
+                        setNewBookCategoryInput('');
+                        setShowAddCategoryInline(false);
+                        showToast(`Category "${trimmed}" added!`);
+                      }}>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                <Text style={styles.fieldLabelText}>Total Copies</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  placeholder="1"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="number-pad"
+                  value={newBookForm.totalQuantity}
+                  onChangeText={v => setNewBookForm(p => ({ ...p, totalQuantity: sanitizeNumeric(v, 4) }))}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                    onPress={() => setShowAddBookModal(false)}>
+                    <Text style={[styles.modalSmallBtnText, { color: '#475569' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                    onPress={() => {
+                      if (!newBookForm.title.trim()) {
+                        Alert.alert('Error', 'Book title is required');
+                        return;
+                      }
+                      const qty = parseInt(newBookForm.totalQuantity, 10) || 1;
+                      const newBk = {
+                        id: `bk_${Date.now()}`,
+                        title: newBookForm.title.trim(),
+                        author: newBookForm.author.trim() || 'Unknown',
+                        isbn: newBookForm.isbn.trim() || 'N/A',
+                        category: newBookForm.category || 'General',
+                        available: qty,
+                        total: qty,
+                      };
+                      setLibraryBooksList([newBk, ...libraryBooksList]);
+                      setShowAddBookModal(false);
+                      showToast(`Book "${newBk.title}" added to catalog!`);
+                      setNewBookForm({ title: '', author: '', isbn: '', category: 'General', totalQuantity: '1' });
+                    }}>
+                    <Text style={styles.modalSmallBtnText}>Add to Catalog</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
 
-        {/* ===== MODAL: ISSUE BOOK ===== */}
+        {/* ===== MODAL: ISSUE BOOK (Select Book, Select Class, Select Student, Due Date) ===== */}
         <Modal visible={showIssueBookModal} transparent animationType="slide">
           <View style={styles.modalOverlayDark}>
-            <View style={styles.modalCardContainer}>
-              <View style={styles.modalHeaderTitleRow}>
-                <IconComp name="share-outline" size={20} color="#0284C7" />
-                <Text style={styles.modalCardTitle}>Issue Book</Text>
-              </View>
-              <Text style={styles.fieldLabelText}>Book Title / ID *</Text>
-              <TextInput style={styles.modalInputBox} placeholder="Search or enter book title..." placeholderTextColor="#94A3B8" value={issueBookForm.bookId} onChangeText={v => setIssueBookForm(p => ({ ...p, bookId: v }))} />
-              <Text style={styles.fieldLabelText}>Student Name *</Text>
-              <TextInput style={styles.modalInputBox} placeholder="e.g. Rahul Kumar" placeholderTextColor="#94A3B8" value={issueBookForm.studentName} onChangeText={v => setIssueBookForm(p => ({ ...p, studentName: sanitizeName(v) }))} />
-              <Text style={styles.fieldLabelText}>Due Date *</Text>
-              <TouchableOpacity
-                style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                onPress={() => openDatePicker('adminIssueBookDue', issueBookForm.dueDate || '08-09-2026', 'Select Due Date')}
-                activeOpacity={0.8}>
-                <Text style={{ fontSize: 13, color: issueBookForm.dueDate ? '#0F172A' : '#94A3B8' }}>
-                  {issueBookForm.dueDate || 'DD-MM-YYYY'}
-                </Text>
-                <IconComp name="calendar-outline" size={16} color="#0284C7" />
-              </TouchableOpacity>
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#64748B' }]} onPress={() => setShowIssueBookModal(false)}>
-                  <Text style={styles.modalSmallBtnText}>Cancel</Text>
-                </TouchableOpacity>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', width: '92%', maxWidth: 480 }]}>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.modalHeaderTitleRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconComp name="share-outline" size={20} color="#b07fa8" />
+                    <Text style={styles.modalCardTitle}>Issue Book</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowIssueBookModal(false)}>
+                    <IconComp name="close" size={20} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* 1. Select Book Dropdown */}
+                <Text style={styles.fieldLabelText}>Select Book *</Text>
                 <TouchableOpacity
-                  style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#0284C7' }]}
+                  style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: showIssueBookDropdown ? 4 : 12 }]}
                   onPress={() => {
-                    if (!issueBookForm.bookId.trim() || !issueBookForm.studentName.trim()) { Alert.alert('Error', 'Book and student are required'); return; }
-                    const issued = { id: `ib_${Date.now()}`, bookTitle: issueBookForm.bookId, studentName: issueBookForm.studentName, dueDate: issueBookForm.dueDate || 'No date set', issuedDate: new Date().toLocaleDateString('en-GB') };
-                    setIssuedBooksList([...issuedBooksList, issued]);
-                    setShowIssueBookModal(false);
-                    showToast(`Book issued to ${issueBookForm.studentName}!`);
-                    setIssueBookForm({ bookId: '', studentName: '', dueDate: '' });
+                    setShowIssueBookDropdown(!showIssueBookDropdown);
+                    setShowIssueClassDropdown(false);
+                    setShowIssueStudentDropdown(false);
                   }}>
-                  <Text style={styles.modalSmallBtnText}>Issue Book</Text>
+                  <Text style={{ fontSize: 13, color: issueSelectedBookId ? '#0F172A' : '#94A3B8', fontWeight: issueSelectedBookId ? '700' : '500' }}>
+                    {libraryBooksList.find(b => b.id === issueSelectedBookId)
+                      ? `${libraryBooksList.find(b => b.id === issueSelectedBookId)?.title} (${libraryBooksList.find(b => b.id === issueSelectedBookId)?.available} available)`
+                      : '-- Select Book --'}
+                  </Text>
+                  <IconComp name={showIssueBookDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
                 </TouchableOpacity>
-              </View>
+                {showIssueBookDropdown && (
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    maxHeight: 180,
+                    overflow: 'hidden',
+                    elevation: 4,
+                  }}>
+                    <ScrollView nestedScrollEnabled>
+                      {libraryBooksList.map(bk => {
+                        const isOutOfStock = bk.available <= 0;
+                        return (
+                          <TouchableOpacity
+                            key={bk.id}
+                            disabled={isOutOfStock}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              backgroundColor: issueSelectedBookId === bk.id ? '#f6eef5' : isOutOfStock ? '#F8FAFC' : '#FFFFFF',
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              opacity: isOutOfStock ? 0.5 : 1,
+                            }}
+                            onPress={() => {
+                              setIssueSelectedBookId(bk.id);
+                              setShowIssueBookDropdown(false);
+                            }}>
+                            <View style={{ flex: 1, marginRight: 8 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: isOutOfStock ? '#94A3B8' : '#0F172A' }}>{bk.title}</Text>
+                              <Text style={{ fontSize: 10, color: '#64748B' }}>{bk.author} • {bk.category}</Text>
+                            </View>
+                            <View style={[styles.priorityPill, { backgroundColor: isOutOfStock ? '#FEE2E2' : '#DCFCE7' }]}>
+                              <Text style={[styles.priorityPillText, { color: isOutOfStock ? '#DC2626' : '#15803D', fontSize: 10 }]}>
+                                {isOutOfStock ? 'Out of Stock' : `${bk.available} left`}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 2. Select Class Dropdown */}
+                <Text style={styles.fieldLabelText}>Select Class *</Text>
+                <TouchableOpacity
+                  style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: showIssueClassDropdown ? 4 : 12 }]}
+                  onPress={() => {
+                    setShowIssueClassDropdown(!showIssueClassDropdown);
+                    setShowIssueBookDropdown(false);
+                    setShowIssueStudentDropdown(false);
+                  }}>
+                  <Text style={{ fontSize: 13, color: issueSelectedClass ? '#0F172A' : '#94A3B8', fontWeight: issueSelectedClass ? '700' : '500' }}>
+                    {issueSelectedClass || '-- Select Class --'}
+                  </Text>
+                  <IconComp name={showIssueClassDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
+                </TouchableOpacity>
+                {showIssueClassDropdown && (
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    maxHeight: 180,
+                    overflow: 'hidden',
+                    elevation: 4,
+                  }}>
+                    <ScrollView nestedScrollEnabled>
+                      {classList.map(c => {
+                        const cLabel = `${c.name} - ${c.section}`;
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              backgroundColor: issueSelectedClass === cLabel ? '#f6eef5' : '#FFFFFF',
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                            onPress={() => {
+                              setIssueSelectedClass(cLabel);
+                              setIssueSelectedStudent('');
+                              setShowIssueClassDropdown(false);
+                            }}>
+                            <Text style={{ fontSize: 12, fontWeight: issueSelectedClass === cLabel ? '700' : '500', color: issueSelectedClass === cLabel ? '#b07fa8' : '#0F172A' }}>
+                              {cLabel}
+                            </Text>
+                            {issueSelectedClass === cLabel && <IconComp name="checkmark" size={14} color="#b07fa8" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 3. Select Student Dropdown (Filtered by selected class) */}
+                <Text style={styles.fieldLabelText}>Select Student *</Text>
+                <TouchableOpacity
+                  style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: showIssueStudentDropdown ? 4 : 12 }]}
+                  onPress={() => {
+                    setShowIssueStudentDropdown(!showIssueStudentDropdown);
+                    setShowIssueBookDropdown(false);
+                    setShowIssueClassDropdown(false);
+                  }}>
+                  <Text style={{ fontSize: 13, color: issueSelectedStudent ? '#0F172A' : '#94A3B8', fontWeight: issueSelectedStudent ? '700' : '500' }}>
+                    {issueSelectedStudent || (issueSelectedClass ? '-- Select Student --' : '-- Choose Class First --')}
+                  </Text>
+                  <IconComp name={showIssueStudentDropdown ? "chevron-up" : "chevron-down"} size={16} color="#64748B" />
+                </TouchableOpacity>
+                {showIssueStudentDropdown && (
+                  <View style={{
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    maxHeight: 180,
+                    overflow: 'hidden',
+                    elevation: 4,
+                  }}>
+                    <ScrollView nestedScrollEnabled>
+                      {(() => {
+                        const classStudents = directoryStudents.filter(s =>
+                          !issueSelectedClass || (s.gradeClass && (s.gradeClass.toLowerCase().includes(issueSelectedClass.toLowerCase()) || issueSelectedClass.toLowerCase().includes(s.gradeClass.toLowerCase())))
+                        );
+                        const studentsToDisplay = classStudents.length > 0 ? classStudents : directoryStudents;
+                        if (studentsToDisplay.length === 0) {
+                          return (
+                            <View style={{ padding: 12 }}>
+                              <Text style={{ fontSize: 12, color: '#64748B' }}>No students found in this class.</Text>
+                            </View>
+                          );
+                        }
+                        return studentsToDisplay.map(st => (
+                          <TouchableOpacity
+                            key={st.id}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              backgroundColor: issueSelectedStudent === st.name ? '#f6eef5' : '#FFFFFF',
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#F1F5F9',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                            onPress={() => {
+                              setIssueSelectedStudent(st.name);
+                              setShowIssueStudentDropdown(false);
+                            }}>
+                            <View>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: issueSelectedStudent === st.name ? '#b07fa8' : '#0F172A' }}>{st.name}</Text>
+                              <Text style={{ fontSize: 10, color: '#64748B' }}>Adm: {st.admissionNo || 'N/A'} • {st.gradeClass}</Text>
+                            </View>
+                            {issueSelectedStudent === st.name && <IconComp name="checkmark" size={14} color="#b07fa8" />}
+                          </TouchableOpacity>
+                        ));
+                      })()}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* 4. Due Date (Native Date Picker) */}
+                <Text style={styles.fieldLabelText}>Due Date *</Text>
+                <TouchableOpacity
+                  style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                  onPress={() => {
+                    openNativeDatePicker(issueDueDate || new Date().toISOString().slice(0, 10), (selected) => {
+                      setIssueDueDate(selected);
+                    });
+                  }}
+                  activeOpacity={0.8}>
+                  <Text style={{ fontSize: 13, color: issueDueDate ? '#0F172A' : '#94A3B8', fontWeight: issueDueDate ? '700' : '400' }}>
+                    {issueDueDate || 'Select Due Date (YYYY-MM-DD)'}
+                  </Text>
+                  <IconComp name="calendar-outline" size={18} color="#b07fa8" />
+                </TouchableOpacity>
+
+                {/* Modal Action Buttons */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                    onPress={() => setShowIssueBookModal(false)}>
+                    <Text style={[styles.modalSmallBtnText, { color: '#475569' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSmallBtn, { flex: 1, backgroundColor: '#b07fa8' }]}
+                    onPress={() => {
+                      if (!issueSelectedBookId) {
+                        Alert.alert('Selection Error', 'Please select a book to issue.');
+                        return;
+                      }
+                      if (!issueSelectedStudent) {
+                        Alert.alert('Selection Error', 'Please select a student.');
+                        return;
+                      }
+                      if (!issueDueDate) {
+                        Alert.alert('Selection Error', 'Please select a due date.');
+                        return;
+                      }
+                      const bookObj = libraryBooksList.find(b => b.id === issueSelectedBookId);
+                      if (!bookObj || bookObj.available <= 0) {
+                        Alert.alert('Stock Error', 'Selected book is out of stock.');
+                        return;
+                      }
+
+                      // Decrement book availability
+                      setLibraryBooksList(prev => prev.map(b => b.id === issueSelectedBookId ? { ...b, available: Math.max(0, b.available - 1) } : b));
+
+                      // Add to issued logs
+                      const issued = {
+                        id: `ib_${Date.now()}`,
+                        bookId: bookObj.id,
+                        bookTitle: bookObj.title,
+                        studentName: issueSelectedStudent,
+                        className: issueSelectedClass || 'General',
+                        dueDate: issueDueDate,
+                        issuedDate: new Date().toLocaleDateString('en-GB'),
+                      };
+                      setIssuedBooksList([issued, ...issuedBooksList]);
+                      setShowIssueBookModal(false);
+                      showToast(`Book "${bookObj.title}" issued to ${issueSelectedStudent}!`);
+
+                      // Reset form
+                      setIssueSelectedBookId('');
+                      setIssueSelectedClass('');
+                      setIssueSelectedStudent('');
+                      setIssueDueDate('');
+                    }}>
+                    <Text style={styles.modalSmallBtnText}>Issue Book</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
+        </Modal>
+
+        {/* ===== MODAL: TEMPLATE BUILDER (Matches Image 2) ===== */}
+        <Modal visible={showTemplateBuilderModal} animationType="slide" onRequestClose={() => setShowTemplateBuilderModal(false)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+            {/* Top Bar (Matches Image 2) */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              backgroundColor: '#FFFFFF',
+              borderBottomWidth: 1,
+              borderBottomColor: '#E2E8F0',
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <TouchableOpacity
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    backgroundColor: '#F1F5F9',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={() => setShowTemplateBuilderModal(false)}>
+                  <IconComp name="arrow-back-outline" size={20} color="#0F172A" />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Template Builder</Text>
+                  <Text style={{ fontSize: 11, color: '#64748B' }}>Design your school's official report card</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#0F172A',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  opacity: isSavingTemplate ? 0.6 : 1,
+                }}
+                disabled={isSavingTemplate}
+                onPress={async () => {
+                  setIsSavingTemplate(true);
+                  try {
+                    if (db && adminSchoolId) {
+                      await db.collection('schools').doc(adminSchoolId).collection('templates').doc('report_card').set(reportTemplate, { merge: true });
+                    }
+                    await AsyncStorage.setItem(`sms_template_report_card_${adminSchoolId || 'default'}`, JSON.stringify(reportTemplate));
+                    showToast('Report Card Template saved successfully!');
+                    setShowTemplateBuilderModal(false);
+                  } catch (e) {
+                    console.warn('Error saving template:', e);
+                    showToast('Template saved locally.');
+                    setShowTemplateBuilderModal(false);
+                  } finally {
+                    setIsSavingTemplate(false);
+                  }
+                }}>
+                {isSavingTemplate ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <IconComp name="checkmark-circle-outline" size={16} color="#FFFFFF" />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Publish Template</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+              {/* Configuration Section (Matches Image 2 Left Panel) */}
+              <View style={[styles.studentCardContainer, { marginBottom: 16 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', marginBottom: 14 }}>
+                  <IconComp name="settings-outline" size={18} color="#b07fa8" />
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>Configuration</Text>
+                </View>
+
+                {/* Global Theme Color */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 8, textTransform: 'uppercase' }}>
+                  Global Theme (Primary Color)
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                  {['#b07fa8', '#4F46E5', '#2563EB', '#0D9488', '#DC2626', '#D97706', '#0F172A'].map(c => (
+                    <TouchableOpacity
+                      key={c}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 8,
+                        backgroundColor: c,
+                        borderWidth: reportTemplate.themeColor === c ? 3 : 1,
+                        borderColor: reportTemplate.themeColor === c ? '#0F172A' : '#E2E8F0',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      onPress={() => setReportTemplate(p => ({ ...p, themeColor: c }))}>
+                      {reportTemplate.themeColor === c && <IconComp name="checkmark" size={14} color="#FFFFFF" />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Header Settings */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginBottom: 8, textTransform: 'uppercase' }}>
+                  Header Settings
+                </Text>
+                <Text style={styles.fieldLabelText}>Report Title</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  value={reportTemplate.header.title}
+                  onChangeText={v => setReportTemplate(p => ({ ...p, header: { ...p.header, title: v } }))}
+                  placeholder="e.g. PROGRESS REPORT"
+                  placeholderTextColor="#94A3B8"
+                />
+                <Text style={styles.fieldLabelText}>Subtitle / Session</Text>
+                <TextInput
+                  style={styles.modalInputBox}
+                  value={reportTemplate.header.subtitle}
+                  onChangeText={v => setReportTemplate(p => ({ ...p, header: { ...p.header, subtitle: v } }))}
+                  placeholder="e.g. Academic Session 2024-2025"
+                  placeholderTextColor="#94A3B8"
+                />
+
+                {/* Header Toggles */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 10 }}>
+                  {[
+                    { key: 'showLogo', label: 'School Logo' },
+                    { key: 'showAddress', label: 'Address' },
+                    { key: 'showAffiliation', label: 'Affiliation No.' },
+                  ].map(item => {
+                    const active = (reportTemplate.header as any)[item.key];
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: active ? reportTemplate.themeColor : '#CBD5E1',
+                          backgroundColor: active ? '#fdf4fc' : '#FFFFFF',
+                        }}
+                        onPress={() => setReportTemplate(p => ({ ...p, header: { ...p.header, [item.key]: !active } }))}>
+                        <IconComp name={active ? "checkbox" : "square-outline"} size={16} color={active ? reportTemplate.themeColor : '#94A3B8'} />
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{item.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Student Fields Toggles */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginTop: 12, marginBottom: 8, textTransform: 'uppercase' }}>
+                  Student Fields
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {[
+                    { key: 'admissionNo', label: 'Admission No.' },
+                    { key: 'dob', label: 'Date of Birth' },
+                    { key: 'fatherName', label: "Father's Name" },
+                    { key: 'motherName', label: "Mother's Name" },
+                    { key: 'attendance', label: 'Attendance' },
+                  ].map(item => {
+                    const active = (reportTemplate.studentFields as any)[item.key];
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: active ? reportTemplate.themeColor : '#CBD5E1',
+                          backgroundColor: active ? '#fdf4fc' : '#FFFFFF',
+                        }}
+                        onPress={() => setReportTemplate(p => ({ ...p, studentFields: { ...p.studentFields, [item.key]: !active } }))}>
+                        <IconComp name={active ? "checkbox" : "square-outline"} size={16} color={active ? reportTemplate.themeColor : '#94A3B8'} />
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{item.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Grading Settings */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', marginTop: 14, marginBottom: 8, textTransform: 'uppercase' }}>
+                  Grading Options
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                  {[
+                    { key: 'marks_and_grades', label: 'Marks & Grades' },
+                    { key: 'marks', label: 'Marks Only' },
+                    { key: 'grades', label: 'Grades Only' },
+                  ].map(g => (
+                    <TouchableOpacity
+                      key={g.key}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: reportTemplate.grading.style === g.key ? reportTemplate.themeColor : '#CBD5E1',
+                        backgroundColor: reportTemplate.grading.style === g.key ? '#fdf4fc' : '#FFFFFF',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => setReportTemplate(p => ({ ...p, grading: { ...p.grading, style: g.key } }))}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: reportTemplate.grading.style === g.key ? reportTemplate.themeColor : '#64748B' }}>
+                        {g.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: reportTemplate.grading.showTotal ? reportTemplate.themeColor : '#CBD5E1',
+                      backgroundColor: reportTemplate.grading.showTotal ? '#fdf4fc' : '#FFFFFF',
+                    }}
+                    onPress={() => setReportTemplate(p => ({ ...p, grading: { ...p.grading, showTotal: !p.grading.showTotal } }))}>
+                    <IconComp name={reportTemplate.grading.showTotal ? "checkbox" : "square-outline"} size={16} color={reportTemplate.grading.showTotal ? reportTemplate.themeColor : '#94A3B8'} />
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>Show Total</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: reportTemplate.grading.showPercentage ? reportTemplate.themeColor : '#CBD5E1',
+                      backgroundColor: reportTemplate.grading.showPercentage ? '#fdf4fc' : '#FFFFFF',
+                    }}
+                    onPress={() => setReportTemplate(p => ({ ...p, grading: { ...p.grading, showPercentage: !p.grading.showPercentage } }))}>
+                    <IconComp name={reportTemplate.grading.showPercentage ? "checkbox" : "square-outline"} size={16} color={reportTemplate.grading.showPercentage ? reportTemplate.themeColor : '#94A3B8'} />
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>Show Percentage</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: reportTemplate.remarks ? reportTemplate.themeColor : '#CBD5E1',
+                      backgroundColor: reportTemplate.remarks ? '#fdf4fc' : '#FFFFFF',
+                    }}
+                    onPress={() => setReportTemplate(p => ({ ...p, remarks: !p.remarks }))}>
+                    <IconComp name={reportTemplate.remarks ? "checkbox" : "square-outline"} size={16} color={reportTemplate.remarks ? reportTemplate.themeColor : '#94A3B8'} />
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>Teacher Remarks</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Grading Scale Text */}
+                <Text style={styles.fieldLabelText}>Grading Scale Text (Optional)</Text>
+                <TextInput
+                  style={[styles.modalInputBox, { height: 42, fontSize: 11 }]}
+                  value={reportTemplate.gradingScaleText}
+                  onChangeText={v => setReportTemplate(p => ({ ...p, gradingScaleText: v }))}
+                  placeholder="A1: 91-100 | A2: 81-90 | B1: 71-80..."
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              {/* Live PDF Preview Section (Matches Image 2 Right Panel) */}
+              <View style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: 16,
+                borderWidth: 1.5,
+                borderColor: '#CBD5E1',
+                padding: 16,
+                elevation: 4,
+                shadowColor: '#000',
+                shadowOpacity: 0.1,
+                shadowRadius: 8,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <IconComp name="eye-outline" size={16} color="#0F172A" />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>Live PDF Preview</Text>
+                  </View>
+                  <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#64748B' }}>A4 Official Layout</Text>
+                  </View>
+                </View>
+
+                {/* Report Card Paper Sheet */}
+                <View style={{
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: 12,
+                  borderTopWidth: 4,
+                  borderTopColor: reportTemplate.themeColor,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  padding: 14,
+                }}>
+                  {/* Header Row */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    {reportTemplate.header.showLogo && (
+                      <View style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 24,
+                        borderWidth: 1.5,
+                        borderColor: reportTemplate.themeColor,
+                        backgroundColor: '#F8FAFC',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 12,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '900', color: reportTemplate.themeColor }}>LOGO</Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: reportTemplate.themeColor, letterSpacing: 0.5 }}>
+                        {setupSchoolName || 'YOUR SCHOOL NAME'}
+                      </Text>
+                      {reportTemplate.header.showAddress && (
+                        <Text style={{ fontSize: 10, color: '#64748B', marginTop: 1 }}>
+                          {setupSchoolAddress || '123 Education Street, Learning City, 10001'}
+                        </Text>
+                      )}
+                      {reportTemplate.header.showAffiliation && (
+                        <Text style={{ fontSize: 10, color: '#64748B' }}>Affiliation No: 1930284</Text>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Title Bar */}
+                  <View style={{ alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A', letterSpacing: 0.8 }}>
+                      {reportTemplate.header.title || 'PROGRESS REPORT'}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                      {reportTemplate.header.subtitle || 'Academic Session 2024-2025'}
+                    </Text>
+                  </View>
+
+                  {/* Student Details Grid */}
+                  <View style={{ backgroundColor: '#F8FAFC', borderRadius: 8, padding: 8, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Student Name: </Text>John Doe</Text>
+                      <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Class & Section: </Text>10 - A</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Roll No: </Text>12</Text>
+                      {reportTemplate.studentFields.admissionNo && (
+                        <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Admission No: </Text>12345</Text>
+                      )}
+                    </View>
+                    {(reportTemplate.studentFields.dob || reportTemplate.studentFields.fatherName) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        {reportTemplate.studentFields.dob && (
+                          <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>DOB: </Text>15 Aug 2010</Text>
+                        )}
+                        {reportTemplate.studentFields.fatherName && (
+                          <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Father: </Text>Robert Doe</Text>
+                        )}
+                      </View>
+                    )}
+                    {(reportTemplate.studentFields.motherName || reportTemplate.studentFields.attendance) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        {reportTemplate.studentFields.motherName && (
+                          <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Mother: </Text>Jane Doe</Text>
+                        )}
+                        {reportTemplate.studentFields.attendance && (
+                          <Text style={{ fontSize: 11, color: '#0F172A' }}><Text style={{ fontWeight: '700' }}>Attendance: </Text>95%</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Scholastic Table (Marks Table) */}
+                  <View style={{ borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+                    {/* Header Bar */}
+                    <View style={{ flexDirection: 'row', backgroundColor: reportTemplate.themeColor, paddingVertical: 6, paddingHorizontal: 8 }}>
+                      <Text style={{ flex: 2, fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>Scholastic Areas (Subjects)</Text>
+                      {reportTemplate.grading.style !== 'grades' && (
+                        <>
+                          <Text style={{ flex: 1, fontSize: 11, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' }}>Max Marks</Text>
+                          <Text style={{ flex: 1, fontSize: 11, fontWeight: '800', color: '#FFFFFF', textAlign: 'center' }}>Marks Obt</Text>
+                        </>
+                      )}
+                      {reportTemplate.grading.style !== 'marks' && (
+                        <Text style={{ flex: 1, fontSize: 11, fontWeight: '800', color: '#FFFFFF', textAlign: 'right' }}>Grade</Text>
+                      )}
+                    </View>
+
+                    {/* Table Rows */}
+                    {[
+                      { sub: 'English', max: 100, obt: 85, grd: 'A2' },
+                      { sub: 'Mathematics', max: 100, obt: 92, grd: 'A1' },
+                      { sub: 'Science', max: 100, obt: 78, grd: 'B1' },
+                      { sub: 'Social Studies', max: 100, obt: 88, grd: 'A2' },
+                      { sub: 'Computer Science', max: 100, obt: 95, grd: 'A1' },
+                    ].map((row, rIdx) => (
+                      <View key={rIdx} style={{ flexDirection: 'row', paddingVertical: 5, paddingHorizontal: 8, backgroundColor: rIdx % 2 === 0 ? '#FFFFFF' : '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                        <Text style={{ flex: 2, fontSize: 11, color: '#0F172A' }}>{row.sub}</Text>
+                        {reportTemplate.grading.style !== 'grades' && (
+                          <>
+                            <Text style={{ flex: 1, fontSize: 11, color: '#64748B', textAlign: 'center' }}>{row.max}</Text>
+                            <Text style={{ flex: 1, fontSize: 11, color: '#0F172A', fontWeight: '700', textAlign: 'center' }}>{row.obt}</Text>
+                          </>
+                        )}
+                        {reportTemplate.grading.style !== 'marks' && (
+                          <Text style={{ flex: 1, fontSize: 11, color: reportTemplate.themeColor, fontWeight: '800', textAlign: 'right' }}>{row.grd}</Text>
+                        )}
+                      </View>
+                    ))}
+
+                    {/* Totals Row */}
+                    {(reportTemplate.grading.showTotal || reportTemplate.grading.showPercentage) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, paddingHorizontal: 8, backgroundColor: '#F1F5F9' }}>
+                        {reportTemplate.grading.showTotal && (
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#0F172A' }}>TOTAL: 438 / 500</Text>
+                        )}
+                        {reportTemplate.grading.showPercentage && (
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: reportTemplate.themeColor }}>Percentage: 87.6%</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Teacher's Remarks Box */}
+                  {reportTemplate.remarks && (
+                    <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 8, backgroundColor: '#FAFAFA', marginBottom: 12 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748B', textTransform: 'uppercase', marginBottom: 2 }}>Teacher's Remarks</Text>
+                      <Text style={{ fontSize: 11, color: '#0F172A', fontStyle: 'italic' }}>
+                        Good academic performance throughout the term. Keep up the good work!
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Grading Scale Text */}
+                  {reportTemplate.gradingScaleText ? (
+                    <View style={{ paddingVertical: 4, marginBottom: 12 }}>
+                      <Text style={{ fontSize: 9, color: '#64748B', textAlign: 'center' }}>
+                        {reportTemplate.gradingScaleText}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Signatures */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+                    <View style={{ alignItems: 'center' }}>
+                      <View style={{ width: 70, borderBottomWidth: 1, borderBottomColor: '#94A3B8', marginBottom: 4 }} />
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: '#64748B' }}>Class Teacher</Text>
+                    </View>
+                    <View style={{ alignItems: 'center' }}>
+                      <View style={{ width: 70, borderBottomWidth: 1, borderBottomColor: '#94A3B8', marginBottom: 4 }} />
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: '#64748B' }}>Principal</Text>
+                    </View>
+                    <View style={{ alignItems: 'center' }}>
+                      <View style={{ width: 70, borderBottomWidth: 1, borderBottomColor: '#94A3B8', marginBottom: 4 }} />
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: '#64748B' }}>Parent</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
         </Modal>
 
         {/* ===== MODAL: CREATE FORM CONFIGURATION (Matches Image 3) ===== */}
         <Modal visible={showCreateFormModal} transparent animationType="fade">
           <View style={styles.modalOverlayDark}>
-            <View style={[styles.modalCardContainer, { maxWidth: 520, width: '94%', maxHeight: '92%' }]}>
-              <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={[styles.modalCardContainer, { maxWidth: 520, width: '94%', maxHeight: '90%' }]}>
+              <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 16 }}>
                 {/* Header (Matching Image 3) */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
                   <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Create Form Configuration</Text>
@@ -22296,6 +27519,44 @@ function App() {
                   )}
                 </View>
               </ScrollView>
+
+              {/* Sticky Fixed Bottom Action Bar (Ensures Save Configuration is ALWAYS visible inside view) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10, paddingTop: 14, marginTop: 4, borderTopWidth: 1, borderTopColor: '#F1F5F9', backgroundColor: '#FFFFFF' }}>
+                <TouchableOpacity
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                  onPress={() => setShowCreateFormModal(false)}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    paddingHorizontal: 20,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: '#b07fa8',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    opacity: isSavingFormConfig ? 0.6 : 1,
+                  }}
+                  disabled={isSavingFormConfig}
+                  onPress={handleSaveFormConfiguration}>
+                  {isSavingFormConfig ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <IconComp name="save-outline" size={16} color="#FFFFFF" />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Save Configuration</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
@@ -23566,7 +28827,8 @@ function App() {
               </TouchableOpacity>
             </View>
 
-            <KeyboardAwareFormScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+              <KeyboardAwareFormScrollView extraPadding={280} contentContainerStyle={{ padding: 16, paddingBottom: 160 }}>
               {/* Header Hero Card */}
               <ModuleHeaderCard
                 icon="person-add-outline"
@@ -23995,6 +29257,7 @@ function App() {
                 </TouchableOpacity>
               </View>
             </KeyboardAwareFormScrollView>
+            </KeyboardAvoidingView>
           </SafeAreaView>
         </Modal>
 
@@ -25251,11 +30514,177 @@ function App() {
                 )}
               </ScrollView>
 
-              <View style={{ marginTop: 14 }}>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                 <TouchableOpacity
-                  style={[styles.primaryLoginBtn, { backgroundColor: '#b07fa8', borderRadius: 12 }]}
+                  style={[styles.smallWhiteOutlineBtn, { flex: 1, paddingVertical: 12 }]}
                   onPress={() => setShowStudentDetailsModal(false)}>
-                  <Text style={styles.primaryLoginBtnText}>Close</Text>
+                  <Text style={styles.smallWhiteOutlineBtnText}>Close</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryLoginBtn, { flex: 1, backgroundColor: '#b07fa8', borderRadius: 12 }]}
+                  onPress={() => {
+                    const parts = (selectedStudentForDetails.name || '').split(' ');
+                    setEditingStudentData({
+                      ...selectedStudentForDetails,
+                      firstName: selectedStudentForDetails.firstName || parts[0] || '',
+                      lastName: selectedStudentForDetails.lastName || parts.slice(1).join(' ') || '',
+                    });
+                    setShowStudentDetailsModal(false);
+                    setShowEditStudentModal(true);
+                  }}>
+                  <Text style={styles.primaryLoginBtnText}>Edit Details</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: EDIT STUDENT DETAILS MODAL ===== */}
+        <Modal visible={showEditStudentModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%' }]}>
+              <View style={styles.modalHeaderTitleRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconComp name="create-outline" size={20} color="#b07fa8" />
+                  <Text style={styles.modalCardTitle}>Edit Student</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowEditStudentModal(false)}>
+                  <IconComp name="close-outline" size={22} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+
+              <KeyboardAwareFormScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+                {editingStudentData && (
+                  <View style={{ gap: 12 }}>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldLabelText}>First Name *</Text>
+                        <TextInput
+                          style={styles.modalInputBox}
+                          value={editingStudentData.firstName || ''}
+                          onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, firstName: sanitizeName(v) }))}
+                          placeholder="First Name"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldLabelText}>Last Name</Text>
+                        <TextInput
+                          style={styles.modalInputBox}
+                          value={editingStudentData.lastName || ''}
+                          onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, lastName: sanitizeName(v) }))}
+                          placeholder="Last Name"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                    </View>
+
+                    <Text style={styles.fieldLabelText}>Class / Grade *</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={editingStudentData.gradeClass || ''}
+                      onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, gradeClass: v }))}
+                      placeholder="e.g. PRE KG - A"
+                      placeholderTextColor="#94A3B8"
+                    />
+
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldLabelText}>Date of Birth</Text>
+                        <TouchableOpacity
+                          style={[styles.modalInputBox, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                          onPress={() => {
+                            if (Platform.OS === 'android') {
+                              openNativeDatePicker(editingStudentData.dob || '2019-05-12', (dStr) => {
+                                setEditingStudentData((p: any) => ({ ...p, dob: dStr }));
+                              });
+                            } else {
+                              openDatePicker('editStudentDob', editingStudentData.dob || '2019-05-12', 'Select DOB', (dStr) => {
+                                setEditingStudentData((p: any) => ({ ...p, dob: dStr }));
+                              });
+                            }
+                          }}>
+                          <Text style={{ fontSize: 13, color: editingStudentData.dob ? '#0F172A' : '#94A3B8' }}>
+                            {editingStudentData.dob || 'YYYY-MM-DD'}
+                          </Text>
+                          <IconComp name="calendar-outline" size={16} color="#b07fa8" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldLabelText}>Gender</Text>
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                          {['Male', 'Female'].map((g) => (
+                            <TouchableOpacity
+                              key={g}
+                              style={[
+                                styles.interactiveFilterPillBtn,
+                                editingStudentData.gender === g && styles.interactiveFilterPillActive,
+                                { flex: 1, justifyContent: 'center' }
+                              ]}
+                              onPress={() => setEditingStudentData((p: any) => ({ ...p, gender: g }))}>
+                              <Text style={[styles.interactiveFilterPillText, editingStudentData.gender === g && styles.interactiveFilterPillTextActive]}>
+                                {g}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+
+                    <Text style={styles.fieldLabelText}>Parent / Guardian Name</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={editingStudentData.parentName || ''}
+                      onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, parentName: v }))}
+                      placeholder="Parent Name"
+                      placeholderTextColor="#94A3B8"
+                    />
+
+                    <Text style={styles.fieldLabelText}>Parent Phone (10 digits)</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={editingStudentData.parentPhone || ''}
+                      onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, parentPhone: sanitizePhone(v) }))}
+                      keyboardType="numeric"
+                      maxLength={10}
+                      placeholder="e.g. 9876543210"
+                      placeholderTextColor="#94A3B8"
+                    />
+
+                    <Text style={styles.fieldLabelText}>Parent Email</Text>
+                    <TextInput
+                      style={styles.modalInputBox}
+                      value={editingStudentData.parentEmail || ''}
+                      onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, parentEmail: v }))}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      placeholder="parent@example.com"
+                      placeholderTextColor="#94A3B8"
+                    />
+
+                    <Text style={styles.fieldLabelText}>Residential Address</Text>
+                    <TextInput
+                      style={[styles.modalInputBox, { minHeight: 60, textAlignVertical: 'top' }]}
+                      value={editingStudentData.homeAddress || ''}
+                      onChangeText={(v) => setEditingStudentData((p: any) => ({ ...p, homeAddress: v }))}
+                      multiline
+                      placeholder="Home Address"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                )}
+              </KeyboardAwareFormScrollView>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                <TouchableOpacity
+                  style={[styles.smallWhiteOutlineBtn, { flex: 1, paddingVertical: 12 }]}
+                  onPress={() => setShowEditStudentModal(false)}>
+                  <Text style={styles.smallWhiteOutlineBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryLoginBtn, { flex: 1, backgroundColor: '#b07fa8', borderRadius: 12 }]}
+                  onPress={handleSaveStudentEdit}>
+                  <Text style={styles.primaryLoginBtnText}>Save Changes</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -25407,6 +30836,479 @@ function App() {
                   <IconComp name="download-outline" size={16} color="#FFFFFF" />
                   <Text style={styles.exportGenerateBtnText}>Generate Excel</Text>
                 </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: NEW ADMISSION MENU (Share Link or Add Student) ===== */}
+        <Modal visible={showNewAdmissionMenu} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.modalOverlayDark}
+            activeOpacity={1}
+            onPress={() => setShowNewAdmissionMenu(false)}>
+            <View style={[styles.modalCardContainer, { maxWidth: 420, width: '92%', borderRadius: 24, padding: 22 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: '#FAF5FF', justifyContent: 'center', alignItems: 'center' }}>
+                    <IconComp name="person-add" size={20} color="#9333EA" />
+                  </View>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>New Admission</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowNewAdmissionMenu(false)} style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 13, color: '#64748B', marginBottom: 18, lineHeight: 18 }}>
+                Choose whether you want to share your online public admission form or directly enroll a student:
+              </Text>
+
+              {/* Option 1: Share Admission Link */}
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 14,
+                  padding: 16,
+                  borderRadius: 16,
+                  borderWidth: 1.5,
+                  borderColor: '#A7F3D0',
+                  backgroundColor: '#F0FDF4',
+                  marginBottom: 12,
+                }}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setShowNewAdmissionMenu(false);
+                  setShowShareAdmissionModal(true);
+                }}>
+                <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center' }}>
+                  <IconComp name="share-social" size={22} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#065F46' }}>Share Admission Link</Text>
+                  <Text style={{ fontSize: 12, color: '#047857', marginTop: 2 }}>Public link for parents & students to apply online from anywhere</Text>
+                </View>
+                <IconComp name="chevron-forward" size={18} color="#059669" />
+              </TouchableOpacity>
+
+              {/* Option 2: Add Student */}
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 14,
+                  padding: 16,
+                  borderRadius: 16,
+                  borderWidth: 1.5,
+                  borderColor: '#DDD6FE',
+                  backgroundColor: '#FAF5FF',
+                  marginBottom: 18,
+                }}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setShowNewAdmissionMenu(false);
+                  setShowStudentModal(true);
+                }}>
+                <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#9333EA', justifyContent: 'center', alignItems: 'center' }}>
+                  <IconComp name="person-add" size={22} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#581C87' }}>Add Student</Text>
+                  <Text style={{ fontSize: 12, color: '#6B21A8', marginTop: 2 }}>Directly enroll and register a student into classes and directory</Text>
+                </View>
+                <IconComp name="chevron-forward" size={18} color="#9333EA" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  backgroundColor: '#F1F5F9',
+                  alignItems: 'center',
+                }}
+                onPress={() => setShowNewAdmissionMenu(false)}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ===== MODAL: SHARE PUBLIC ADMISSION FORM (Matching Image 2) ===== */}
+        <Modal visible={showShareAdmissionModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', borderRadius: 24 }]}>
+              {/* Header */}
+              <View style={styles.exportModalHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center' }}>
+                    <IconComp name="share-social-outline" size={20} color="#059669" />
+                  </View>
+                  <View>
+                    <Text style={styles.exportModalTitle}>Share Public Admission Form</Text>
+                    <Text style={styles.exportModalSubtitle}>Provide this link to prospective students and parents</Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => setShowShareAdmissionModal(false)} style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 12, gap: 16 }}>
+                {/* Green Highlight Box */}
+                <View style={{ backgroundColor: '#ECFDF5', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#A7F3D0', gap: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <IconComp name="sparkles" size={16} color="#059669" />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#065F46' }}>Seamless Online Applications</Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#047857', lineHeight: 18 }}>
+                    Parents and students can open this link from any smartphone, tablet, or PC to fill out the admission form. Submitted applications will automatically appear in your <Text style={{ fontWeight: '800' }}>Admission Applications</Text> tab for one-click review and admission!
+                  </Text>
+                </View>
+
+                {/* Link Box */}
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 }}>OFFICIAL ONLINE ADMISSION FORM LINK</Text>
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#F8FAFC',
+                    borderWidth: 1.5,
+                    borderColor: '#CBD5E1',
+                    borderRadius: 12,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    gap: 10,
+                  }}>
+                    <TextInput
+                      style={{ flex: 1, fontSize: 13, color: '#1E293B', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}
+                      value={`https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'SchoolS027'}`}
+                      editable={false}
+                      selectTextOnFocus
+                    />
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        backgroundColor: copiedAdmissionLink ? '#059669' : '#0F172A',
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 8,
+                      }}
+                      onPress={async () => {
+                        const link = `https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'SchoolS027'}`;
+                        try {
+                          if (NativeModules.ZunaFilePicker && typeof NativeModules.ZunaFilePicker.copyToClipboard === 'function') {
+                            await NativeModules.ZunaFilePicker.copyToClipboard(link);
+                          }
+                        } catch (e) {
+                          console.warn('Native clipboard copy err:', e);
+                        }
+                        setCopiedAdmissionLink(true);
+                        showToast('Admission link copied to clipboard!');
+                        setTimeout(() => setCopiedAdmissionLink(false), 3000);
+                      }}>
+                      <IconComp name={copiedAdmissionLink ? 'checkmark' : 'copy-outline'} size={14} color="#FFFFFF" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>
+                        {copiedAdmissionLink ? 'Copied' : 'Copy'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* 2 Action Cards in a Grid */}
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  {/* Card 1: Preview Form */}
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 14,
+                      padding: 14,
+                      gap: 8,
+                    }}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      const link = `https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'SchoolS027'}`;
+                      Linking.openURL(link).catch(e => {
+                        Alert.alert('Error', 'Could not open browser: ' + e.message);
+                      });
+                    }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', justifyContent: 'center', alignItems: 'center' }}>
+                      <IconComp name="open-outline" size={18} color="#2563EB" />
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>Preview Form</Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Open in browser</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Card 2: Send via Email */}
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#FFFFFF',
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderRadius: 14,
+                      padding: 14,
+                      gap: 8,
+                    }}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      const link = `https://sms-teamcarrezza.vercel.app/admission/${adminSchoolId || 'SchoolS027'}`;
+                      const subject = encodeURIComponent('Admission Application Link');
+                      const body = encodeURIComponent(`Dear Parent/Student,\n\nPlease use the following link to apply for admission at our school:\n${link}\n\nThank you!`);
+                      Linking.openURL(`mailto:?subject=${subject}&body=${body}`).catch(e => {
+                        Alert.alert('Email Error', 'Could not launch email composer.');
+                      });
+                    }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FAF5FF', justifyContent: 'center', alignItems: 'center' }}>
+                      <IconComp name="mail-outline" size={18} color="#9333EA" />
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>Send via Email</Text>
+                      <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Compose invitation</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+
+              {/* Footer */}
+              <View style={{ borderTopWidth: 1, borderColor: '#F1F5F9', paddingTop: 14 }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#0F172A',
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => setShowShareAdmissionModal(false)}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#FFFFFF' }}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== MODAL: REVIEW ADMISSION APPLICATION (Matching Image 5) ===== */}
+        <Modal visible={showReviewAppModal} transparent animationType="slide">
+          <View style={styles.modalOverlayDark}>
+            <View style={[styles.modalCardContainer, { maxHeight: '90%', borderRadius: 24 }]}>
+              {/* Header */}
+              <View style={styles.exportModalHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportModalTitle}>Review Admission Application</Text>
+                  <Text style={styles.exportModalSubtitle}>
+                    App #{selectedAppForReview?.applicationNumber || selectedAppForReview?.id?.slice(0, 8)} • Submitted on {selectedAppForReview?.date}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowReviewAppModal(false);
+                    setSelectedAppForReview(null);
+                  }}
+                  style={styles.modalCloseCircle}>
+                  <IconComp name="close-outline" size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 12, gap: 14 }}>
+                {/* Status Callout */}
+                {selectedAppForReview?.status === 'Approved' ? (
+                  <View style={{ backgroundColor: '#D1FAE5', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <IconComp name="checkmark-circle" size={20} color="#065F46" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#065F46' }}>Already Approved & Admitted</Text>
+                      <Text style={{ fontSize: 12, color: '#047857' }}>
+                        Admission Number: {selectedAppForReview?.assignedAdmissionNumber || 'Assigned'}
+                      </Text>
+                    </View>
+                  </View>
+                ) : selectedAppForReview?.status === 'Rejected' ? (
+                  <View style={{ backgroundColor: '#F1F5F9', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <IconComp name="close-circle" size={20} color="#64748B" />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#475569' }}>This application was rejected</Text>
+                  </View>
+                ) : (
+                  /* Assignment Config Card for Pending Application */
+                  <View style={{ backgroundColor: '#F0FDF4', padding: 16, borderRadius: 16, borderWidth: 1.5, borderColor: '#A7F3D0', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <IconComp name="school" size={18} color="#059669" />
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#065F46' }}>Admit to Student Directory</Text>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#047857' }}>
+                      Configure the target class and admission number before confirming enrollment.
+                    </Text>
+
+                    {/* Class Selection */}
+                    <View style={{ gap: 4 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#065F46' }}>Assign Class & Section *</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                        {classList.map(c => {
+                          const isSel = assigningAppClassId === c.id;
+                          return (
+                            <TouchableOpacity
+                              key={c.id}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 8,
+                                borderRadius: 10,
+                                backgroundColor: isSel ? '#059669' : '#FFFFFF',
+                                borderWidth: 1,
+                                borderColor: isSel ? '#059669' : '#D1FAE5',
+                              }}
+                              onPress={() => setAssigningAppClassId(c.id)}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: isSel ? '#FFFFFF' : '#065F46' }}>
+                                {c.name} - {c.section}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+
+                    {/* Admission Number */}
+                    <View style={{ gap: 4 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#065F46' }}>Assigned Admission Number *</Text>
+                      <TextInput
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#A7F3D0',
+                          borderRadius: 10,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          fontSize: 13,
+                          fontWeight: '700',
+                          color: '#0F172A',
+                        }}
+                        value={assigningAppAdmissionNumber}
+                        onChangeText={setAssigningAppAdmissionNumber}
+                        placeholder="e.g. ADM-2026-005"
+                        placeholderTextColor="#94A3B8"
+                      />
+                    </View>
+                  </View>
+                )}
+
+                {/* Applicant Details */}
+                <View style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 14, gap: 10 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 }}>APPLICANT INFORMATION</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Full Name:</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      {selectedAppForReview?.studentName || selectedAppForReview?.name}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Gender / Age:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>
+                      {selectedAppForReview?.gender || 'N/A'} {selectedAppForReview?.age ? `(${selectedAppForReview?.age} yrs)` : ''}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Date of Birth:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{selectedAppForReview?.dob || 'N/A'}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Class Applied:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#4338CA' }}>
+                      {selectedAppForReview?.targetClassName || selectedAppForReview?.classApplied}
+                    </Text>
+                  </View>
+                  {!!selectedAppForReview?.aadharNumber && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, color: '#64748B' }}>Aadhar Number:</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{selectedAppForReview?.aadharNumber}</Text>
+                    </View>
+                  )}
+                  {!!selectedAppForReview?.homeAddress && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, color: '#64748B' }}>Address:</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A', flex: 1, textAlign: 'right' }}>
+                        {selectedAppForReview?.homeAddress} {selectedAppForReview?.city ? `, ${selectedAppForReview?.city}` : ''}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Parent Details */}
+                <View style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 14, gap: 10 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', letterSpacing: 0.5 }}>PARENT / GUARDIAN CONTACT</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Parent Name:</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>{selectedAppForReview?.parentName || 'N/A'}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Phone:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{selectedAppForReview?.parentPhone || 'N/A'}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Email:</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A' }}>{selectedAppForReview?.parentEmail || 'N/A'}</Text>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {/* Modal Footer Actions */}
+              <View style={{ borderTopWidth: 1, borderColor: '#F1F5F9', paddingTop: 14 }}>
+                {selectedAppForReview?.status === 'Pending' ? (
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 12,
+                        borderRadius: 12,
+                        borderWidth: 1.5,
+                        borderColor: '#FCA5A5',
+                        backgroundColor: '#FEF2F2',
+                        alignItems: 'center',
+                      }}
+                      disabled={isRejectingApp || isApprovingApp}
+                      onPress={() => handleRejectAdmissionApplication(selectedAppForReview?.id)}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#DC2626' }}>
+                        {isRejectingApp ? 'Rejecting...' : 'Reject'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        flex: 2,
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingVertical: 12,
+                        borderRadius: 12,
+                        backgroundColor: '#059669',
+                      }}
+                      disabled={isApprovingApp || isRejectingApp}
+                      onPress={handleApproveAdmissionApplication}>
+                      <IconComp name="checkmark-circle" size={16} color="#FFFFFF" />
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#FFFFFF' }}>
+                        {isApprovingApp ? 'Admitting...' : 'Approve & Admit'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={{
+                      paddingVertical: 12,
+                      borderRadius: 12,
+                      backgroundColor: '#0F172A',
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      setShowReviewAppModal(false);
+                      setSelectedAppForReview(null);
+                    }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Close</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -26012,15 +31914,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   quickRolePillText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
     color: '#334155',
   },
@@ -30014,7 +35917,8 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     width: '100%',
     maxWidth: 440,
-    overflow: 'visible',
+    maxHeight: '90%',
+    overflow: 'hidden',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.15,
@@ -30091,6 +35995,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 10,
   },
+  noticeInflowDropdownMenu: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
   noticeDropdownItem: {
     paddingVertical: 11,
     paddingHorizontal: 12,
@@ -30145,7 +36057,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // --- Attendance Configuration Steppers ---
+  // --- Attendance Configuration Steppers & Time Pickers ---
+  envTimePickerField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 44,
+  },
+  envTimePickerFieldText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
   stepperContainer: {
     flexDirection: 'row',
     alignItems: 'center',

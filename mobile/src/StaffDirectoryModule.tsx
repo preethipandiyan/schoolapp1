@@ -18,6 +18,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import * as XLSX from 'xlsx';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { KeyboardAwareFormScrollView } from './KeyboardAwareFormScrollView';
 
 // Native Bridge for File Picking & Opening
@@ -337,9 +338,12 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-        {/* Header Title & Subtitle Matching Screenshot 1 */}
+        {/* Header Title & Subtitle Matching Other Admin Modules Card Style */}
         <View style={styles.headerSection}>
-          <Text style={styles.headerTitle}>Staff Directory & Attachments</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <IconComp name="people-outline" size={22} color="#FFFFFF" />
+            <Text style={styles.headerTitle}>Staff Directory & Attachments</Text>
+          </View>
           <Text style={styles.headerSubtitle}>Manage your teachers, upload documents, and assign classes.</Text>
         </View>
 
@@ -940,10 +944,37 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
   const [showStaffTypePicker, setShowStaffTypePicker] = useState(false);
   const [showGovtIdTypePicker, setShowGovtIdTypePicker] = useState(false);
 
-  // Date Picker State
-  const [pickerDay, setPickerDay] = useState('15');
-  const [pickerMonth, setPickerMonth] = useState('06');
-  const [pickerYear, setPickerYear] = useState('1990');
+  // Date Picker State (Matching Image 3)
+  const [showDobCalendarModal, setShowDobCalendarModal] = useState(false);
+  const [dobPickerYear, setDobPickerYear] = useState(1995);
+  const [dobPickerMonth, setDobPickerMonth] = useState(5); // 0-indexed, 5 = June
+  const [dobPickerDay, setDobPickerDay] = useState(15);
+  const [dobCalendarViewMode, setDobCalendarViewMode] = useState<'calendar' | 'month' | 'year'>('calendar');
+
+  const handleOpenDobPicker = () => {
+    let initYear = 1995;
+    let initMonth = 5;
+    let initDay = 15;
+    if (dob) {
+      const parts = dob.trim().split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          initYear = parseInt(parts[0], 10) || 1995;
+          initMonth = Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 6) - 1));
+          initDay = parseInt(parts[2], 10) || 15;
+        } else {
+          initDay = parseInt(parts[0], 10) || 15;
+          initMonth = Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 6) - 1));
+          initYear = parseInt(parts[2], 10) || 1995;
+        }
+      }
+    }
+    setDobPickerYear(initYear);
+    setDobPickerMonth(initMonth);
+    setDobPickerDay(initDay);
+    setDobCalendarViewMode('calendar');
+    setShowDobCalendarModal(true);
+  };
 
   // Multi-tab items
   const TABS: TabKey[] = [
@@ -982,8 +1013,10 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
     );
     if (isEmailDuplicate) errs.email = 'Email must be unique';
 
-    if (mobileNumber.trim() && !/^\d{10}$/.test(mobileNumber.trim())) {
-      errs.mobileNumber = 'Mobile number must be 10 digits';
+    if (!mobileNumber.trim()) {
+      errs.mobileNumber = 'Mobile number is required';
+    } else if (!/^\d{10}$/.test(mobileNumber.trim())) {
+      errs.mobileNumber = 'Mobile number must be exactly 10 digits';
     }
 
     if (emergencyContact.trim() && !/^\d{10}$/.test(emergencyContact.trim())) {
@@ -1263,14 +1296,25 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
                   {/* Mobile Number & Date of Birth (2 columns) */}
                   <View style={styles.formRowTwo}>
                     <View style={styles.formCol}>
-                      <Text style={styles.fieldLabel}>MOBILE NUMBER</Text>
+                      <Text style={styles.fieldLabel}>MOBILE NUMBER *</Text>
                       <FocusTextInput
                         style={[styles.inputBox, errors.mobileNumber ? styles.inputBoxError : null]}
                         placeholder="e.g. 9876543210"
                         placeholderTextColor="#94A3B8"
-                        keyboardType="phone-pad"
+                        keyboardType="numeric"
+                        maxLength={10}
                         value={mobileNumber}
-                        onChangeText={setMobileNumber}
+                        onChangeText={(t: string) => {
+                          const cleaned = t.replace(/[^0-9]/g, '').slice(0, 10);
+                          setMobileNumber(cleaned);
+                          if (errors.mobileNumber) {
+                            setErrors(prev => {
+                              const next = { ...prev };
+                              delete next.mobileNumber;
+                              return next;
+                            });
+                          }
+                        }}
                       />
                       {errors.mobileNumber ? <Text style={styles.fieldErrorText}>{errors.mobileNumber}</Text> : null}
                     </View>
@@ -1279,7 +1323,7 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
                       <Text style={styles.fieldLabel}>DATE OF BIRTH</Text>
                       <TouchableOpacity
                         style={styles.dropdownTrigger}
-                        onPress={() => setShowDatePicker(true)}>
+                        onPress={handleOpenDobPicker}>
                         <Text style={[styles.dropdownTriggerText, !dob && { color: '#94A3B8' }]}>
                           {dob || 'dd-mm-yyyy'}
                         </Text>
@@ -1355,9 +1399,20 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
                       style={[styles.inputBox, errors.emergencyContact ? styles.inputBoxError : null]}
                       placeholder="Emergency Mobile No."
                       placeholderTextColor="#94A3B8"
-                      keyboardType="phone-pad"
+                      keyboardType="numeric"
+                      maxLength={10}
                       value={emergencyContact}
-                      onChangeText={setEmergencyContact}
+                      onChangeText={(t: string) => {
+                        const cleaned = t.replace(/[^0-9]/g, '').slice(0, 10);
+                        setEmergencyContact(cleaned);
+                        if (errors.emergencyContact) {
+                          setErrors(prev => {
+                            const next = { ...prev };
+                            delete next.emergencyContact;
+                            return next;
+                          });
+                        }
+                      }}
                     />
                     {errors.emergencyContact ? <Text style={styles.fieldErrorText}>{errors.emergencyContact}</Text> : null}
                   </View>
@@ -1810,63 +1865,197 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
         </KeyboardAvoidingView>
       </View>
 
-        {/* DATE OF BIRTH PICKER MODAL */}
-        <Modal visible={showDatePicker} transparent animationType="fade">
-          <View style={styles.modalOverlayDark}>
-            <View style={styles.pickerDialogCard}>
-              <Text style={styles.pickerDialogTitle}>Select Date of Birth</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginVertical: 14 }}>
-                {/* Day */}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.fieldLabel}>DAY</Text>
-                  <FocusTextInput
-                    style={styles.inputBox}
-                    placeholder="DD"
-                    keyboardType="numeric"
-                    maxLength={2}
-                    value={pickerDay}
-                    onChangeText={setPickerDay}
-                  />
-                </View>
-                {/* Month */}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.fieldLabel}>MONTH</Text>
-                  <FocusTextInput
-                    style={styles.inputBox}
-                    placeholder="MM"
-                    keyboardType="numeric"
-                    maxLength={2}
-                    value={pickerMonth}
-                    onChangeText={setPickerMonth}
-                  />
-                </View>
-                {/* Year */}
-                <View style={{ flex: 1.4 }}>
-                  <Text style={styles.fieldLabel}>YEAR</Text>
-                  <FocusTextInput
-                    style={styles.inputBox}
-                    placeholder="YYYY"
-                    keyboardType="numeric"
-                    maxLength={4}
-                    value={pickerYear}
-                    onChangeText={setPickerYear}
-                  />
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-                <TouchableOpacity
-                  style={styles.dialogCancelBtn}
-                  onPress={() => setShowDatePicker(false)}>
-                  <Text style={styles.dialogCancelBtnText}>Cancel</Text>
+        {/* DATE OF BIRTH CALENDAR PICKER MODAL (MATCHING IMAGE 3) */}
+        <Modal visible={showDobCalendarModal} transparent animationType="fade" onRequestClose={() => setShowDobCalendarModal(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <View style={{ backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, width: '100%', maxWidth: 360, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12 }}>
+              {/* Modal Header */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Select Date of Birth</Text>
+                <TouchableOpacity onPress={() => setShowDobCalendarModal(false)} style={{ padding: 4 }}>
+                  <IconComp name="close-outline" size={22} color="#64748B" />
                 </TouchableOpacity>
+              </View>
+
+              {/* Month / Year Navigator Bar */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 6, borderRadius: 14, marginBottom: 16 }}>
                 <TouchableOpacity
-                  style={styles.dialogOkBtn}
                   onPress={() => {
-                    const formatted = `${pickerDay.padStart(2, '0')}-${pickerMonth.padStart(2, '0')}-${pickerYear}`;
+                    if (dobPickerMonth === 0) {
+                      setDobPickerMonth(11);
+                      setDobPickerYear(prev => prev - 1);
+                    } else {
+                      setDobPickerMonth(prev => prev - 1);
+                    }
+                  }}
+                  style={{ width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <IconComp name="chevron-back-outline" size={16} color="#334155" />
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {/* Month Dropdown Button */}
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}
+                    onPress={() => setDobCalendarViewMode(prev => prev === 'month' ? 'calendar' : 'month')}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][dobPickerMonth]}
+                    </Text>
+                    <IconComp name="chevron-down-outline" size={13} color="#64748B" />
+                  </TouchableOpacity>
+
+                  {/* Year Dropdown Button */}
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}
+                    onPress={() => setDobCalendarViewMode(prev => prev === 'year' ? 'calendar' : 'year')}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      {dobPickerYear}
+                    </Text>
+                    <IconComp name="chevron-down-outline" size={13} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    if (dobPickerMonth === 11) {
+                      setDobPickerMonth(0);
+                      setDobPickerYear(prev => prev + 1);
+                    } else {
+                      setDobPickerMonth(prev => prev + 1);
+                    }
+                  }}
+                  style={{ width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <IconComp name="chevron-forward-outline" size={16} color="#334155" />
+                </TouchableOpacity>
+              </View>
+
+              {/* View Modes */}
+              {dobCalendarViewMode === 'month' ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 10 }}>
+                  {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, idx) => (
+                    <TouchableOpacity
+                      key={m}
+                      style={{
+                        width: '30%',
+                        paddingVertical: 10,
+                        alignItems: 'center',
+                        borderRadius: 10,
+                        backgroundColor: dobPickerMonth === idx ? '#b07fa8' : '#F8FAFC',
+                        borderWidth: 1,
+                        borderColor: dobPickerMonth === idx ? '#b07fa8' : '#E2E8F0',
+                      }}
+                      onPress={() => {
+                        setDobPickerMonth(idx);
+                        setDobCalendarViewMode('calendar');
+                      }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: dobPickerMonth === idx ? '#FFFFFF' : '#334155' }}>
+                        {m}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : dobCalendarViewMode === 'year' ? (
+                <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 10 }}>
+                    {Array.from({ length: 65 }, (_, i) => 2026 - i).map(y => (
+                      <TouchableOpacity
+                        key={y}
+                        style={{
+                          width: '30%',
+                          paddingVertical: 10,
+                          alignItems: 'center',
+                          borderRadius: 10,
+                          backgroundColor: dobPickerYear === y ? '#b07fa8' : '#F8FAFC',
+                          borderWidth: 1,
+                          borderColor: dobPickerYear === y ? '#b07fa8' : '#E2E8F0',
+                        }}
+                        onPress={() => {
+                          setDobPickerYear(y);
+                          setDobCalendarViewMode('calendar');
+                        }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: dobPickerYear === y ? '#FFFFFF' : '#334155' }}>
+                          {y}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              ) : (
+                <View>
+                  {/* Days Header Row: Su Mo Tu We Th Fr Sa (Su in red) */}
+                  <View style={{ flexDirection: 'row', paddingBottom: 10, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day, idx) => (
+                      <Text key={day} style={{ flex: 1, textAlign: 'center', fontSize: 13, fontWeight: '700', color: idx === 0 ? '#EF4444' : '#64748B' }}>
+                        {day}
+                      </Text>
+                    ))}
+                  </View>
+
+                  {/* Calendar Numbers Grid */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    {(() => {
+                      const firstDay = new Date(dobPickerYear, dobPickerMonth, 1).getDay(); // 0=Sun
+                      const daysInMonth = new Date(dobPickerYear, dobPickerMonth + 1, 0).getDate();
+                      const daysInPrevMonth = new Date(dobPickerYear, dobPickerMonth, 0).getDate();
+                      const cells: React.ReactElement[] = [];
+
+                      for (let i = firstDay - 1; i >= 0; i--) {
+                        const prevD = daysInPrevMonth - i;
+                        cells.push(
+                          <View key={`prev-${prevD}`} style={{ width: '14.28%', height: 40, justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 13, color: '#CBD5E1', fontWeight: '500' }}>{prevD}</Text>
+                          </View>
+                        );
+                      }
+
+                      for (let d = 1; d <= daysInMonth; d++) {
+                        const isSelected = dobPickerDay === d;
+                        cells.push(
+                          <TouchableOpacity
+                            key={`cur-${d}`}
+                            style={{ width: '14.28%', height: 40, justifyContent: 'center', alignItems: 'center' }}
+                            onPress={() => setDobPickerDay(d)}>
+                            <View
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 17,
+                                backgroundColor: isSelected ? '#b07fa8' : 'transparent',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                              }}>
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: isSelected ? '800' : '600',
+                                  color: isSelected ? '#FFFFFF' : '#0F172A',
+                                }}>
+                                {d}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      }
+                      return cells;
+                    })()}
+                  </View>
+                </View>
+              )}
+
+              {/* Bottom Action Buttons: Cancel and Confirm (Matching Image 3) */}
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 14, marginTop: 20 }}>
+                <TouchableOpacity onPress={() => setShowDobCalendarModal(false)} style={{ paddingVertical: 8, paddingHorizontal: 14 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748B' }}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ backgroundColor: '#b07fa8', paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, elevation: 2 }}
+                  onPress={() => {
+                    const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
+                    const formatted = `${pad(dobPickerDay)}-${pad(dobPickerMonth + 1)}-${dobPickerYear}`;
                     setDob(formatted);
-                    setShowDatePicker(false);
+                    setShowDobCalendarModal(false);
                   }}>
-                  <Text style={styles.dialogOkBtnText}>Select</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF' }}>Confirm</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -2477,18 +2666,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   headerSection: {
-    marginBottom: 12,
+    backgroundColor: '#b07fa8',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    marginBottom: 16,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.4,
+    color: '#FFFFFF',
+    flex: 1,
+    flexWrap: 'wrap',
   },
   headerSubtitle: {
     fontSize: 13,
-    color: '#64748B',
-    marginTop: 3,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 6,
+    lineHeight: 18,
+    flexWrap: 'wrap',
   },
   actionRow: {
     flexDirection: 'row',
