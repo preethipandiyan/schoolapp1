@@ -171,6 +171,7 @@ const CalendarDatePickerModal: React.FC<CalendarDatePickerModalProps> = ({
   const [viewYear, setViewYear] = useState<number>(new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
+  const [pickerViewMode, setPickerViewMode] = useState<'day' | 'month' | 'year'>('day');
 
   useEffect(() => {
     if (currentDateStr) {
@@ -183,6 +184,7 @@ const CalendarDatePickerModal: React.FC<CalendarDatePickerModalProps> = ({
           setViewYear(y);
           setViewMonth(m);
           setSelectedDay(d);
+          setPickerViewMode('day');
           return;
         }
       }
@@ -191,6 +193,7 @@ const CalendarDatePickerModal: React.FC<CalendarDatePickerModalProps> = ({
     setViewYear(today.getFullYear());
     setViewMonth(today.getMonth());
     setSelectedDay(today.getDate());
+    setPickerViewMode('day');
   }, [visible, currentDateStr]);
 
   const monthNames = [
@@ -283,6 +286,12 @@ const CalendarDatePickerModal: React.FC<CalendarDatePickerModalProps> = ({
     );
   }
 
+  // Years range: 1995 to 2030
+  const yearsList = [];
+  for (let yr = 2030; yr >= 1995; yr--) {
+    yearsList.push(yr);
+  }
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalOverlayDark}>
@@ -298,38 +307,123 @@ const CalendarDatePickerModal: React.FC<CalendarDatePickerModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* Month / Year Navigator */}
+          {/* Month / Year Navigator Buttons */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, marginBottom: 12 }}>
             <TouchableOpacity onPress={handlePrevMonth} style={{ padding: 6 }}>
               <IconComp name="chevron-back" size={18} color="#0F172A" />
             </TouchableOpacity>
-            <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
-              {monthNames[viewMonth]} {viewYear}
-            </Text>
+            
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* Month Selector Button */}
+              <TouchableOpacity
+                onPress={() => setPickerViewMode(prev => prev === 'month' ? 'day' : 'month')}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  backgroundColor: pickerViewMode === 'month' ? '#faedf7' : 'transparent',
+                }}>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: pickerViewMode === 'month' ? '#B07FA8' : '#0F172A' }}>
+                  {monthNames[viewMonth]} ▾
+                </Text>
+              </TouchableOpacity>
+
+              {/* Year Selector Button */}
+              <TouchableOpacity
+                onPress={() => setPickerViewMode(prev => prev === 'year' ? 'day' : 'year')}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  backgroundColor: pickerViewMode === 'year' ? '#faedf7' : 'transparent',
+                }}>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: pickerViewMode === 'year' ? '#B07FA8' : '#0F172A' }}>
+                  {viewYear} ▾
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity onPress={handleNextMonth} style={{ padding: 6 }}>
               <IconComp name="chevron-forward" size={18} color="#0F172A" />
             </TouchableOpacity>
           </View>
 
-          {/* Weekday Row */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 6 }}>
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) => (
-              <Text
-                key={i}
-                style={{
-                  width: '14.28%',
-                  textAlign: 'center',
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: i === 0 ? '#EF4444' : '#64748B',
-                }}>
-                {d}
-              </Text>
-            ))}
-          </View>
+          {/* Body: Month Picker Mode */}
+          {pickerViewMode === 'month' && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 8, justifyContent: 'center' }}>
+              {monthNames.map((mName, idx) => (
+                <TouchableOpacity
+                  key={mName}
+                  style={{
+                    width: '30%',
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: viewMonth === idx ? '#B07FA8' : '#F1F5F9',
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    setViewMonth(idx);
+                    setPickerViewMode('day');
+                  }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: viewMonth === idx ? '#FFFFFF' : '#0F172A' }}>
+                    {mName.slice(0, 3)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
-          {/* Days Grid */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{cells}</View>
+          {/* Body: Year Picker Mode */}
+          {pickerViewMode === 'year' && (
+            <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={true}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 8, justifyContent: 'center' }}>
+                {yearsList.map(yr => (
+                  <TouchableOpacity
+                    key={yr}
+                    style={{
+                      width: '30%',
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      backgroundColor: viewYear === yr ? '#B07FA8' : '#F1F5F9',
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      setViewYear(yr);
+                      setPickerViewMode('day');
+                    }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: viewYear === yr ? '#FFFFFF' : '#0F172A' }}>
+                      {yr}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+
+          {/* Body: Standard Day Calendar Mode */}
+          {pickerViewMode === 'day' && (
+            <>
+              {/* Weekday Row */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 6 }}>
+                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) => (
+                  <Text
+                    key={i}
+                    style={{
+                      width: '14.28%',
+                      textAlign: 'center',
+                      fontSize: 11,
+                      fontWeight: '700',
+                      color: i === 0 ? '#EF4444' : '#64748B',
+                    }}>
+                    {d}
+                  </Text>
+                ))}
+              </View>
+
+              {/* Days Grid */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{cells}</View>
+            </>
+          )}
 
           {/* Footer Actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
@@ -526,15 +620,20 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
   const [unlinkingStudent, setUnlinkingStudent] = useState<any | null>(null);
 
   // Sibling Form State (Screenshot 3)
+  const [editingSiblingId, setEditingSiblingId] = useState<string | null>(null);
   const [siblingForm, setSiblingForm] = useState({
     name: '',
     dob: '',
-    gender: 'Male',
-    relationship: 'Sibling',
+    gender: '',
+    relationship: '',
     bloodGroup: '',
     schoolName: '',
   });
   const [showSiblingDatePicker, setShowSiblingDatePicker] = useState<boolean>(false);
+  const [showGenderDropdown, setShowGenderDropdown] = useState<boolean>(false);
+  const [showRelationshipDropdown, setShowRelationshipDropdown] = useState<boolean>(false);
+  const [showBloodGroupDropdown, setShowBloodGroupDropdown] = useState<boolean>(false);
+  const siblingScrollRef = React.useRef<any>(null);
 
   // Helper: Format Date String to DD/MM/YYYY for UI display (Screenshot 1)
   const formatDisplayDob = (dStr: any): string => {
@@ -706,25 +805,40 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     }
   };
 
-  // Handler: Add Manual Sibling (Screenshot 3)
+  // Handler: Add or Edit Manual Sibling (Screenshot 3)
   const handleAddSiblingSubmit = async () => {
     if (!siblingForm.name.trim() || !siblingForm.dob) {
       Alert.alert('Required Fields', 'Please provide Full Name and Date of Birth for the sibling.');
       return;
     }
 
-    const newSibling = {
-      id: Date.now().toString(),
-      name: siblingForm.name.trim(),
-      dob: siblingForm.dob,
-      gender: siblingForm.gender || 'Male',
-      relationship: siblingForm.relationship || 'Sibling',
-      bloodGroup: siblingForm.bloodGroup || '',
-      schoolName: siblingForm.schoolName.trim() || '',
-    };
-
-    const updated = [...manualSiblings, newSibling];
-    setManualSiblings(updated);
+    let updated: any[] = [];
+    if (editingSiblingId) {
+      updated = manualSiblings.map(s => s.id === editingSiblingId ? {
+        ...s,
+        name: siblingForm.name.trim(),
+        dob: siblingForm.dob,
+        gender: siblingForm.gender || 'Male',
+        relationship: siblingForm.relationship || 'Sibling',
+        bloodGroup: siblingForm.bloodGroup || '',
+        schoolName: siblingForm.schoolName.trim() || '',
+      } : s);
+      setManualSiblings(updated);
+      showToast(`Updated ${siblingForm.name.trim()}!`);
+    } else {
+      const newSibling = {
+        id: Date.now().toString(),
+        name: siblingForm.name.trim(),
+        dob: siblingForm.dob,
+        gender: siblingForm.gender || 'Male',
+        relationship: siblingForm.relationship || 'Sibling',
+        bloodGroup: siblingForm.bloodGroup || '',
+        schoolName: siblingForm.schoolName.trim() || '',
+      };
+      updated = [...manualSiblings, newSibling];
+      setManualSiblings(updated);
+      showToast(`Added ${newSibling.name} as ${newSibling.relationship}!`);
+    }
 
     if (db && auth?.currentUser?.uid) {
       try {
@@ -735,13 +849,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
       }
     }
 
-    showToast(`Added ${newSibling.name} as ${newSibling.relationship}!`);
     setIsAddOrLinkModalOpen(false);
+    setEditingSiblingId(null);
     setSiblingForm({
       name: '',
       dob: '',
-      gender: 'Male',
-      relationship: 'Sibling',
+      gender: '',
+      relationship: '',
       bloodGroup: '',
       schoolName: '',
     });
@@ -1417,7 +1531,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           <IconComp
             name={isChildDropdownOpen ? 'chevron-up' : 'chevron-down'}
             size={18}
-            color="#7E22CE"
+            color="#B07FA8"
           />
         </TouchableOpacity>
 
@@ -1448,7 +1562,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     </View>
                     <Text style={styles.childDropdownName} numberOfLines={1}>{fullName}</Text>
                     {isSelected && (
-                      <IconComp name="checkmark-outline" size={16} color="#7E22CE" style={{ marginLeft: 'auto' }} />
+                      <IconComp name="checkmark-outline" size={16} color="#B07FA8" style={{ marginLeft: 'auto' }} />
                     )}
                   </TouchableOpacity>
                 );
@@ -1467,7 +1581,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                 setIsLinkAnotherModalOpen(true);
               }}
               activeOpacity={0.8}>
-              <IconComp name="add-outline" size={18} color="#7E22CE" />
+              <IconComp name="add-outline" size={18} color="#B07FA8" />
               <Text style={styles.linkAnotherChildBtnText}>Link Another Child</Text>
             </TouchableOpacity>
           </View>
@@ -1543,7 +1657,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
             {
               label: 'Homework',
               icon: 'book-outline',
-              color: '#7C3AED',
+              color: '#B07FA8',
               bg: '#F5F3FF',
               onPress: () => {
                 setActiveAllModule(null);
@@ -1696,100 +1810,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           </View>
         )}
       </View>
-
-      {/* Other Services Section */}
-      <View style={{
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 14,
-        marginBottom: 14,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-        elevation: 2,
-        shadowColor: '#64748B',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>Other Services</Text>
-          <TouchableOpacity onPress={() => setActiveBottomTab('All')}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#7E22CE' }}>View All →</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-          {[
-            {
-              label: 'Noticeboard',
-              icon: 'notifications-outline',
-              color: '#F59E0B',
-              bg: '#FEF3C7',
-              onPress: () => {
-                setActiveAllModule('Noticeboard');
-                showToast('Viewing Noticeboard');
-              },
-            },
-            {
-              label: 'Calendar',
-              icon: 'today-outline',
-              color: '#10B981',
-              bg: '#D1FAE5',
-              onPress: () => {
-                setActiveAllModule('Calendar');
-                showToast('Viewing Calendar');
-              },
-            },
-            {
-              label: 'PTM Meetings',
-              icon: 'calendar-number-outline',
-              color: '#EC4899',
-              bg: '#FCE7F3',
-              onPress: () => {
-                setActiveAllModule('PTM Meetings');
-                showToast('Viewing PTM Meetings');
-              },
-            },
-          ].map((item, idx) => (
-            <TouchableOpacity
-              key={idx}
-              style={{
-                flex: 1,
-                alignItems: 'center',
-                paddingVertical: 10,
-                paddingHorizontal: 2,
-                borderRadius: 12,
-                backgroundColor: '#F8FAFC',
-                borderWidth: 1,
-                borderColor: '#F1F5F9',
-              }}
-              onPress={item.onPress}
-              activeOpacity={0.75}>
-              <View
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 12,
-                  backgroundColor: item.bg,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  marginBottom: 6,
-                }}>
-                <IconComp name={item.icon} size={19} color={item.color} />
-              </View>
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: '#1E293B',
-                  textAlign: 'center',
-                }}
-                numberOfLines={1}>
-                {item.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
     </ScrollView>
   );
 
@@ -1892,7 +1912,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                 <Text style={styles.attHistorySectionTitle}>
                   Daily Attendance History ({filteredRecords.length})
                 </Text>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#9333EA' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#B07FA8' }}>
                   {attTimeFilter}
                 </Text>
               </View>
@@ -2066,28 +2086,25 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     return (
       <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
           style={{ flex: 1 }}>
-          <KeyboardAwareFormScrollView
-            contentContainerStyle={[styles.tabScrollContentWithFloatingNav, { paddingBottom: 160 }]}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled">
-            
+          <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 85 }}>
             {/* Header: Staff Chat matching Screenshot 4 & 5 */}
-            <View style={{ marginBottom: 16, marginTop: 4 }}>
+            <View style={{ marginBottom: 12, marginTop: 4 }}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 }}>
                 Staff Chat
               </Text>
-              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>
+              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
                 Communicate directly with teachers.
               </Text>
             </View>
 
             {/* Messaging Card Container matching Screenshots 4 & 5 */}
-            <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', overflow: 'hidden', elevation: 1, shadowColor: '#64748B', shadowOpacity: 0.04, shadowRadius: 3, marginBottom: 14 }}>
+            <View style={{ flex: 1, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F1F5F9', overflow: 'hidden', elevation: 1, shadowColor: '#64748B', shadowOpacity: 0.04, shadowRadius: 3 }}>
               {/* Header Title: Messaging & Segmented Tabs [Staff DMs] [Channels] */}
-              <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-                <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 10 }}>
+              <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 8 }}>
                   Messaging
                 </Text>
 
@@ -2120,28 +2137,26 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
               </View>
 
               {/* TAB 1: STAFF DMS (Screenshot 4) */}
-              {chatSubTab === 'dms' && (
-                <View>
+              {chatSubTab === 'dms' ? (
+                <View style={{ flex: 1 }}>
                   {/* Teacher Selector Row */}
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F8FAFC', flexDirection: 'row', gap: 10 }}>
+                  <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F8FAFC', flexDirection: 'row', gap: 8 }}>
                     {teachersList.map(t => {
                       const isSelected = currentTeacher.id === t.id;
                       return (
                         <TouchableOpacity
                           key={t.id}
-                          style={[
-                            {
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 10,
-                              backgroundColor: isSelected ? '#FDF4FF' : '#F8FAFC',
-                              borderWidth: 1,
-                              borderColor: isSelected ? '#b07fa8' : '#E2E8F0',
-                              gap: 8,
-                            },
-                          ]}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: 10,
+                            backgroundColor: isSelected ? '#faedf7' : '#F8FAFC',
+                            borderWidth: 1,
+                            borderColor: isSelected ? '#B07FA8' : '#E2E8F0',
+                            gap: 8,
+                          }}
                           onPress={() => setSelectedTeacher(t)}
                           activeOpacity={0.75}>
                           <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: `${t.color}20`, justifyContent: 'center', alignItems: 'center' }}>
@@ -2157,12 +2172,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                   </View>
 
                   {/* Chat Pane Header: [Avatar] [Name] ● Staff (Screenshot 4) */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: '#FAFAFA' }}>
-                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#faedf7', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#b07fa8' }}>{currentTeacher.avatar}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: '#FAFAFA' }}>
+                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#faedf7', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#B07FA8' }}>{currentTeacher.avatar}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{currentTeacher.name}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>{currentTeacher.name}</Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#16A34A' }} />
                         <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '500' }}>Staff</Text>
@@ -2170,11 +2185,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     </View>
                   </View>
 
-                  {/* Message Stream Body */}
-                  <View style={{ minHeight: 180, padding: 16, justifyContent: 'center' }}>
+                  {/* Message Stream Body (Scrollable flex: 1) */}
+                  <ScrollView
+                    style={{ flex: 1 }}
+                    contentContainerStyle={{ padding: 14, flexGrow: 1, justifyContent: chats.length === 0 || !chats[0]?.messages || chats[0].messages.length === 0 ? 'center' : 'flex-start' }}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled">
                     {chats.length === 0 || !chats[0]?.messages || chats[0].messages.length === 0 ? (
-                      <View style={{ alignItems: 'center', paddingVertical: 28 }}>
-                        <IconComp name="chatbubble-outline" size={38} color="#CBD5E1" />
+                      <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                        <IconComp name="chatbubble-outline" size={36} color="#CBD5E1" />
                         <Text style={{ fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: 10 }}>
                           No messages yet.
                         </Text>
@@ -2211,12 +2230,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                         );
                       })
                     )}
-                  </View>
+                  </ScrollView>
 
-                  {/* Composer Input Bar (Screenshot 4) */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8, backgroundColor: '#FFFFFF' }}>
+                  {/* Docked Composer Input Bar */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9', gap: 8, backgroundColor: '#FFFFFF' }}>
                     <TouchableOpacity
-                      style={{ width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' }}
+                      style={{ width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' }}
                       onPress={handlePickLeaveDoc}>
                       <IconComp name="attach-outline" size={20} color="#64748B" />
                     </TouchableOpacity>
@@ -2224,7 +2243,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     <FocusTextInput
                       style={{
                         flex: 1,
-                        height: 38,
+                        height: 40,
                         backgroundColor: '#F8FAFC',
                         borderRadius: 20,
                         paddingHorizontal: 14,
@@ -2242,10 +2261,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     <TouchableOpacity
                       style={[
                         {
-                          width: 36,
-                          height: 36,
-                          borderRadius: 18,
-                          backgroundColor: '#b07fa8',
+                          width: 38,
+                          height: 38,
+                          borderRadius: 19,
+                          backgroundColor: '#B07FA8',
                           justifyContent: 'center',
                           alignItems: 'center',
                         },
@@ -2261,20 +2280,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     </TouchableOpacity>
                   </View>
                 </View>
-              )}
-
-              {/* TAB 2: CHANNELS (Screenshot 5) */}
-              {chatSubTab === 'channels' && (
-                <View>
-                  {/* Channels Sidebar Row */}
+              ) : (
+                /* TAB 2: CHANNELS (Screenshot 5) */
+                <View style={{ flex: 1 }}>
                   <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' }}>
                     <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '500' }}>
                       No channels available.
                     </Text>
                   </View>
 
-                  {/* Empty Channel Detail matching Screenshot 5 */}
-                  <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 20 }}>
+                  <View style={{ alignItems: 'center', justifyContent: 'center', flex: 1, paddingHorizontal: 20 }}>
                     <IconComp name="chatbox-outline" size={44} color="#CBD5E1" />
                     <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A', marginTop: 12 }}>
                       Select a channel
@@ -2286,7 +2301,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                 </View>
               )}
             </View>
-          </KeyboardAwareFormScrollView>
+          </View>
         </KeyboardAvoidingView>
       </View>
     );
@@ -2325,7 +2340,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
             style={styles.allModuleGridCard}
             onPress={() => {
               setActiveAllModule(mod.name);
-              showToast(`Opened ${mod.name}`);
             }}
             activeOpacity={0.75}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2428,7 +2442,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         <View style={{ marginBottom: 28 }}>
           <View style={{ marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <IconComp name="school-outline" size={18} color="#9333EA" />
+              <IconComp name="school-outline" size={18} color="#B07FA8" />
               <Text style={styles.myChildrenSectionTitle}>Enrolled Students</Text>
             </View>
             <Text style={styles.myChildrenSectionSub}>
@@ -2470,7 +2484,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                             {fullName}
                           </Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                            <IconComp name="business-outline" size={13} color="#9333EA" />
+                            <IconComp name="business-outline" size={13} color="#B07FA8" />
                             <Text style={styles.enrolledStudentClassText} numberOfLines={1}>
                               {className}
                             </Text>
@@ -2578,13 +2592,22 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
 
             {/* + Add Sibling Record button (Same modal, Tab 2 preselected) */}
             <TouchableOpacity
-              style={styles.addSiblingTextBtn}
+              style={[styles.addSiblingTextBtn, { backgroundColor: '#faedf7' }]}
               onPress={() => {
+                setEditingSiblingId(null);
+                setSiblingForm({
+                  name: '',
+                  dob: '',
+                  gender: '',
+                  relationship: '',
+                  bloodGroup: '',
+                  schoolName: '',
+                });
                 setAddOrLinkTab('manual_sibling');
                 setIsAddOrLinkModalOpen(true);
               }}>
-              <IconComp name="add" size={14} color="#9333EA" />
-              <Text style={styles.addSiblingTextBtnLabel}>Add Sibling Record</Text>
+              <IconComp name="add" size={14} color="#B07FA8" />
+              <Text style={[styles.addSiblingTextBtnLabel, { color: '#B07FA8' }]}>Add Sibling Record</Text>
             </TouchableOpacity>
           </View>
 
@@ -2597,7 +2620,23 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           ) : (
             <View style={{ gap: 12 }}>
               {manualSiblings.map(sibling => (
-                <View key={sibling.id} style={styles.siblingRecordCard}>
+                <TouchableOpacity
+                  key={sibling.id}
+                  style={styles.siblingRecordCard}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setEditingSiblingId(sibling.id);
+                    setSiblingForm({
+                      name: sibling.name || '',
+                      dob: sibling.dob || '',
+                      gender: sibling.gender || '',
+                      relationship: sibling.relationship || '',
+                      bloodGroup: sibling.bloodGroup || '',
+                      schoolName: sibling.schoolName || '',
+                    });
+                    setAddOrLinkTab('manual_sibling');
+                    setIsAddOrLinkModalOpen(true);
+                  }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                       <View style={styles.siblingAvatarBox}>
@@ -2606,12 +2645,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                         </Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{sibling.name}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{sibling.name}</Text>
+                          <IconComp name="create-outline" size={13} color="#94A3B8" />
+                        </View>
                         <Text style={{ fontSize: 11, color: '#64748B' }}>
-                          {sibling.relationship || 'Sibling'} • {sibling.gender || 'Male'} • DOB: {formatDisplayDob(sibling.dob)}
+                          {sibling.relationship || 'Sibling'} • {sibling.gender || 'Not specified'}{sibling.bloodGroup ? ` • Blood: ${sibling.bloodGroup}` : ''} • DOB: {formatDisplayDob(sibling.dob)}
                         </Text>
                         {!!sibling.schoolName && (
-                          <Text style={{ fontSize: 11, color: '#9333EA', marginTop: 1 }}>
+                          <Text style={{ fontSize: 11, color: '#B07FA8', marginTop: 1 }}>
                             School: {sibling.schoolName}
                           </Text>
                         )}
@@ -2625,7 +2667,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                       <IconComp name="trash-outline" size={16} color="#EF4444" />
                     </TouchableOpacity>
                   </View>
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           )}
@@ -2687,7 +2729,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         {/* Web Title Header matching Screenshot 1 */}
         <View style={styles.webPageHeaderBox}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <IconComp name="trending-up" size={24} color="#9333EA" />
+            <IconComp name="trending-up" size={24} color="#B07FA8" />
             <Text style={styles.webPageHeaderTitle}>Academic Performance</Text>
           </View>
           <Text style={styles.webPageHeaderSubtitle}>
@@ -2740,7 +2782,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         {/* Recent Assessments Section matching Screenshot 1 */}
         <View style={styles.webContentContainerCard}>
           <View style={styles.webContentHeaderBar}>
-            <IconComp name="book-outline" size={20} color="#9333EA" />
+            <IconComp name="book-outline" size={20} color="#B07FA8" />
             <Text style={styles.webContentHeaderTitle}>Recent Assessments</Text>
           </View>
           <View style={{ padding: 20 }}>
@@ -2763,7 +2805,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     <Text style={{ fontSize: 15, fontWeight: '900', color: '#0F172A' }}>
                       {asm.score} <Text style={{ fontSize: 12, fontWeight: '700', color: '#94A3B8' }}>/ {asm.totalMarks}</Text>
                     </Text>
-                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#9333EA', marginTop: 2 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#B07FA8', marginTop: 2 }}>
                       {asm.perc}%
                     </Text>
                   </View>
@@ -2788,7 +2830,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         {/* Header matching Screenshot 2 */}
         <View style={styles.webPageHeaderBox}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <IconComp name="calendar" size={24} color="#9333EA" />
+            <IconComp name="calendar" size={24} color="#B07FA8" />
             <Text style={styles.webPageHeaderTitle}>Parent-Teacher Meetings</Text>
           </View>
           <Text style={styles.webPageHeaderSubtitle}>
@@ -2799,15 +2841,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         {/* Section Header */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <IconComp name="calendar-outline" size={20} color="#9333EA" />
+            <IconComp name="calendar-outline" size={20} color="#B07FA8" />
             <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Upcoming Meetings</Text>
           </View>
-          <TouchableOpacity
-            onPress={() => setShowBookPtmModal(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FDF4FF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}>
-            <IconComp name="add" size={16} color="#9333EA" />
-            <Text style={{ fontSize: 12, fontWeight: '800', color: '#9333EA' }}>Book PTM</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Empty state or list matching Screenshot 2 */}
@@ -2873,7 +2909,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         {/* Header matching Screenshot 3 */}
         <View style={styles.webPageHeaderBox}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <IconComp name="megaphone-outline" size={24} color="#9333EA" />
+            <IconComp name="megaphone-outline" size={24} color="#B07FA8" />
             <Text style={styles.webPageHeaderTitle}>Noticeboard</Text>
           </View>
           <Text style={styles.webPageHeaderSubtitle}>
@@ -3002,7 +3038,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         <View style={styles.calendarContainerCard}>
           {/* Calendar Title Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <IconComp name="calendar-outline" size={20} color="#9333EA" />
+            <IconComp name="calendar-outline" size={20} color="#B07FA8" />
             <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Academic Calendar</Text>
           </View>
 
@@ -3257,7 +3293,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
       {/* Header matching Screenshot 3 */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <View style={styles.reportCardAwardIconBox}>
-          <IconComp name="ribbon-outline" size={24} color="#9333EA" />
+          <IconComp name="ribbon-outline" size={24} color="#B07FA8" />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.webPageHeaderTitle}>Academic Report Cards</Text>
@@ -3430,38 +3466,37 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     return (
       <ScrollView contentContainerStyle={styles.tabScrollContentWithFloatingNav} showsVerticalScrollIndicator={false}>
         {/* Screen Title Header matching Screenshot 1 */}
+        {/* Screen Title Header */}
         <View style={{ marginBottom: 16, marginTop: 4 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 }}>
-                Student Leave Requests
-              </Text>
-              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4, lineHeight: 17 }}>
-                Submit leaves on behalf of {studentName} and track approval status.
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#b07fa8',
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                borderRadius: 8,
-                gap: 6,
-                shadowColor: '#b07fa8',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.25,
-                shadowRadius: 4,
-                elevation: 3,
-              }}
-              onPress={() => setShowApplyLeaveModal(true)}
-              activeOpacity={0.85}>
-              <IconComp name="add" size={16} color="#FFFFFF" />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Submit Student Leave</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 }}>
+            Student Leave Requests
+          </Text>
+          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4, lineHeight: 17 }}>
+            Submit leaves on behalf of {studentName} and track approval status.
+          </Text>
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#B07FA8',
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 10,
+              gap: 8,
+              marginTop: 12,
+              alignSelf: 'flex-start',
+              shadowColor: '#B07FA8',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.25,
+              shadowRadius: 4,
+              elevation: 3,
+            }}
+            onPress={() => setShowApplyLeaveModal(true)}
+            activeOpacity={0.85}>
+            <IconComp name="add" size={18} color="#FFFFFF" />
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Submit Student Leave</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Leave History Card matching Screenshot 1 */}
@@ -3721,53 +3756,55 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           1. Dashboard, 2. Attendance, 3. Homework, 4. Messages, 5. All
           Active state styled with #B07FA8
          ========================================================================= */}
-      <View style={styles.floatingNavWrapper}>
-        <View style={styles.floatingNavPillContainer}>
-          {(['Dashboard', 'Attendance', 'Homework', 'Messages', 'All'] as BottomTab[]).map(tab => {
-            const isActive = activeBottomTab === tab && (!activeAllModule || tab === 'All');
-            const iconMap: Record<BottomTab, string> = {
-              'Dashboard': 'person-circle-outline',
-              'Attendance': 'calendar-outline',
-              'Homework': 'book-outline',
-              'Messages': 'chatbubbles-outline',
-              'All': 'apps-outline',
-            };
-            const labelMap: Record<BottomTab, string> = {
-              'Dashboard': 'Overview',
-              'Attendance': 'Attendance',
-              'Homework': 'Homework',
-              'Messages': 'Messages',
-              'All': 'All',
-            };
+      {!activeAllModule && (
+        <View style={styles.floatingNavWrapper}>
+          <View style={styles.floatingNavPillContainer}>
+            {(['Dashboard', 'Attendance', 'Homework', 'Messages', 'All'] as BottomTab[]).map(tab => {
+              const isActive = activeBottomTab === tab && (!activeAllModule || tab === 'All');
+              const iconMap: Record<BottomTab, string> = {
+                'Dashboard': 'person-circle-outline',
+                'Attendance': 'calendar-outline',
+                'Homework': 'book-outline',
+                'Messages': 'chatbubbles-outline',
+                'All': 'apps-outline',
+              };
+              const labelMap: Record<BottomTab, string> = {
+                'Dashboard': 'Overview',
+                'Attendance': 'Attendance',
+                'Homework': 'Homework',
+                'Messages': 'Messages',
+                'All': 'All',
+              };
 
-            return (
-              <TouchableOpacity
-                key={tab}
-                style={[styles.floatingTabItemBtn, isActive && styles.floatingTabItemBtnActive]}
-                onPress={() => {
-                  setActiveBottomTab(tab);
-                  if (tab !== 'All') {
-                    setActiveAllModule(null);
-                  }
-                }}
-                activeOpacity={0.8}>
-                <IconComp
-                  name={iconMap[tab]}
-                  size={18}
-                  color={isActive ? '#B07FA8' : '#64748B'}
-                />
-                <Text
-                  style={[
-                    styles.floatingTabLabelText,
-                    isActive && styles.floatingTabLabelTextActive,
-                  ]}>
-                  {labelMap[tab]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.floatingTabItemBtn, isActive && styles.floatingTabItemBtnActive]}
+                  onPress={() => {
+                    setActiveBottomTab(tab);
+                    if (tab !== 'All') {
+                      setActiveAllModule(null);
+                    }
+                  }}
+                  activeOpacity={0.8}>
+                  <IconComp
+                    name={iconMap[tab]}
+                    size={18}
+                    color={isActive ? '#B07FA8' : '#64748B'}
+                  />
+                  <Text
+                    style={[
+                      styles.floatingTabLabelText,
+                      isActive && styles.floatingTabLabelTextActive,
+                    ]}>
+                    {labelMap[tab]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
-      </View>
+      )}
 
       {/* =========================================================================
           MODALS WITH CALENDAR DATE PICKERS
@@ -4362,7 +4399,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                 <IconComp
                   name="school-outline"
                   size={15}
-                  color={addOrLinkTab === 'link_enrolled' ? '#9333EA' : '#64748B'}
+                  color={addOrLinkTab === 'link_enrolled' ? '#B07FA8' : '#64748B'}
                 />
                 <Text
                   style={[
@@ -4383,7 +4420,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                 <IconComp
                   name="people-outline"
                   size={15}
-                  color={addOrLinkTab === 'manual_sibling' ? '#9333EA' : '#64748B'}
+                  color={addOrLinkTab === 'manual_sibling' ? '#B07FA8' : '#64748B'}
                 />
                 <Text
                   style={[
@@ -4492,7 +4529,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     onChangeText={txt => setSiblingForm(prev => ({ ...prev, name: txt }))}
                   />
 
-                  {/* DOB & Gender 2-Column Row */}
+                  {/* DOB & Gender Dual Row */}
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.modalFieldLabel}>
@@ -4514,82 +4551,193 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                       </View>
                     </View>
 
+                    {/* Gender Dropdown */}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.modalFieldLabel}>GENDER</Text>
-                      <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
-                        {['Male', 'Female', 'Other'].map(g => (
-                          <TouchableOpacity
-                            key={g}
-                            style={[
-                              styles.smallChipSelectBtn,
-                              siblingForm.gender === g && styles.smallChipSelectBtnActive,
-                            ]}
-                            onPress={() => setSiblingForm(prev => ({ ...prev, gender: g }))}>
-                            <Text
-                              style={[
-                                styles.smallChipSelectBtnText,
-                                siblingForm.gender === g && styles.smallChipSelectBtnTextActive,
-                              ]}>
-                              {g}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.modalFieldTextInput,
+                          {
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            height: 44,
+                            paddingHorizontal: 12,
+                          },
+                        ]}
+                        onPress={() => {
+                          setShowGenderDropdown(prev => !prev);
+                          setShowRelationshipDropdown(false);
+                          setShowBloodGroupDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: siblingForm.gender ? '#0F172A' : '#94A3B8', fontWeight: siblingForm.gender ? '600' : '400' }}>
+                          {siblingForm.gender || 'Select Gender'}
+                        </Text>
+                        <IconComp name={showGenderDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {showGenderDropdown && (
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 10,
+                          marginTop: 4,
+                          elevation: 4,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                          overflow: 'hidden',
+                        }}>
+                          {['Male', 'Female', 'Other'].map(g => (
+                            <TouchableOpacity
+                              key={g}
+                              style={{
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                backgroundColor: siblingForm.gender === g ? '#faedf7' : '#FFFFFF',
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#F1F5F9',
+                              }}
+                              onPress={() => {
+                                setSiblingForm(prev => ({ ...prev, gender: g }));
+                                setShowGenderDropdown(false);
+                              }}>
+                              <Text style={{ fontSize: 13, fontWeight: siblingForm.gender === g ? '700' : '500', color: siblingForm.gender === g ? '#B07FA8' : '#0F172A' }}>
+                                {g}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
                     </View>
                   </View>
 
-                  {/* Relationship & Blood Group 2-Column Row */}
+                  {/* Relationship & Blood Group Dual Row */}
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                    {/* Relationship Dropdown */}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.modalFieldLabel}>RELATIONSHIP</Text>
-                      <View style={{ flexDirection: 'row', gap: 4, marginTop: 2 }}>
-                        {['Sibling', 'Child', 'Dependent'].map(r => (
-                          <TouchableOpacity
-                            key={r}
-                            style={[
-                              styles.smallChipSelectBtn,
-                              siblingForm.relationship === r && styles.smallChipSelectBtnActive,
-                            ]}
-                            onPress={() => setSiblingForm(prev => ({ ...prev, relationship: r }))}>
-                            <Text
-                              style={[
-                                styles.smallChipSelectBtnText,
-                                siblingForm.relationship === r && styles.smallChipSelectBtnTextActive,
-                              ]}>
-                              {r === 'Dependent' ? 'Dep.' : r}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.modalFieldTextInput,
+                          {
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            height: 44,
+                            paddingHorizontal: 12,
+                          },
+                        ]}
+                        onPress={() => {
+                          setShowRelationshipDropdown(prev => !prev);
+                          setShowGenderDropdown(false);
+                          setShowBloodGroupDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: siblingForm.relationship ? '#0F172A' : '#94A3B8', fontWeight: siblingForm.relationship ? '600' : '400' }}>
+                          {siblingForm.relationship || 'Select Relationship'}
+                        </Text>
+                        <IconComp name={showRelationshipDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {showRelationshipDropdown && (
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 10,
+                          marginTop: 4,
+                          elevation: 4,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                          overflow: 'hidden',
+                        }}>
+                          {['Sibling', 'Child', 'Dependent', 'Other'].map(r => (
+                            <TouchableOpacity
+                              key={r}
+                              style={{
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                backgroundColor: siblingForm.relationship === r ? '#faedf7' : '#FFFFFF',
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#F1F5F9',
+                              }}
+                              onPress={() => {
+                                setSiblingForm(prev => ({ ...prev, relationship: r }));
+                                setShowRelationshipDropdown(false);
+                              }}>
+                              <Text style={{ fontSize: 13, fontWeight: siblingForm.relationship === r ? '700' : '500', color: siblingForm.relationship === r ? '#B07FA8' : '#0F172A' }}>
+                                {r}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
                     </View>
 
+                    {/* Blood Group Dropdown */}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.modalFieldLabel}>BLOOD GROUP</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
-                        {['A+', 'B+', 'O+', 'AB+'].map(bg => (
-                          <TouchableOpacity
-                            key={bg}
-                            style={[
-                              styles.smallChipSelectBtn,
-                              siblingForm.bloodGroup === bg && styles.smallChipSelectBtnActive,
-                              { minWidth: 36 },
-                            ]}
-                            onPress={() =>
-                              setSiblingForm(prev => ({
-                                ...prev,
-                                bloodGroup: prev.bloodGroup === bg ? '' : bg,
-                              }))
-                            }>
-                            <Text
-                              style={[
-                                styles.smallChipSelectBtnText,
-                                siblingForm.bloodGroup === bg && styles.smallChipSelectBtnTextActive,
-                              ]}>
-                              {bg}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.modalFieldTextInput,
+                          {
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            height: 44,
+                            paddingHorizontal: 12,
+                          },
+                        ]}
+                        onPress={() => {
+                          setShowBloodGroupDropdown(prev => !prev);
+                          setShowGenderDropdown(false);
+                          setShowRelationshipDropdown(false);
+                        }}>
+                        <Text style={{ fontSize: 13, color: siblingForm.bloodGroup ? '#0F172A' : '#94A3B8', fontWeight: siblingForm.bloodGroup ? '600' : '400' }}>
+                          {siblingForm.bloodGroup || 'Select Blood'}
+                        </Text>
+                        <IconComp name={showBloodGroupDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {showBloodGroupDropdown && (
+                        <View style={{
+                          backgroundColor: '#FFFFFF',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          borderRadius: 10,
+                          marginTop: 4,
+                          elevation: 4,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4,
+                          overflow: 'hidden',
+                          maxHeight: 180,
+                        }}>
+                          <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={true}>
+                            {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(bg => (
+                              <TouchableOpacity
+                                key={bg}
+                                style={{
+                                  paddingVertical: 9,
+                                  paddingHorizontal: 12,
+                                  backgroundColor: siblingForm.bloodGroup === bg ? '#faedf7' : '#FFFFFF',
+                                  borderBottomWidth: 1,
+                                  borderBottomColor: '#F1F5F9',
+                                }}
+                                onPress={() => {
+                                  setSiblingForm(prev => ({ ...prev, bloodGroup: bg }));
+                                  setShowBloodGroupDropdown(false);
+                                }}>
+                                <Text style={{ fontSize: 13, fontWeight: siblingForm.bloodGroup === bg ? '700' : '500', color: siblingForm.bloodGroup === bg ? '#B07FA8' : '#0F172A' }}>
+                                  {bg}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
                     </View>
                   </View>
 
@@ -4601,13 +4749,21 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     placeholderTextColor="#94A3B8"
                     value={siblingForm.schoolName}
                     onChangeText={txt => setSiblingForm(prev => ({ ...prev, schoolName: txt }))}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        siblingScrollRef.current?.scrollToEnd({ animated: true });
+                      }, 150);
+                    }}
                   />
 
                   {/* Buttons */}
-                  <View style={styles.modalActionButtonsRow}>
+                  <View style={[styles.modalActionButtonsRow, { marginTop: 16 }]}>
                     <TouchableOpacity
                       style={styles.modalCancelBtn}
-                      onPress={() => setIsAddOrLinkModalOpen(false)}>
+                      onPress={() => {
+                        setIsAddOrLinkModalOpen(false);
+                        setEditingSiblingId(null);
+                      }}>
                       <Text style={styles.modalCancelBtnText}>Cancel</Text>
                     </TouchableOpacity>
 
@@ -4615,7 +4771,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                       style={styles.modalAddSiblingBtn}
                       onPress={handleAddSiblingSubmit}
                       activeOpacity={0.85}>
-                      <Text style={styles.modalAddSiblingBtnText}>Add Sibling</Text>
+                      <Text style={styles.modalAddSiblingBtnText}>
+                        {editingSiblingId ? 'Save Changes' : 'Add Sibling'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -4711,7 +4869,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     {opt}
                   </Text>
                   {isSelected && (
-                    <IconComp name="checkmark-outline" size={18} color="#9333EA" />
+                    <IconComp name="checkmark-outline" size={18} color="#B07FA8" />
                   )}
                 </TouchableOpacity>
               );
@@ -4858,7 +5016,7 @@ const styles = StyleSheet.create({
   viewingCardHeaderLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#7E22CE',
+    color: '#B07FA8',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
@@ -4896,7 +5054,7 @@ const styles = StyleSheet.create({
   childDropdownAvatarText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#7E22CE',
+    color: '#B07FA8',
   },
   childDropdownName: {
     fontSize: 14,
@@ -4919,7 +5077,7 @@ const styles = StyleSheet.create({
   linkAnotherChildBtnText: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#7E22CE',
+    color: '#B07FA8',
   },
 
   // 2. Dark Hero Student Banner Card (Screenshot 2)
@@ -5107,7 +5265,7 @@ const styles = StyleSheet.create({
   assessmentGradePillText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#7E22CE',
+    color: '#B07FA8',
   },
 
   // =========================================================================
@@ -6035,7 +6193,7 @@ const styles = StyleSheet.create({
   childCountPillText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#9333EA',
+    color: '#B07FA8',
   },
   myChildrenSubtitleText: {
     fontSize: 12,
@@ -6044,14 +6202,14 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   linkAddChildMainBtn: {
-    backgroundColor: '#9333EA',
+    backgroundColor: '#B07FA8',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 9,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    shadowColor: '#9333EA',
+    shadowColor: '#B07FA8',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -6126,13 +6284,13 @@ const styles = StyleSheet.create({
   },
   myChildrenKpiViewingCard: {
     width: '100%',
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#B07FA8',
     borderRadius: 16,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    shadowColor: '#7C3AED',
+    shadowColor: '#B07FA8',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -6193,19 +6351,19 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   enrolledStudentCardBoxActive: {
-    borderColor: '#9333EA',
+    borderColor: '#B07FA8',
     borderWidth: 1.5,
   },
   enrolledStudentActiveBar: {
     height: 4,
     width: '100%',
-    backgroundColor: '#9333EA',
+    backgroundColor: '#B07FA8',
   },
   enrolledStudentAvatarBox: {
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#B07FA8',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -6222,7 +6380,7 @@ const styles = StyleSheet.create({
   enrolledStudentClassText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#9333EA',
+    color: '#B07FA8',
   },
   unlinkStudentBtnBox: {
     width: 32,
@@ -6332,7 +6490,7 @@ const styles = StyleSheet.create({
   },
   attDropdownOptionTextSelected: {
     fontWeight: '800',
-    color: '#9333EA',
+    color: '#B07FA8',
   },
   activeChildBadgePill: {
     flexDirection: 'row',
@@ -6416,7 +6574,7 @@ const styles = StyleSheet.create({
   },
   enrolledOverviewBtn: {
     flex: 1,
-    backgroundColor: '#9333EA',
+    backgroundColor: '#B07FA8',
     borderRadius: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -6456,7 +6614,7 @@ const styles = StyleSheet.create({
   addSiblingTextBtnLabel: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#9333EA',
+    color: '#B07FA8',
   },
   otherSiblingsEmptyBox: {
     padding: 18,
@@ -6532,7 +6690,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   addOrLinkTabBtnTextActive: {
-    color: '#9333EA',
+    color: '#B07FA8',
     fontWeight: '800',
   },
   linkNoticeBannerBox: {
@@ -6603,7 +6761,7 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   modalVerifyLinkBtn: {
-    backgroundColor: '#9333EA',
+    backgroundColor: '#B07FA8',
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 12,
@@ -6624,7 +6782,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   smallChipSelectBtnActive: {
-    borderColor: '#9333EA',
+    borderColor: '#B07FA8',
     backgroundColor: '#F3E8FF',
   },
   smallChipSelectBtnText: {
@@ -6633,7 +6791,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   smallChipSelectBtnTextActive: {
-    color: '#9333EA',
+    color: '#B07FA8',
     fontWeight: '800',
   },
   modalAddSiblingBtn: {
@@ -6772,10 +6930,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   perfStatusCard: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#B07FA8',
     borderRadius: 24,
     padding: 20,
-    shadowColor: '#7C3AED',
+    shadowColor: '#B07FA8',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -6924,7 +7082,7 @@ const styles = StyleSheet.create({
   },
   webNoticeTabBtnActive: {
     borderBottomWidth: 2.5,
-    borderBottomColor: '#9333EA',
+    borderBottomColor: '#B07FA8',
   },
   webNoticeTabBtnText: {
     fontSize: 14,
@@ -6932,7 +7090,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   webNoticeTabBtnTextActive: {
-    color: '#9333EA',
+    color: '#B07FA8',
     fontWeight: '800',
   },
   noticeEmptyCard: {
@@ -7011,7 +7169,7 @@ const styles = StyleSheet.create({
   calTodayButtonText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#9333EA',
+    color: '#B07FA8',
   },
   calGridTable: {
     borderWidth: 1,
