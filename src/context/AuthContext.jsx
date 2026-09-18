@@ -16,8 +16,8 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // If auth is mocked (no config), just set loading false
-    if (!auth || !auth.onAuthStateChanged) {
+    // If auth is not configured (missing keys in config.js), fall back to dev mock
+    if (!auth) {
       if (import.meta.env.DEV) {
         setCurrentUser({
           uid: "dev-admin-uid",

@@ -13,6 +13,7 @@ const rootDir = fs.realpathSync(__dirname);
 const config = {
   projectRoot: rootDir,
   watchFolders: [rootDir, path.resolve(__dirname)],
+  maxWorkers: 2,
 };
 
 module.exports = mergeConfig(getDefaultConfig(rootDir), config);

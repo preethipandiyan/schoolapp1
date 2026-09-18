@@ -26,6 +26,7 @@ import StudentPortal from './src/StudentPortal';
 import { StaffDirectoryScreen, StaffItem as StaffDirectoryItem, ALL_ROLES_LIST } from './src/StaffDirectoryModule';
 import { KeyboardAwareFormScrollView } from './src/KeyboardAwareFormScrollView';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { TransportManagementModule } from './src/TransportManagementModule';
 
 const { ZunaFilePicker } = NativeModules;
 
@@ -80,6 +81,29 @@ const openNativeDatePicker = (currentDateStr: string, onSelect: (dateStr: string
       mode: 'date',
     });
   }
+};
+
+const getTodayFormattedStr = (): string => {
+  const d = new Date();
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+};
+
+const navigateDateStr = (currentStr: string, deltaDays: number): string => {
+  const parts = (currentStr || '').trim().split(/[-/]/);
+  let d = new Date();
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+    } else {
+      // DD-MM-YYYY
+      d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]), 12, 0, 0);
+    }
+  }
+  d.setDate(d.getDate() + deltaDays);
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n);
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
 };
 
 const pickDocument = async (type: 'excel' | 'image' | 'pdf' | 'document' | 'all' = 'all'): Promise<{ name: string; size: string; type: string; uri: string; filePath: string; base64: string } | null> => {
@@ -160,11 +184,16 @@ let subscribeToMessages: any = null;
 let markChatRead: any = null;
 
 try {
-  const firebaseNativeAuth = require('@react-native-firebase/auth');
-  const firebaseNativeFirestore = require('@react-native-firebase/firestore');
-  auth = firebaseNativeAuth.default();
-  db = firebaseNativeFirestore.default();
-} catch (e) {}
+  // @react-native-firebase v26+ uses named exports — getAuth() and getFirestore()
+  // NOT .default() which was removed in v21+
+  const { getAuth } = require('@react-native-firebase/auth');
+  const { getFirestore } = require('@react-native-firebase/firestore');
+  auth = getAuth();
+  db = getFirestore();
+  console.log('[Firebase] Auth and Firestore initialized successfully');
+} catch (e: any) {
+  console.error('[Firebase] INIT FAILED:', e?.message || e);
+}
 
 addSubDocument = async (schoolId: string, subCollection: string, data: any) => {
   if (db) {
@@ -254,6 +283,7 @@ interface SubjectItem {
   name: string;
   code: string;
   assignedTeachers: string[];
+  assignedTeacherIds?: string[];
 }
 
 interface AdmissionAppItem {
@@ -684,6 +714,9 @@ function App() {
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>('Dashboard');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeStaffTab, setActiveStaffTab] = useState<StaffTab>('Dashboard');
+  const [adminSchoolId, setAdminSchoolId] = useState<string>('school1');
+  const [schoolDisplayName, setSchoolDisplayName] = useState<string>('School Portal');
+  const [schoolBrandLogo, setSchoolBrandLogo] = useState<string>('');
 
   // --- Staff Portal States ---
   const TEACHER_WEEK_DAYS = [
@@ -792,31 +825,64 @@ function App() {
   const [showDatePickerModal, setShowDatePickerModal] = useState<boolean>(false);
   const [datePickerTarget, setDatePickerTarget] = useState<string>('');
   const [datePickerTargetTitle, setDatePickerTargetTitle] = useState<string>('Select Date');
-  const [datePickerYear, setDatePickerYear] = useState<number>(2026);
-  const [datePickerMonth, setDatePickerMonth] = useState<number>(8); // 8 = September
-  const [datePickerDay, setDatePickerDay] = useState<number>(10);
+  const [datePickerYear, setDatePickerYear] = useState<number>(() => new Date().getFullYear());
+  const [datePickerMonth, setDatePickerMonth] = useState<number>(() => new Date().getMonth());
+  const [datePickerDay, setDatePickerDay] = useState<number>(() => new Date().getDate());
   const [datePickerViewMode, setDatePickerViewMode] = useState<'calendar' | 'month' | 'year'>('calendar');
 
   const datePickerCallbackRef = React.useRef<((dateStr: string) => void) | null>(null);
+
+  // --- Mobile 2-Column Clock Time Picker Modal State (Admin Environment Setup) ---
+  const [timePickerModalVisible, setTimePickerModalVisible] = useState<boolean>(false);
+  const [timePickerTitle, setTimePickerTitle] = useState<string>('Select Time');
+  const [timePickerHour, setTimePickerHour] = useState<string>('09');
+  const [timePickerMinute, setTimePickerMinute] = useState<string>('00');
+  const timePickerCallbackRef = React.useRef<((timeStr: string) => void) | null>(null);
+
+  const openClockPicker = (currentTime: string, title: string, onSelect: (timeStr: string) => void) => {
+    let [h, m] = (currentTime || '09:00').trim().split(':');
+    if (!h) h = '09';
+    if (!m) m = '00';
+    h = h.padStart(2, '0');
+    m = m.padStart(2, '0');
+    setTimePickerHour(h);
+    setTimePickerMinute(m);
+    setTimePickerTitle(title || 'Select Time');
+    timePickerCallbackRef.current = onSelect;
+    setTimePickerModalVisible(true);
+  };
 
   const openDatePicker = (target: string, initialDateStr?: string, title?: string, onSelect?: (dateStr: string) => void) => {
     setDatePickerTarget(target);
     setDatePickerTargetTitle(title || 'Select Date');
     setDatePickerViewMode('calendar');
     datePickerCallbackRef.current = onSelect || null;
-    if (initialDateStr) {
-      const parts = initialDateStr.trim().split(/[-/]/);
+    if (initialDateStr && initialDateStr.trim().length > 0) {
+      const clean = initialDateStr.trim().split('T')[0];
+      const parts = clean.split(/[-/]/);
       if (parts.length === 3) {
         if (parts[0].length === 4) {
-          setDatePickerYear(parseInt(parts[0], 10) || 2026);
-          setDatePickerMonth(Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 9) - 1)));
-          setDatePickerDay(parseInt(parts[2], 10) || 10);
+          // YYYY-MM-DD
+          setDatePickerYear(parseInt(parts[0], 10) || new Date().getFullYear());
+          setDatePickerMonth(Math.max(0, Math.min(11, (parseInt(parts[1], 10) || (new Date().getMonth() + 1)) - 1)));
+          setDatePickerDay(parseInt(parts[2], 10) || new Date().getDate());
         } else {
-          setDatePickerDay(parseInt(parts[0], 10) || 10);
-          setDatePickerMonth(Math.max(0, Math.min(11, (parseInt(parts[1], 10) || 9) - 1)));
-          setDatePickerYear(parseInt(parts[2], 10) || 2026);
+          // DD-MM-YYYY
+          setDatePickerDay(parseInt(parts[0], 10) || new Date().getDate());
+          setDatePickerMonth(Math.max(0, Math.min(11, (parseInt(parts[1], 10) || (new Date().getMonth() + 1)) - 1)));
+          setDatePickerYear(parseInt(parts[2], 10) || new Date().getFullYear());
         }
+      } else {
+        const now = new Date();
+        setDatePickerYear(now.getFullYear());
+        setDatePickerMonth(now.getMonth());
+        setDatePickerDay(now.getDate());
       }
+    } else {
+      const now = new Date();
+      setDatePickerYear(now.getFullYear());
+      setDatePickerMonth(now.getMonth());
+      setDatePickerDay(now.getDate());
     }
     setShowDatePickerModal(true);
   };
@@ -1049,45 +1115,57 @@ function App() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Weekday Labels */}
-                <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 }}>
+                {/* Weekday Labels (Exact 7-column alignment) */}
+                <View style={{ flexDirection: 'row', width: '100%', marginBottom: 8 }}>
                   {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) => (
-                    <Text key={i} style={{ width: 38, textAlign: 'center', fontSize: 12, fontWeight: '700', color: i === 0 ? '#EF4444' : '#64748B' }}>
-                      {d}
-                    </Text>
+                    <View key={i} style={{ width: '14.285%', alignItems: 'center' }}>
+                      <Text style={{ textAlign: 'center', fontSize: 12, fontWeight: '700', color: i === 0 ? '#EF4444' : '#64748B' }}>
+                        {d}
+                      </Text>
+                    </View>
                   ))}
                 </View>
 
-                {/* Days Grid */}
+                {/* Days Grid (Exact 7-column alignment) */}
                 {(() => {
                   const daysInMonth = new Date(datePickerYear, datePickerMonth + 1, 0).getDate();
                   const firstDayIndex = new Date(datePickerYear, datePickerMonth, 1).getDay();
                   const cells = [];
                   for (let i = 0; i < firstDayIndex; i++) {
-                    cells.push(<View key={`empty-${i}`} style={{ width: 38, height: 38 }} />);
+                    cells.push(<View key={`empty-${i}`} style={{ width: '14.285%', height: 40 }} />);
                   }
                   for (let day = 1; day <= daysInMonth; day++) {
                     const isSelected = datePickerDay === day;
+                    const dayOfWeek = new Date(datePickerYear, datePickerMonth, day).getDay();
+                    const isSunday = dayOfWeek === 0;
                     cells.push(
                       <TouchableOpacity
                         key={`day-${day}`}
                         onPress={() => setDatePickerDay(day)}
                         style={{
-                          width: 38,
-                          height: 38,
+                          width: '14.285%',
+                          height: 40,
                           justifyContent: 'center',
                           alignItems: 'center',
-                          borderRadius: 19,
-                          backgroundColor: isSelected ? '#b07fa8' : 'transparent',
                         }}>
-                        <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : '#0F172A' }}>
-                          {day}
-                        </Text>
+                        <View
+                          style={{
+                            width: 32,
+                            height: 32,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            borderRadius: 16,
+                            backgroundColor: isSelected ? '#b07fa8' : 'transparent',
+                          }}>
+                          <Text style={{ fontSize: 13, fontWeight: isSelected ? '800' : '600', color: isSelected ? '#FFFFFF' : isSunday ? '#EF4444' : '#0F172A' }}>
+                            {day}
+                          </Text>
+                        </View>
                       </TouchableOpacity>
                     );
                   }
                   return (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: '100%' }}>
                       {cells}
                     </View>
                   );
@@ -1119,6 +1197,198 @@ function App() {
       </Modal>
     );
   };
+
+  const renderClockPickerModal = () => {
+    const hoursList = Array.from({ length: 24 }, (_, i) => (i < 10 ? '0' + i : String(i)));
+    const minutesList = Array.from({ length: 60 }, (_, i) => (i < 10 ? '0' + i : String(i)));
+
+    return (
+      <Modal
+        visible={timePickerModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTimePickerModalVisible(false)}>
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+          activeOpacity={1}
+          onPress={() => setTimePickerModalVisible(false)}>
+          <TouchableOpacity
+            activeOpacity={1}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 16,
+              padding: 18,
+              width: 280,
+              elevation: 8,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.15,
+              shadowRadius: 12,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+            }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconComp name="time-outline" size={18} color="#2563EB" />
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A' }}>{timePickerTitle}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setTimePickerModalVisible(false)} style={{ padding: 4 }}>
+                <IconComp name="close-outline" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Selected Time Preview Display */}
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 14,
+                backgroundColor: '#F8FAFC',
+                paddingVertical: 10,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+              }}>
+              <Text style={{ fontSize: 24, fontWeight: '800', color: '#2563EB', letterSpacing: 1 }}>
+                {timePickerHour}
+              </Text>
+              <Text style={{ fontSize: 24, fontWeight: '800', color: '#64748B', marginHorizontal: 8 }}>
+                :
+              </Text>
+              <Text style={{ fontSize: 24, fontWeight: '800', color: '#2563EB', letterSpacing: 1 }}>
+                {timePickerMinute}
+              </Text>
+            </View>
+
+            {/* 2-Column Selection Grid matching Screenshot 3 */}
+            <View
+              style={{
+                flexDirection: 'row',
+                height: 220,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                borderRadius: 8,
+                overflow: 'hidden',
+                backgroundColor: '#FFFFFF',
+              }}>
+              {/* Hours Column */}
+              <View style={{ flex: 1, borderRightWidth: 1, borderRightColor: '#E2E8F0' }}>
+                <View
+                  style={{
+                    backgroundColor: '#F1F5F9',
+                    paddingVertical: 6,
+                    alignItems: 'center',
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#E2E8F0',
+                  }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Hour</Text>
+                </View>
+                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 4 }}>
+                  {hoursList.map(h => {
+                    const isSelected = h === timePickerHour;
+                    return (
+                      <TouchableOpacity
+                        key={`hour-${h}`}
+                        onPress={() => setTimePickerHour(h)}
+                        style={{
+                          backgroundColor: isSelected ? '#2563EB' : 'transparent',
+                          borderRadius: 4,
+                          paddingVertical: 7,
+                          alignItems: 'center',
+                          marginVertical: 1,
+                        }}>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: isSelected ? '800' : '500',
+                            color: isSelected ? '#FFFFFF' : '#0F172A',
+                          }}>
+                          {h}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Minutes Column */}
+              <View style={{ flex: 1 }}>
+                <View
+                  style={{
+                    backgroundColor: '#F1F5F9',
+                    paddingVertical: 6,
+                    alignItems: 'center',
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#E2E8F0',
+                  }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Minute</Text>
+                </View>
+                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 4 }}>
+                  {minutesList.map(m => {
+                    const isSelected = m === timePickerMinute;
+                    return (
+                      <TouchableOpacity
+                        key={`min-${m}`}
+                        onPress={() => setTimePickerMinute(m)}
+                        style={{
+                          backgroundColor: isSelected ? '#2563EB' : 'transparent',
+                          borderRadius: 4,
+                          paddingVertical: 7,
+                          alignItems: 'center',
+                          marginVertical: 1,
+                        }}>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            fontWeight: isSelected ? '800' : '500',
+                            color: isSelected ? '#FFFFFF' : '#0F172A',
+                          }}>
+                          {m}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={() => setTimePickerModalVisible(false)}
+                style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748B' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const finalTime = `${timePickerHour}:${timePickerMinute}`;
+                  if (timePickerCallbackRef.current) {
+                    timePickerCallbackRef.current(finalTime);
+                  }
+                  setTimePickerModalVisible(false);
+                }}
+                style={{
+                  backgroundColor: '#2563EB',
+                  paddingHorizontal: 20,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
   const getTeacherTimetableSlots = (day: string) => {
     const classSlots = (timetablesData && timetablesData[timetableClassSelected] && timetablesData[timetableClassSelected][day]) || [];
     if (classSlots.length > 0) {
@@ -1138,14 +1408,14 @@ function App() {
   // Attendance Module State (matching Screenshots 1 & 2)
   const [attViewMode, setAttViewMode] = useState<'daily' | 'weekly' | 'monthly' | 'term'>('daily');
   const [showAttViewDropdown, setShowAttViewDropdown] = useState<boolean>(false);
-  const [attSelectedDate, setAttSelectedDate] = useState<string>('10-09-2026');
+  const [attSelectedDate, setAttSelectedDate] = useState<string>(getTodayFormattedStr);
   const [attSelectedSession, setAttSelectedSession] = useState<'FN' | 'AN'>('FN');
   const [showSessionDropdown, setShowSessionDropdown] = useState<boolean>(false);
   const [attSearchQuery, setAttSearchQuery] = useState<string>('');
   const [isPastCutoff, setIsPastCutoff] = useState<boolean>(true);
   const [attCutoffTime, setAttCutoffTime] = useState<string>('09:30');
   const [showAttExportModal, setShowAttExportModal] = useState<boolean>(false);
-  const [attExportFileName, setAttExportFileName] = useState<string>('Attendance_PRE KG-A_2026-09-10_FN');
+  const [attExportFileName, setAttExportFileName] = useState<string>(() => `Attendance_PRE KG-A_${getTodayFormattedStr()}_FN`);
   const [attSelectedExportFields, setAttSelectedExportFields] = useState<Record<string, boolean>>({
     admissionNo: true,
     studentName: true,
@@ -1636,6 +1906,7 @@ function App() {
     { id: 'sub2', name: 'maths', code: 'MATH01', assignedTeachers: ['Jana D'] },
   ]);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [editingSubjectId, setEditingSubjectId] = useState<string | null>(null);
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newSubjectCode, setNewSubjectCode] = useState('');
   const [newSubjectTeacher, setNewSubjectTeacher] = useState('Ragu D');
@@ -1984,7 +2255,7 @@ function App() {
   // Firestore Real-Time Subscriptions for Environment Setup
   useEffect(() => {
     if (!db) return;
-    const schoolDocId = 'school1';
+    const schoolDocId = adminSchoolId || 'school1';
 
     // 1. School Doc
     db.collection('schools')
@@ -1994,11 +2265,16 @@ function App() {
         if (docSnap && docSnap.exists) {
           const data = docSnap.data();
           if (data) {
-            if (data.name) setSetupSchoolName(data.name);
+            const resolvedName = data.name || data.schoolName || 'School Portal';
+            setSetupSchoolName(resolvedName);
+            setSchoolDisplayName(resolvedName);
             if (data.location) setSetupSchoolAddress(data.location);
             if (data.contactPhone) setSetupSchoolPhone(data.contactPhone);
             if (data.website) setSetupSchoolWebsite(data.website);
-            if (data.branding?.logoUrl) setSetupLogoUrl(data.branding.logoUrl);
+            if (data.branding?.logoUrl) {
+              setSetupLogoUrl(data.branding.logoUrl);
+              setSchoolBrandLogo(data.branding.logoUrl);
+            }
             if (data.academicConfig?.currentYear) setSetupAcademicYear(data.academicConfig.currentYear);
             if (data.academicConfig?.termType) {
               let loaded = data.academicConfig.termType;
@@ -2554,6 +2830,36 @@ function App() {
         );
     } catch (e) {}
 
+    // 19. Subjects Real-time Subscription
+    let unsubSubjects: any = null;
+    try {
+      unsubSubjects = db
+        .collection('schools')
+        .doc(schoolDocId)
+        .collection('subjects')
+        .onSnapshot(
+          (snap: any) => {
+            if (snap && !snap.empty) {
+              const sList: SubjectItem[] = [];
+              snap.forEach((docSnap: any) => {
+                const d = docSnap.data();
+                sList.push({
+                  id: docSnap.id,
+                  name: d.name || '',
+                  code: d.code || '',
+                  assignedTeachers: Array.isArray(d.assignedTeachers) ? d.assignedTeachers : [],
+                  assignedTeacherIds: Array.isArray(d.assignedTeacherIds) ? d.assignedTeacherIds : [],
+                });
+              });
+              if (sList.length > 0) {
+                setSubjectList(sList);
+              }
+            }
+          },
+          (err: any) => console.warn('Subjects subscribe err:', err)
+        );
+    } catch (e) {}
+
     return () => {
       if (typeof unsubPeriods === 'function') unsubPeriods();
       if (typeof unsubLeaveRules === 'function') unsubLeaveRules();
@@ -2573,8 +2879,9 @@ function App() {
       if (typeof unsubPayroll === 'function') unsubPayroll();
       if (typeof unsubCalendar === 'function') unsubCalendar();
       if (typeof unsubAdmissionApps === 'function') unsubAdmissionApps();
+      if (typeof unsubSubjects === 'function') unsubSubjects();
     };
-  }, []);
+  }, [adminSchoolId]);
 
   const getLeaveRulesWarnings = () => {
     const warnings: string[] = [];
@@ -3457,11 +3764,7 @@ function App() {
   const [eventTitleInput, setEventTitleInput] = useState('');
   const [isMultipleCustomDates, setIsMultipleCustomDates] = useState(false);
   const [customDatesList, setCustomDatesList] = useState<string[]>([]);
-  const getTodayFormattedStr = () => {
-    const now = new Date();
-    const pad = (n: number) => (n < 10 ? '0' + n : String(n));
-    return `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
-  };
+
   const [eventStartDate, setEventStartDate] = useState(getTodayFormattedStr());
   const [eventEndDate, setEventEndDate] = useState(getTodayFormattedStr());
   const [eventTypeInput, setEventTypeInput] = useState<string>('General Event');
@@ -3487,34 +3790,96 @@ function App() {
     }
     setIsSavingCalendarEvent(true);
     try {
-      const typeKey = eventTypeInput.toLowerCase().includes('holiday')
-        ? 'holiday'
-        : eventTypeInput.toLowerCase().includes('exam')
-        ? 'exam'
-        : 'event';
-      const newEv = {
-        id: `ev_${Date.now()}`,
+      const typeLower = eventTypeInput.toLowerCase();
+      let typeKey = 'event';
+      if (typeLower.includes('holiday')) typeKey = 'holiday';
+      else if (typeLower.includes('exam')) typeKey = 'exam';
+      else if (typeLower.includes('meeting')) typeKey = 'meeting';
+      else if (typeLower.includes('sports')) typeKey = 'sports';
+      else if (typeLower.includes('cultural')) typeKey = 'cultural';
+
+      const formatIso = (dStr: string) => {
+        if (!dStr) return new Date().toISOString();
+        const parts = dStr.trim().split('T')[0].split(/[-/]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0).toISOString();
+          } else {
+            return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10), 12, 0, 0).toISOString();
+          }
+        }
+        const d = new Date(dStr);
+        return !isNaN(d.getTime()) ? d.toISOString() : new Date().toISOString();
+      };
+
+      const startIso = isMultipleCustomDates && customDatesList.length > 0 ? formatIso(customDatesList[0]) : formatIso(eventStartDate);
+      const endIso = isMultipleCustomDates && customDatesList.length > 0 ? formatIso(customDatesList[customDatesList.length - 1]) : formatIso(eventEndDate);
+
+      const targetSchool = adminSchoolId || 'school1';
+      let docId = `ev_${Date.now()}`;
+      const newEv: any = {
+        id: docId,
         title: eventTitleInput.trim(),
         type: typeKey,
         isCustomDates: isMultipleCustomDates,
-        customDates: isMultipleCustomDates ? customDatesList : [],
-        start: eventStartDate,
-        end: eventEndDate,
+        customDates: isMultipleCustomDates ? customDatesList.map(formatIso) : [],
+        start: startIso,
+        end: endIso,
+        startDate: eventStartDate,
+        endDate: eventEndDate,
+        targetAudience: 'All',
         createdAt: new Date().toISOString(),
       };
+
       if (db) {
         try {
-          await addSubDocument(adminSchoolId, 'calendar', newEv);
-        } catch (e) {}
+          await db.collection('schools').doc(targetSchool).collection('calendar').doc(docId).set(newEv, { merge: true });
+          if (targetSchool === 'school1') {
+            try {
+              await db.collection('schools').doc('SchoolS001').collection('calendar').doc(docId).set(newEv, { merge: true });
+            } catch (e) {}
+          }
+        } catch (e) {
+          console.warn('db calendar direct write err:', e);
+        }
+      } else if (typeof addSubDocument === 'function') {
+        try {
+          const resId = await addSubDocument(targetSchool, 'calendar', newEv);
+          if (resId) docId = resId;
+        } catch (e) {
+          console.warn('addSubDocument calendar err:', e);
+        }
       }
-      setCalendarEventsList(prev => [newEv, ...prev]);
+      newEv.id = docId;
+
+      // Extract day, month, year from eventStartDate to jump view to this event
+      const parts = eventStartDate.split(/[-/]/);
+      if (parts.length === 3) {
+        let evY = calendarDate.getFullYear();
+        let evM = calendarDate.getMonth();
+        let evD = calendarSelectedDayNum;
+        if (parts[0].length === 4) {
+          evY = parseInt(parts[0], 10);
+          evM = parseInt(parts[1], 10) - 1;
+          evD = parseInt(parts[2], 10);
+        } else {
+          evD = parseInt(parts[0], 10);
+          evM = parseInt(parts[1], 10) - 1;
+          evY = parseInt(parts[2], 10);
+        }
+        setCalendarDate(new Date(evY, evM, 1));
+        setCalendarSelectedDayNum(evD);
+      }
+
+      setCalendarEventsList(prev => [newEv, ...prev.filter(item => item.id !== docId)]);
       setShowAddEventModal(false);
       showToast('Event saved successfully!');
       setEventTitleInput('');
       setIsMultipleCustomDates(false);
       setCustomDatesList([]);
-      setEventStartDate('17-09-2026');
-      setEventEndDate('17-09-2026');
+      const todayStr = getTodayFormattedStr();
+      setEventStartDate(todayStr);
+      setEventEndDate(todayStr);
       setEventTypeInput('General Event');
     } catch (err) {
       showToast('Failed to save event');
@@ -3526,7 +3891,7 @@ function App() {
   // --- Admin Attendance Module State (Matching Reference Images 3 & 4) ---
   const [adminAttClass, setAdminAttClass] = useState('Grade - 10 - Section B');
   const [adminAttViewMode, setAdminAttViewMode] = useState<'Daily Marking' | 'This Week Report' | 'This Month Report' | 'This Term Report'>('Daily Marking');
-  const [adminAttDate, setAdminAttDate] = useState('17-09-2026');
+  const [adminAttDate, setAdminAttDate] = useState<string>(getTodayFormattedStr);
   const [adminAttSession, setAdminAttSession] = useState<'FN (Forenoon)' | 'AN (Afternoon)'>('FN (Forenoon)');
   const [adminAttSearchQuery, setAdminAttSearchQuery] = useState('');
   const [adminAttRecords, setAdminAttRecords] = useState<Record<string, 'Present' | 'Absent' | 'Late'>>({
@@ -3536,7 +3901,7 @@ function App() {
   const [showAdminAttClassPicker, setShowAdminAttClassPicker] = useState(false);
   const [showAdminAttModePicker, setShowAdminAttModePicker] = useState(false);
   const [showAdminAttSessionPicker, setShowAdminAttSessionPicker] = useState(false);
-  const [adminAttAnalyticsDate, setAdminAttAnalyticsDate] = useState('17-09-2026');
+  const [adminAttAnalyticsDate, setAdminAttAnalyticsDate] = useState<string>(getTodayFormattedStr);
   const [adminAttRepeatedClassFilter, setAdminAttRepeatedClassFilter] = useState('All Classes');
   const [showAdminAttAnalyticsClassDropdown, setShowAdminAttAnalyticsClassDropdown] = useState(false);
   const [isSavingAdminAttendance, setIsSavingAdminAttendance] = useState(false);
@@ -3755,7 +4120,6 @@ function App() {
   const [showIssueStudentDropdown, setShowIssueStudentDropdown] = useState(false);
 
   // --- Inventory & Assets Module State ---
-  const [adminSchoolId, setAdminSchoolId] = useState<string>('school1');
   const [inventoryItemsList, setInventoryItemsList] = useState<any[]>([]);
   const [inventoryCategoriesList, setInventoryCategoriesList] = useState<any[]>([
     { id: 'cat_1', name: 'Electronics', description: 'Computers, projectors, lab gadgets' },
@@ -5189,6 +5553,13 @@ function App() {
               if (sessionData.email) {
                 setLoginEmail(sessionData.email);
               }
+              if (sessionData.schoolId) {
+                setAdminSchoolId(sessionData.schoolId);
+              }
+              if (sessionData.schoolName) {
+                setSchoolDisplayName(sessionData.schoolName);
+                setSetupSchoolName(sessionData.schoolName);
+              }
               setIsLoggedIn(true);
               if (restoredRole === 'Teacher') {
                 setActiveStaffTab('Dashboard');
@@ -6322,6 +6693,7 @@ function App() {
   const handlePublishToParentPortal = async () => {
     setIsPublishingReportCards(true);
     try {
+      const targetSchool = adminSchoolId || 'school1';
       if (db) {
         const defaultTemplate = {
           themeColor: '#B07FA8',
@@ -6333,7 +6705,7 @@ function App() {
         };
         for (const st of transportStudents) {
           try {
-            await db.collection('schools').doc('school1').collection('students').doc(st.id).collection('report_cards').doc('class_assessments_cl2').set({
+            await db.collection('schools').doc(targetSchool).collection('students').doc(st.id).collection('report_cards').doc('class_assessments_cl2').set({
               examId: 'class_assessments_cl2',
               examName: 'Class Assessments Summary',
               classId: 'PRE KG - Section A',
@@ -6348,9 +6720,9 @@ function App() {
           }
         }
       }
-      showToast('Report cards published to parent portal successfully!');
+      showToast('Report card published to parent portal successfully.');
     } catch (e) {
-      showToast('Report cards published to parent portal successfully!');
+      showToast('Report card published to parent portal successfully.');
     } finally {
       setIsPublishingReportCards(false);
     }
@@ -6682,10 +7054,11 @@ function App() {
   );
 
 
-  // --- Auth Handlers (Real Firebase Authentication) ---
+  // --- Auth Handlers (Strict Firestore-Verified Authentication) ---
   const handleLoginSubmit = async () => {
     const rawIdentifier = (loginEmail || '').trim();
     const rawPassword = (loginPassword || '');
+
     if (!rawIdentifier) {
       Alert.alert('Authentication Error', 'Please enter your email or admission number.');
       return;
@@ -6694,143 +7067,480 @@ function App() {
       Alert.alert('Authentication Error', 'Please enter your password.');
       return;
     }
+    if (!auth) {
+      Alert.alert('Authentication Error', 'Firebase is not available. Please try again later.');
+      return;
+    }
 
     setIsLoggingIn(true);
+
+    // ─── Helper: resolve loginPanel + role from a teacher/staff doc ───────────
+    const resolveTeacherRole = async (schoolId: string, teacherData: any): Promise<{ role: string; loginPanel: string }> => {
+      // staff_type is the ground truth for teaching vs non-teaching
+      const isTeaching = (teacherData.staff_type || '').toLowerCase() === 'teaching';
+      // 'role' field stores designation like 'Staffs', 'Principal', 'Vice Principal' etc.
+      const designation = teacherData.role || (isTeaching ? 'teacher' : 'staff');
+
+      let loginPanel = '';
+      // Lookup loginPanel from schools/{id}/roles/{designation} — exact mirror of website auth.js
+      try {
+        const roleDocSnap = await db!.collection('schools').doc(schoolId)
+          .collection('roles').doc(designation).get();
+        if (roleDocSnap.exists) {
+          loginPanel = (roleDocSnap.data()?.loginPanel || '').toLowerCase();
+        }
+      } catch (_) {}
+
+      // Fallback: teaching staff → teacher portal, non-teaching → admin panel
+      if (!loginPanel) {
+        loginPanel = isTeaching ? 'teacher' : 'admin';
+      }
+
+      return { role: isTeaching ? 'teacher' : 'staff', loginPanel };
+    };
+
+    // ─── Helper: search all schools for a teacher by email ────────────────────
+    const findTeacherInAllSchools = async (emailToSearch: string): Promise<{
+      found: boolean; schoolId: string; docId: string; teacherData: any;
+    }> => {
+      // First try known school IDs
+      const KNOWN_IDS = [...new Set(['school1', 'SchoolS001', adminSchoolId].filter(Boolean))] as string[];
+      const emailLower = emailToSearch.toLowerCase();
+
+      for (const sid of KNOWN_IDS) {
+        try {
+          // Try exact match first
+          let snap = await db!.collection('schools').doc(sid).collection('teachers')
+            .where('email', '==', emailToSearch).get();
+          // Try lowercase match
+          if (snap.empty) {
+            snap = await db!.collection('schools').doc(sid).collection('teachers')
+              .where('email', '==', emailLower).get();
+          }
+          if (!snap.empty) {
+            return { found: true, schoolId: sid, docId: snap.docs[0].id, teacherData: snap.docs[0].data() };
+          }
+        } catch (_) {}
+      }
+
+      // Fallback: scan all schools documents (limited to first 10)
+      try {
+        const schoolsSnap = await db!.collection('schools').limit(10).get();
+        for (const schoolDoc of schoolsSnap.docs) {
+          if (KNOWN_IDS.includes(schoolDoc.id)) continue; // already checked
+          try {
+            let snap = await db!.collection('schools').doc(schoolDoc.id).collection('teachers')
+              .where('email', '==', emailToSearch).get();
+            if (snap.empty) {
+              snap = await db!.collection('schools').doc(schoolDoc.id).collection('teachers')
+                .where('email', '==', emailLower).get();
+            }
+            if (!snap.empty) {
+              return { found: true, schoolId: schoolDoc.id, docId: snap.docs[0].id, teacherData: snap.docs[0].data() };
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      return { found: false, schoolId: '', docId: '', teacherData: null };
+    };
+
     try {
       let authUser: any = null;
+      let detectedSchoolId: string = adminSchoolId || 'school1';
+      let firestoreRole: string = '';
+      let firestoreLoginPanel: string = '';
+      let firestoreName: string = '';
 
-      // 1. Try Firebase Authentication with email or synthetic parent email
-      if (auth) {
-        try {
-          if (rawIdentifier.includes('@')) {
-            const userCred = await auth.signInWithEmailAndPassword(rawIdentifier, rawPassword);
-            authUser = userCred.user;
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 1: Try Firebase Auth sign-in (handles ALL existing accounts)
+      // ─────────────────────────────────────────────────────────────────────────
+      let initialAuthErr: any = null;
+      try {
+        if (rawIdentifier.includes('@')) {
+          const userCred = await auth.signInWithEmailAndPassword(rawIdentifier, rawPassword);
+          authUser = userCred.user;
+        } else {
+          // Admission number → synthetic email (matches website exactly)
+          const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
+          const userCred = await auth.signInWithEmailAndPassword(syntheticEmail, rawPassword);
+          authUser = userCred.user;
+        }
+      } catch (err: any) {
+        initialAuthErr = err;
+        console.warn('[Login] Firebase Auth sign-in error:', err?.code, err?.message);
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 2: If auth failed — classify error and try Firestore provisioning
+      // ─────────────────────────────────────────────────────────────────────────
+      if (!authUser && initialAuthErr && db) {
+        // Error codes that mean "no account exists yet" → try provisioning
+        const isNotFound =
+          initialAuthErr?.code === 'auth/user-not-found' ||
+          initialAuthErr?.code === 'auth/invalid-credential' ||
+          initialAuthErr?.code === 'auth/invalid-login-credentials';
+
+        // Any other error (wrong-password, too-many-requests, network) → block
+        if (!isNotFound) {
+          if (initialAuthErr?.code === 'auth/wrong-password') {
+            Alert.alert('Authentication Failed', 'Incorrect password. Please try again.');
+          } else if (initialAuthErr?.code === 'auth/too-many-requests') {
+            Alert.alert('Authentication Failed', 'Too many failed attempts. Please wait and try again.');
+          } else if (initialAuthErr?.code === 'auth/network-request-failed') {
+            Alert.alert('Authentication Failed', 'Network error. Please check your internet connection.');
           } else {
-            // Reconstruct synthetic email for student admission number (identical to website auth.js!)
-            const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
-            const userCred = await auth.signInWithEmailAndPassword(syntheticEmail, rawPassword);
-            authUser = userCred.user;
+            Alert.alert('Authentication Failed', 'Invalid credentials. Please try again.');
           }
-        } catch (authErr: any) {
-          console.warn('signInWithEmailAndPassword error:', authErr?.code, authErr?.message);
-          // If account doesn't exist in Firebase Auth yet, check if they exist in school teachers or students collections
-          if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/invalid-login-credentials') {
-            if (rawIdentifier.includes('@') && db) {
-              // Check teachers collection across schools
-              const teacherSnap = await db.collection('schools').doc(adminSchoolId || 'school1')
-                .collection('teachers')
-                .where('email', '==', rawIdentifier)
-                .get();
+          setIsLoggingIn(false);
+          return;
+        }
 
-              if (!teacherSnap.empty) {
-                const teacherDocData = teacherSnap.docs[0].data();
-                try {
-                  const newCred = await auth.createUserWithEmailAndPassword(rawIdentifier, rawPassword);
-                  authUser = newCred.user;
-                  const isTeaching = teacherDocData.staff_type === 'teaching' || teacherDocData.role === 'teacher';
-                  const roleToSet = isTeaching ? 'teacher' : 'staff';
-                  await db.collection('users').doc(authUser.uid).set({
-                    email: rawIdentifier,
-                    role: roleToSet,
-                    schoolId: adminSchoolId || 'school1',
-                    name: teacherDocData.name || rawIdentifier,
-                    createdAt: new Date().toISOString(),
-                  }, { merge: true });
-                  await db.collection('schools').doc(adminSchoolId || 'school1')
-                    .collection('teachers').doc(teacherSnap.docs[0].id)
-                    .set({ userId: authUser.uid, status: 'Active' }, { merge: true });
-                } catch (regErr: any) {
-                  console.warn('Teacher auto-provision error:', regErr);
-                }
-              }
-            } else if (!rawIdentifier.includes('@') && db) {
-              // Check students collection for admission number
-              const studentSnap = await db.collection('schools').doc(adminSchoolId || 'school1')
-                .collection('students')
-                .where('admissionNumber', '==', rawIdentifier)
-                .get();
+        // ── Account not found in Firebase Auth ───────────────────────────────
+        if (rawIdentifier.includes('@')) {
+          const KNOWN_IDS = [...new Set(['school1', 'SchoolS001', adminSchoolId].filter(Boolean))] as string[];
+          const emailLower = rawIdentifier.toLowerCase();
 
-              if (!studentSnap.empty) {
-                const studentDocData = studentSnap.docs[0].data();
-                const validDob = (studentDocData.dob || '').replace(/[^0-9]/g, '');
-                const inputClean = rawPassword.replace(/[^0-9]/g, '');
-                const matchesDob = validDob && inputClean && (validDob === inputClean || studentDocData.dob === rawPassword);
-                const isAcceptablePassword = rawPassword === 'password123' || matchesDob || rawPassword.length >= 6;
-
-                if (isAcceptablePassword) {
-                  try {
-                    const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
-                    const newCred = await auth.createUserWithEmailAndPassword(syntheticEmail, rawPassword);
-                    authUser = newCred.user;
-                    await db.collection('users').doc(authUser.uid).set({
-                      email: syntheticEmail,
-                      role: 'parent',
-                      schoolId: adminSchoolId || 'school1',
-                      studentAdmissionNumber: rawIdentifier,
-                      name: studentDocData.parentName || studentDocData.name || rawIdentifier,
-                      createdAt: new Date().toISOString(),
-                    }, { merge: true });
-                  } catch (regErr: any) {
-                    console.warn('Student auto-provision error:', regErr);
+          // 1. Check if an Admin / Staff profile exists directly in Firestore `users` collection
+          let adminMatch: any = null;
+          try {
+            let userSnap = await db.collection('users').where('email', '==', rawIdentifier).get();
+            if (userSnap.empty) {
+              userSnap = await db.collection('users').where('email', '==', emailLower).get();
+            }
+            if (!userSnap.empty) {
+              const uDoc = userSnap.docs[0].data();
+              adminMatch = {
+                schoolId: uDoc.schoolId || 'school1',
+                role: uDoc.role || 'admin',
+                loginPanel: uDoc.loginPanel || 'admin',
+                name: uDoc.name || uDoc.fullName || rawIdentifier,
+              };
+            } else {
+              // 2. Also check schools collection for school adminEmail / email
+              for (const sid of KNOWN_IDS) {
+                const sDoc = await db.collection('schools').doc(sid).get();
+                if (sDoc.exists) {
+                  const sData = sDoc.data();
+                  if (
+                    sData?.adminEmail?.toLowerCase() === emailLower ||
+                    sData?.email?.toLowerCase() === emailLower
+                  ) {
+                    adminMatch = {
+                      schoolId: sid,
+                      role: 'admin',
+                      loginPanel: 'admin',
+                      name: sData.schoolName || sData.name || 'Administrator',
+                    };
+                    break;
                   }
                 }
               }
             }
+          } catch (adminSearchErr) {
+            console.warn('[Login] Error checking Firestore for admin credentials:', adminSearchErr);
           }
 
-          if (!authUser) {
-            let userMsg = 'Invalid email/admission number or password.';
-            if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/invalid-login-credentials') {
-              userMsg = 'Incorrect password. Please try again.';
-            } else if (authErr?.code === 'auth/user-not-found') {
-              userMsg = 'No account found. Please check your credentials or contact administrator.';
-            } else if (authErr?.code === 'auth/too-many-requests') {
-              userMsg = 'Too many attempts. Please wait a moment and try again.';
+          if (adminMatch) {
+            try {
+              // Auto-provision the Admin into Firebase Auth with the provided password
+              const newCred = await auth.createUserWithEmailAndPassword(rawIdentifier, rawPassword);
+              authUser = newCred.user;
+              detectedSchoolId = adminMatch.schoolId;
+              firestoreRole = adminMatch.role;
+              firestoreLoginPanel = adminMatch.loginPanel;
+              firestoreName = adminMatch.name;
+
+              // Write profile to users/{uid}
+              await db.collection('users').doc(authUser.uid).set({
+                email: rawIdentifier,
+                role: firestoreRole,
+                loginPanel: firestoreLoginPanel,
+                schoolId: detectedSchoolId,
+                name: firestoreName,
+                createdAt: new Date().toISOString(),
+              }, { merge: true });
+
+            } catch (provisionErr: any) {
+              console.warn('[Login] Admin provisioning error:', provisionErr?.code);
+              if (provisionErr?.code === 'auth/email-already-in-use') {
+                Alert.alert('Authentication Failed', 'Incorrect password. Please try again.');
+              } else {
+                Alert.alert('Authentication Failed', 'Could not create account with these credentials. Please check your password.');
+              }
+              setIsLoggingIn(false);
+              return;
             }
-            Alert.alert('Authentication Failed', userMsg);
+          } else {
+            // 3. Fallback: search schools/{id}/teachers collection
+            const result = await findTeacherInAllSchools(rawIdentifier);
+
+            if (result.found) {
+              try {
+                // First-time provisioning: create Firebase Auth account
+                const newCred = await auth.createUserWithEmailAndPassword(rawIdentifier, rawPassword);
+                authUser = newCred.user;
+                detectedSchoolId = result.schoolId;
+
+                const { role, loginPanel } = await resolveTeacherRole(result.schoolId, result.teacherData);
+                firestoreRole = role;
+                firestoreLoginPanel = loginPanel;
+                firestoreName = result.teacherData.name || rawIdentifier;
+
+                // Write users/{uid} profile doc
+                await db.collection('users').doc(authUser.uid).set({
+                  email: rawIdentifier,
+                  role: firestoreRole,
+                  loginPanel: firestoreLoginPanel,
+                  schoolId: result.schoolId,
+                  name: firestoreName,
+                  createdAt: new Date().toISOString(),
+                }, { merge: true });
+
+                // Link teacher doc with new uid
+                await db.collection('schools').doc(result.schoolId)
+                  .collection('teachers').doc(result.docId)
+                  .set({ userId: authUser.uid, status: 'Active' }, { merge: true });
+
+              } catch (provisionErr: any) {
+                console.warn('[Login] Teacher provision error:', provisionErr?.code);
+                if (provisionErr?.code === 'auth/email-already-in-use') {
+                  Alert.alert('Authentication Failed', 'Incorrect password. Please try again.');
+                } else {
+                  Alert.alert('Authentication Failed', 'Could not create account. Please try again.');
+                }
+                setIsLoggingIn(false);
+                return;
+              }
+            } else {
+              // Not in users, schools, or teachers
+              Alert.alert(
+                'Authentication Failed',
+                'This email is not registered in the school system. Please contact your Administrator.'
+              );
+              setIsLoggingIn(false);
+              return;
+            }
+          }
+
+        } else {
+          // ADMISSION NUMBER login: search schools/{id}/students
+          const KNOWN_IDS = [...new Set(['school1', 'SchoolS001', adminSchoolId].filter(Boolean))] as string[];
+          let foundStudent = false;
+
+          for (const sid of KNOWN_IDS) {
+            if (foundStudent) break;
+            try {
+              // Try exact, uppercase, lowercase admission number variants
+              const variants = [rawIdentifier, rawIdentifier.toUpperCase(), rawIdentifier.toLowerCase()];
+              for (const variant of variants) {
+                const studentSnap = await db.collection('schools').doc(sid)
+                  .collection('students').where('admissionNumber', '==', variant).get();
+                if (!studentSnap.empty) {
+                  foundStudent = true;
+                  const studentData = studentSnap.docs[0].data();
+                  detectedSchoolId = sid;
+                  const syntheticEmail = `${rawIdentifier.replace(/[^a-zA-Z0-9]/g, '')}@parent.School.com`.toLowerCase();
+
+                  try {
+                    const newCred = await auth.createUserWithEmailAndPassword(syntheticEmail, rawPassword);
+                    authUser = newCred.user;
+
+                    firestoreRole = 'parent';
+                    firestoreLoginPanel = 'parent';
+                    firestoreName = studentData.parentName || studentData.name || rawIdentifier;
+
+                    await db.collection('users').doc(authUser.uid).set({
+                      email: syntheticEmail,
+                      role: 'parent',
+                      loginPanel: 'parent',
+                      schoolId: sid,
+                      studentAdmissionNumber: rawIdentifier,
+                      name: firestoreName,
+                      createdAt: new Date().toISOString(),
+                    }, { merge: true });
+                  } catch (provisionErr: any) {
+                    if (provisionErr?.code === 'auth/email-already-in-use') {
+                      Alert.alert('Authentication Failed', 'Incorrect password for this admission number.');
+                    } else {
+                      Alert.alert('Authentication Failed', 'Could not create student account. Please try again.');
+                    }
+                    setIsLoggingIn(false);
+                    return;
+                  }
+                  break;
+                }
+              }
+            } catch (_) {}
+          }
+
+          if (!foundStudent) {
+            Alert.alert(
+              'Authentication Failed',
+              'This admission number is not registered. Please contact your Administrator.'
+            );
             setIsLoggingIn(false);
             return;
           }
         }
       }
 
-      // 2. Fetch User Profile from Firestore users collection
+      // No authUser at this point → bail
+      if (!authUser) {
+        Alert.alert('Authentication Failed', 'Could not authenticate. Please try again.');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 3: Fetch full user profile from users/{uid}
+      //         This handles ALL pre-existing accounts (admin, teacher, staff, parent)
+      // ─────────────────────────────────────────────────────────────────────────
       let profileData: any = null;
-      if (authUser && db) {
+      if (db) {
         try {
           const userDoc = await db.collection('users').doc(authUser.uid).get();
           if (userDoc.exists) {
             profileData = userDoc.data();
+            console.log('[Login] Profile found in users collection:', profileData?.role, profileData?.loginPanel);
+          } else {
+            // Fallback: search users collection by email (handles documents created with custom/auto IDs)
+            let emailSnap = await db.collection('users').where('email', '==', rawIdentifier).get();
+            if (emailSnap.empty) {
+              emailSnap = await db.collection('users').where('email', '==', rawIdentifier.toLowerCase()).get();
+            }
+            if (!emailSnap.empty) {
+              profileData = emailSnap.docs[0].data();
+              console.log('[Login] Profile found in users by email:', profileData?.role, profileData?.loginPanel);
+              // Save to users/{authUser.uid} so future lookups are instant
+              await db.collection('users').doc(authUser.uid).set(profileData, { merge: true }).catch(() => {});
+            } else {
+              console.log('[Login] No users doc found by uid or email — will check teachers and schools');
+            }
           }
         } catch (e) {
-          console.warn('Error reading user profile:', e);
+          console.warn('[Login] Error reading user profile:', e);
         }
       }
 
-      // 3. Resolve Role matching website logic:
-      let detectedRole: Role = 'Admin';
-      const roleStr = (profileData?.role || '').toLowerCase();
-      const loginPanel = (profileData?.loginPanel || '').toLowerCase();
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 4: If no users/{uid} profile, look up teacher doc by userId
+      //         (handles existing accounts that were created without a profile doc)
+      // ─────────────────────────────────────────────────────────────────────────
+      if (!profileData && db && rawIdentifier.includes('@')) {
+        const KNOWN_IDS = [...new Set(['school1', 'SchoolS001', adminSchoolId].filter(Boolean))] as string[];
+        try {
+          const schoolsSnap = await db.collection('schools').limit(10).get();
+          const allIds = [...new Set([...KNOWN_IDS, ...schoolsSnap.docs.map((d: any) => d.id)])];
 
-      if (loginPanel === 'teacher' || roleStr === 'teacher' || roleStr === 'staff') {
+          for (const sid of allIds) {
+            try {
+              // Look up teacher doc by userId field
+              let snap = await db.collection('schools').doc(sid).collection('teachers')
+                .where('userId', '==', authUser.uid).get();
+              if (snap.empty) {
+                // Fallback: look up by email
+                snap = await db.collection('schools').doc(sid).collection('teachers')
+                  .where('email', '==', rawIdentifier).get();
+                if (snap.empty) {
+                  snap = await db.collection('schools').doc(sid).collection('teachers')
+                    .where('email', '==', rawIdentifier.toLowerCase()).get();
+                }
+              }
+              if (!snap.empty) {
+                const teacherDoc = snap.docs[0].data();
+                detectedSchoolId = sid;
+                const { role, loginPanel } = await resolveTeacherRole(sid, teacherDoc);
+                firestoreRole = role;
+                firestoreLoginPanel = loginPanel;
+                firestoreName = teacherDoc.name || rawIdentifier;
+
+                // Create the missing users/{uid} profile doc
+                await db.collection('users').doc(authUser.uid).set({
+                  email: rawIdentifier,
+                  role: firestoreRole,
+                  loginPanel: firestoreLoginPanel,
+                  schoolId: sid,
+                  name: firestoreName,
+                  createdAt: new Date().toISOString(),
+                }, { merge: true });
+                // Link teacher doc
+                await db.collection('schools').doc(sid).collection('teachers').doc(snap.docs[0].id)
+                  .set({ userId: authUser.uid }, { merge: true });
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 5: Resolve final role and loginPanel
+      // ─────────────────────────────────────────────────────────────────────────
+      const resolvedSchoolId = profileData?.schoolId || detectedSchoolId;
+      const resolvedRoleRaw  = (profileData?.role || firestoreRole || '').toLowerCase();
+      let resolvedLoginPanel = (profileData?.loginPanel || firestoreLoginPanel || '').toLowerCase();
+
+      // If still no loginPanel, look it up from the roles collection
+      if (!resolvedLoginPanel && resolvedRoleRaw && db &&
+          resolvedRoleRaw !== 'parent' && resolvedRoleRaw !== 'student') {
+        try {
+          // Use the raw role designation from profile (could be 'Staffs', 'teacher', 'staff', etc.)
+          const designationKey = profileData?.role || firestoreRole || resolvedRoleRaw;
+          const roleDocSnap = await db.collection('schools').doc(resolvedSchoolId)
+            .collection('roles').doc(designationKey).get();
+          if (roleDocSnap.exists) {
+            resolvedLoginPanel = (roleDocSnap.data()?.loginPanel || '').toLowerCase();
+            db.collection('users').doc(authUser.uid)
+              .set({ loginPanel: resolvedLoginPanel }, { merge: true }).catch(() => {});
+          }
+        } catch (_) {}
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // STEP 6: Determine portal — mirrors website redirectBasedOnRole()
+      //   loginPanel === 'teacher'   → Teacher Portal
+      //   loginPanel === 'admin'     → Admin Portal
+      //   loginPanel === 'parent'    → Student/Parent Portal
+      //   role === 'admin'/'superadmin' → Admin Portal
+      //   role === 'teacher'/'staff' + staff_type teaching → Teacher Portal
+      //   role === 'parent'/'student' → Student/Parent Portal
+      // ─────────────────────────────────────────────────────────────────────────
+      let detectedRole: Role = 'Admin'; // safe default for email logins
+
+      if (resolvedLoginPanel === 'teacher' || resolvedRoleRaw === 'teacher') {
         detectedRole = 'Teacher';
-      } else if (loginPanel === 'parent' || roleStr === 'parent' || roleStr === 'student') {
+      } else if (resolvedLoginPanel === 'parent' || resolvedRoleRaw === 'parent' || resolvedRoleRaw === 'student') {
         detectedRole = 'Student';
-      } else if (roleStr === 'admin' || roleStr === 'superadmin') {
+      } else if (resolvedLoginPanel === 'admin' || resolvedRoleRaw === 'admin' || resolvedRoleRaw === 'superadmin') {
         detectedRole = 'Admin';
-      } else {
-        const emailLower = (rawIdentifier || '').toLowerCase();
-        if (emailLower.includes('teacher') || emailLower.includes('staff')) {
-          detectedRole = 'Teacher';
-        } else if (!emailLower.includes('@') || emailLower.includes('student') || emailLower.includes('parent')) {
-          detectedRole = 'Student';
-        } else {
-          detectedRole = 'Admin';
-        }
+      } else if (resolvedRoleRaw === 'staff') {
+        // Non-teaching staff: check loginPanel; default to Admin if not set
+        detectedRole = resolvedLoginPanel === 'teacher' ? 'Teacher' : 'Admin';
+      } else if (!rawIdentifier.includes('@')) {
+        // Admission number login is always Student/Parent portal
+        detectedRole = 'Student';
       }
 
-      if (profileData?.schoolId) {
-        setAdminSchoolId(profileData.schoolId);
+      let finalSchoolName = schoolDisplayName;
+      if (resolvedSchoolId) {
+        setAdminSchoolId(resolvedSchoolId);
+        try {
+          const sDoc = await db.collection('schools').doc(resolvedSchoolId).get();
+          if (sDoc && sDoc.exists) {
+            const sData = sDoc.data();
+            const sName = sData?.name || sData?.schoolName;
+            if (sName) {
+              finalSchoolName = sName;
+              setSchoolDisplayName(sName);
+              setSetupSchoolName(sName);
+            }
+            if (sData?.branding?.logoUrl) {
+              setSchoolBrandLogo(sData.branding.logoUrl);
+              setSetupLogoUrl(sData.branding.logoUrl);
+            }
+          }
+        } catch (_) {}
       }
 
       setActiveRole(detectedRole);
@@ -6852,19 +7562,26 @@ function App() {
               role: detectedRole,
               email: rawIdentifier,
               uid: authUser?.uid || '',
+              schoolId: resolvedSchoolId,
+              schoolName: finalSchoolName,
             })
           );
         } catch (e) {}
       }
 
-      showToast(`Welcome back! Authenticated as ${detectedRole}`);
+      const portalName = detectedRole === 'Teacher' ? 'Teacher Portal'
+        : detectedRole === 'Student' ? 'Student/Parent Portal'
+        : 'Admin Portal';
+      showToast(`Welcome! Logged in to ${portalName}`);
+
     } catch (error: any) {
-      console.warn('Login exception:', error);
+      console.warn('[Login] Exception:', error);
       Alert.alert('Login Error', error?.message || 'Failed to authenticate. Please check your credentials.');
     } finally {
       setIsLoggingIn(false);
     }
   };
+
 
   const handleDemoQuickLogin = async (role: Role) => {
     const demoEmail = role === 'Admin' ? 'admin@zuna.edu' : role === 'Teacher' ? 'teacher@zuna.edu' : 'student@zuna.edu';
@@ -6972,10 +7689,58 @@ function App() {
   };
 
   const handleOpenAddSubjectModal = () => {
+    setEditingSubjectId(null);
     setNewSubjectName('');
     setNewSubjectCode('');
     setNewSubjectAssignedTeacherIds([]);
     setShowAddSubjectModal(true);
+  };
+
+  const handleOpenEditSubjectModal = (sub: SubjectItem) => {
+    setEditingSubjectId(sub.id);
+    setNewSubjectName(sub.name || '');
+    setNewSubjectCode(sub.code || '');
+    let teacherIds: string[] = [];
+    if (sub.assignedTeacherIds && sub.assignedTeacherIds.length > 0) {
+      teacherIds = sub.assignedTeacherIds;
+    } else if (sub.assignedTeachers && sub.assignedTeachers.length > 0) {
+      const matched = (staffList || [])
+        .filter((fac: any) => sub.assignedTeachers.includes(fac.name))
+        .map((fac: any) => fac.id);
+      teacherIds = matched;
+    }
+    setNewSubjectAssignedTeacherIds(teacherIds);
+    setShowAddSubjectModal(true);
+  };
+
+  const handleDeleteSubject = (sub: SubjectItem) => {
+    Alert.alert(
+      'Delete Subject',
+      `Are you sure you want to delete "${sub.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setSubjectList(prev => prev.filter(s => s.id !== sub.id));
+            showToast(`Subject "${sub.name}" deleted successfully.`);
+
+            const targetSchool = adminSchoolId || 'school1';
+            try {
+              if (db) {
+                await db.collection('schools').doc(targetSchool).collection('subjects').doc(sub.id).delete();
+                try {
+                  await db.collection('schools').doc('SchoolS001').collection('subjects').doc(sub.id).delete();
+                } catch (e) {}
+              }
+            } catch (err) {
+              console.warn('Subject delete error:', err);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleToggleSubjectTeacher = (teacherId: string) => {
@@ -6997,8 +7762,10 @@ function App() {
     const codeTrimmed = newSubjectCode.trim();
 
     const isDuplicate = subjectList.some(s =>
-      s.name.toLowerCase() === nameTrimmed.toLowerCase() ||
-      (codeTrimmed && s.code && s.code.toLowerCase() === codeTrimmed.toLowerCase())
+      s.id !== editingSubjectId && (
+        s.name.toLowerCase() === nameTrimmed.toLowerCase() ||
+        (codeTrimmed && s.code && s.code.toLowerCase() === codeTrimmed.toLowerCase())
+      )
     );
 
     if (isDuplicate) {
@@ -7011,32 +7778,88 @@ function App() {
       return f ? f.name : tid;
     });
 
-    const newSub: SubjectItem = {
-      id: Date.now().toString(),
-      name: nameTrimmed,
-      code: codeTrimmed,
-      assignedTeachers: assignedNames.length > 0 ? assignedNames : (newSubjectTeacher ? [newSubjectTeacher] : []),
-    };
+    const targetSchool = adminSchoolId || 'school1';
 
-    setSubjectList(prev => [...prev, newSub]);
-    setNewSubjectName('');
-    setNewSubjectCode('');
-    setNewSubjectAssignedTeacherIds([]);
-    setShowAddSubjectModal(false);
-    showToast('Subject created successfully!');
+    if (editingSubjectId) {
+      const updatedSub: SubjectItem = {
+        id: editingSubjectId,
+        name: nameTrimmed,
+        code: codeTrimmed,
+        assignedTeachers: assignedNames.length > 0 ? assignedNames : (newSubjectTeacher ? [newSubjectTeacher] : []),
+        assignedTeacherIds: newSubjectAssignedTeacherIds,
+      };
 
-    try {
-      if (db && adminSchoolId) {
-        await db.collection('schools').doc(adminSchoolId).collection('subjects').doc(newSub.id).set({
-          name: nameTrimmed,
-          code: codeTrimmed,
-          assignedTeachers: newSub.assignedTeachers,
-          assignedTeacherIds: newSubjectAssignedTeacherIds,
-          createdAt: new Date().toISOString(),
-        }, { merge: true });
+      setSubjectList(prev => prev.map(s => (s.id === editingSubjectId ? updatedSub : s)));
+      setEditingSubjectId(null);
+      setNewSubjectName('');
+      setNewSubjectCode('');
+      setNewSubjectAssignedTeacherIds([]);
+      setShowAddSubjectModal(false);
+      showToast('Subject updated successfully!');
+
+      try {
+        if (db) {
+          await db.collection('schools').doc(targetSchool).collection('subjects').doc(updatedSub.id).set({
+            name: nameTrimmed,
+            code: codeTrimmed,
+            assignedTeachers: updatedSub.assignedTeachers,
+            assignedTeacherIds: newSubjectAssignedTeacherIds,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('subjects').doc(updatedSub.id).set({
+              name: nameTrimmed,
+              code: codeTrimmed,
+              assignedTeachers: updatedSub.assignedTeachers,
+              assignedTeacherIds: newSubjectAssignedTeacherIds,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch (e) {}
+        }
+      } catch (err) {
+        console.warn('Subject update error:', err);
       }
-    } catch (err) {
-      console.warn('Subject persistence error:', err);
+    } else {
+      const newSub: SubjectItem = {
+        id: Date.now().toString(),
+        name: nameTrimmed,
+        code: codeTrimmed,
+        assignedTeachers: assignedNames.length > 0 ? assignedNames : (newSubjectTeacher ? [newSubjectTeacher] : []),
+        assignedTeacherIds: newSubjectAssignedTeacherIds,
+      };
+
+      setSubjectList(prev => [...prev, newSub]);
+      setEditingSubjectId(null);
+      setNewSubjectName('');
+      setNewSubjectCode('');
+      setNewSubjectAssignedTeacherIds([]);
+      setShowAddSubjectModal(false);
+      showToast('Subject created successfully!');
+
+      try {
+        if (db) {
+          await db.collection('schools').doc(targetSchool).collection('subjects').doc(newSub.id).set({
+            name: nameTrimmed,
+            code: codeTrimmed,
+            assignedTeachers: newSub.assignedTeachers,
+            assignedTeacherIds: newSubjectAssignedTeacherIds,
+            createdAt: new Date().toISOString(),
+          }, { merge: true });
+
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('subjects').doc(newSub.id).set({
+              name: nameTrimmed,
+              code: codeTrimmed,
+              assignedTeachers: newSub.assignedTeachers,
+              assignedTeacherIds: newSubjectAssignedTeacherIds,
+              createdAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch (e) {}
+        }
+      } catch (err) {
+        console.warn('Subject persistence error:', err);
+      }
     }
   };
 
@@ -8884,7 +9707,7 @@ function App() {
         title="Fee Management"
         subtitle="Track revenue, manage student payments, and monitor fee dues alerts."
         primaryButton={{
-          label: "+ Assign New Fee",
+          label: "Assign New Fee",
           icon: "add-outline",
           onPress: () => setShowAssignFeeModal(true),
         }}
@@ -9332,77 +10155,7 @@ function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* Quick Login Role Options */}
-              <View style={styles.quickDemoCardSection}>
-                <Text style={styles.quickDemoHeaderTitle}>QUICK LOGIN</Text>
-                <View style={styles.quickPillsRowBox}>
-                  <TouchableOpacity
-                    style={[
-                      styles.quickRolePillBtn,
-                      selectedDemoRole === 'Admin' && styles.quickRolePillBtnActiveAdmin,
-                    ]}
-                    onPress={() => handleDemoQuickLogin('Admin')}
-                    activeOpacity={0.75}>
-                    <IconComp
-                      name="shield-checkmark-outline"
-                      size={14}
-                      color={selectedDemoRole === 'Admin' ? '#b07fa8' : '#64748B'}
-                    />
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.quickRolePillText,
-                        selectedDemoRole === 'Admin' && styles.quickRolePillTextActiveAdmin,
-                      ]}>
-                      Admin
-                    </Text>
-                  </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.quickRolePillBtn,
-                      selectedDemoRole === 'Teacher' && styles.quickRolePillBtnActiveTeacher,
-                    ]}
-                    onPress={() => handleDemoQuickLogin('Teacher')}
-                    activeOpacity={0.75}>
-                    <IconComp
-                      name="school-outline"
-                      size={14}
-                      color={selectedDemoRole === 'Teacher' ? '#2563EB' : '#64748B'}
-                    />
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.quickRolePillText,
-                        selectedDemoRole === 'Teacher' && styles.quickRolePillTextActiveTeacher,
-                      ]}>
-                      Teacher/Staff
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.quickRolePillBtn,
-                      selectedDemoRole === 'Student' && styles.quickRolePillBtnActiveStudent,
-                    ]}
-                    onPress={() => handleDemoQuickLogin('Student')}
-                    activeOpacity={0.75}>
-                    <IconComp
-                      name="person-outline"
-                      size={14}
-                      color={selectedDemoRole === 'Student' ? '#059669' : '#64748B'}
-                    />
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.quickRolePillText,
-                        selectedDemoRole === 'Student' && styles.quickRolePillTextActiveStudent,
-                      ]}>
-                      Student/Parent
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
 
               {/* App Tour / Onboarding Link */}
               <TouchableOpacity
@@ -10017,25 +10770,41 @@ function App() {
 
                       {attViewMode === 'daily' && (
                         <>
-                          {/* Date Input with Calendar Icon */}
-                          <TouchableOpacity
+                          {/* Date Input with Calendar Icon & Prev/Next Day Navigation */}
+                          <View
                             style={{
                               flexDirection: 'row',
                               alignItems: 'center',
-                              gap: 6,
                               backgroundColor: '#FFFFFF',
                               borderWidth: 1,
                               borderColor: '#CBD5E1',
                               borderRadius: 12,
-                              paddingHorizontal: 10,
-                              paddingVertical: 8,
-                            }}
-                            onPress={() => openDatePicker('attendance', attSelectedDate, 'Select Attendance Date')}>
-                            <IconComp name="calendar-outline" size={15} color="#b07fa8" />
-                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', minWidth: 78 }}>
-                              {attSelectedDate}
-                            </Text>
-                          </TouchableOpacity>
+                            }}>
+                            <TouchableOpacity
+                              style={{ paddingHorizontal: 6, paddingVertical: 8 }}
+                              onPress={() => setAttSelectedDate(prev => navigateDateStr(prev, -1))}>
+                              <IconComp name="chevron-back" size={14} color="#64748B" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 5,
+                                paddingVertical: 8,
+                                paddingHorizontal: 4,
+                              }}
+                              onPress={() => openDatePicker('attendance', attSelectedDate, 'Select Attendance Date')}>
+                              <IconComp name="calendar-outline" size={15} color="#b07fa8" />
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                                {attSelectedDate}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{ paddingHorizontal: 6, paddingVertical: 8 }}
+                              onPress={() => setAttSelectedDate(prev => navigateDateStr(prev, 1))}>
+                              <IconComp name="chevron-forward" size={14} color="#64748B" />
+                            </TouchableOpacity>
+                          </View>
 
                           {/* Session Selector — Proper Dropdown with Arrow (AN / FN) */}
                           <TouchableOpacity
@@ -10413,7 +11182,7 @@ function App() {
                         onPress={() => setShowNewHomeworkModal(true)}>
                         <IconComp name="add-outline" size={16} color="#FFFFFF" />
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>
-                          + Assign Homework
+                          Assign Homework
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -12870,7 +13639,7 @@ function App() {
                         }}
                         onPress={() => setShowBroadcastClassNoticeModal(true)}>
                         <IconComp name="add" size={16} color="#FFFFFF" />
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ Create Class Notice</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Create Class Notice</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -13072,8 +13841,9 @@ function App() {
                     <TouchableOpacity
                       style={[styles.smallWhiteOutlineBtn, { borderColor: '#b07fa8' }]}
                       onPress={() => {
-                        setCalendarDate(new Date(2026, 8, 1));
-                        setCalendarSelectedDayNum(new Date().getDate());
+                        const now = new Date();
+                        setCalendarDate(now);
+                        setCalendarSelectedDayNum(now.getDate());
                       }}>
                       <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Today</Text>
                     </TouchableOpacity>
@@ -13902,7 +14672,7 @@ function App() {
                         }}
                         onPress={() => setShowNewAssessmentModal(true)}>
                         <IconComp name="add" size={16} color="#FFFFFF" />
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ New Assessment</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>New Assessment</Text>
                       </TouchableOpacity>
                     </ScrollView>
                   </View>
@@ -15420,7 +16190,7 @@ function App() {
                       }}
                       onPress={() => setShowBookMeetingModal(true)}>
                       <IconComp name="add" size={16} color="#FFFFFF" />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ Book Meeting</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Book Meeting</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -16809,6 +17579,7 @@ function App() {
 
         {/* Global Date Picker Modal for Teacher Portal */}
         {renderGlobalDatePickerModal()}
+        {renderClockPickerModal()}
 
         </SafeAreaView>
       </SafeAreaProvider>
@@ -17774,26 +18545,44 @@ function App() {
                       )}
 
                       <View style={{ flexDirection: 'row', gap: 8 }}>
-                        {/* 3. Date Picker Button */}
-                        <TouchableOpacity
+                        {/* 3. Date Picker Button with Prev/Next Navigation */}
+                        <View
                           style={{
                             flex: 1,
                             height: 42,
                             borderRadius: 10,
                             borderWidth: 1,
                             borderColor: '#CBD5E1',
-                            paddingHorizontal: 10,
                             flexDirection: 'row',
                             alignItems: 'center',
-                            justifyContent: 'space-between',
                             backgroundColor: '#FFFFFF',
-                          }}
-                          onPress={() => openDatePicker('adminAttDate', adminAttDate, 'Select Attendance Date')}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
-                            {adminAttDate}
-                          </Text>
-                          <IconComp name="calendar-outline" size={16} color="#b07fa8" />
-                        </TouchableOpacity>
+                            paddingHorizontal: 4,
+                          }}>
+                          <TouchableOpacity
+                            style={{ padding: 6 }}
+                            onPress={() => setAdminAttDate(prev => navigateDateStr(prev, -1))}>
+                            <IconComp name="chevron-back" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                            }}
+                            onPress={() => openDatePicker('adminAttDate', adminAttDate, 'Select Attendance Date')}>
+                            <IconComp name="calendar-outline" size={15} color="#b07fa8" />
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                              {adminAttDate}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{ padding: 6 }}
+                            onPress={() => setAdminAttDate(prev => navigateDateStr(prev, 1))}>
+                            <IconComp name="chevron-forward" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                        </View>
 
                         {/* 4. Session Dropdown */}
                         <TouchableOpacity
@@ -18076,26 +18865,44 @@ function App() {
                     {/* Filter Bar: Date & Class Filter */}
                     <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', gap: 10 }}>
                       <View style={{ flexDirection: 'row', gap: 8 }}>
-                        {/* Date Picker Button */}
-                        <TouchableOpacity
+                        {/* Date Picker Button with Prev/Next Navigation */}
+                        <View
                           style={{
                             flex: 1,
                             height: 42,
                             borderRadius: 10,
                             borderWidth: 1,
                             borderColor: '#CBD5E1',
-                            paddingHorizontal: 10,
                             flexDirection: 'row',
                             alignItems: 'center',
-                            justifyContent: 'space-between',
                             backgroundColor: '#FFFFFF',
-                          }}
-                          onPress={() => openDatePicker('adminAttAnalyticsDate', adminAttAnalyticsDate, 'Select Analytics Date')}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
-                            {adminAttAnalyticsDate}
-                          </Text>
-                          <IconComp name="calendar-outline" size={16} color="#b07fa8" />
-                        </TouchableOpacity>
+                            paddingHorizontal: 4,
+                          }}>
+                          <TouchableOpacity
+                            style={{ padding: 6 }}
+                            onPress={() => setAdminAttAnalyticsDate(prev => navigateDateStr(prev, -1))}>
+                            <IconComp name="chevron-back" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{
+                              flex: 1,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                            }}
+                            onPress={() => openDatePicker('adminAttAnalyticsDate', adminAttAnalyticsDate, 'Select Analytics Date')}>
+                            <IconComp name="calendar-outline" size={15} color="#b07fa8" />
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                              {adminAttAnalyticsDate}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{ padding: 6 }}
+                            onPress={() => setAdminAttAnalyticsDate(prev => navigateDateStr(prev, 1))}>
+                            <IconComp name="chevron-forward" size={14} color="#64748B" />
+                          </TouchableOpacity>
+                        </View>
 
                         {/* Class Filter Dropdown */}
                         <TouchableOpacity
@@ -18336,6 +19143,7 @@ function App() {
         <Modal visible={!!activeModuleModal} animationType="slide">
           <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
             {/* Top Navigation Bar */}
+            {/* Top Navigation Bar (Matching Image 2 Classes & Sections) */}
             <View style={styles.moduleModalTopNav}>
               <TouchableOpacity
                 style={styles.moduleBackBtn}
@@ -18346,51 +19154,58 @@ function App() {
                 <IconComp name="arrow-back-outline" size={20} color="#0F172A" />
               </TouchableOpacity>
               <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.moduleNavTitleText} numberOfLines={1}>{activeModuleModal}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {activeModuleModal === 'Transport' && (
+                    <IconComp name="bus-outline" size={18} color="#b07fa8" />
+                  )}
+                  <Text style={styles.moduleNavTitleText} numberOfLines={1}>
+                    {activeModuleModal === 'Transport' ? 'Transport Management' : activeModuleModal}
+                  </Text>
+                </View>
                 <Text style={styles.moduleNavSubText}>ZUNA Admin Mobile Portal</Text>
               </View>
-              
-              {activeModuleModal === 'Environment Setup' && (
-                <TouchableOpacity
-                  style={[styles.moduleHeaderPrimaryBtn, { backgroundColor: '#b07fa8', flexDirection: 'row', alignItems: 'center', gap: 6 }]}
-                  onPress={handleSaveEnvironmentSetup}
-                  disabled={isSavingEnvironment}>
-                  <IconComp name="save-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>
-                    {isSavingEnvironment ? 'Saving...' : 'Save Settings'}
-                  </Text>
-                </TouchableOpacity>
-              )}
+                
+                {activeModuleModal === 'Environment Setup' && (
+                  <TouchableOpacity
+                    style={[styles.moduleHeaderPrimaryBtn, { backgroundColor: '#b07fa8', flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                    onPress={handleSaveEnvironmentSetup}
+                    disabled={isSavingEnvironment}>
+                    <IconComp name="save-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.moduleHeaderBtnText}>
+                      {isSavingEnvironment ? 'Saving...' : 'Save Settings'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
 
 
-              {activeModuleModal === 'HR & Payroll' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowAddHrModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Add Record</Text>
-                </TouchableOpacity>
-              )}
+                {activeModuleModal === 'HR & Payroll' && (
+                  <TouchableOpacity
+                    style={styles.moduleHeaderPrimaryBtn}
+                    onPress={() => setShowAddHrModal(true)}>
+                    <IconComp name="add-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.moduleHeaderBtnText}>Add Record</Text>
+                  </TouchableOpacity>
+                )}
 
-              {activeModuleModal === 'Timetables' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => showToast('Timetable changes saved successfully')}>
-                  <IconComp name="checkmark-done-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Save Changes</Text>
-                </TouchableOpacity>
-              )}
+                {activeModuleModal === 'Timetables' && (
+                  <TouchableOpacity
+                    style={styles.moduleHeaderPrimaryBtn}
+                    onPress={() => showToast('Timetable changes saved successfully')}>
+                    <IconComp name="checkmark-done-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.moduleHeaderBtnText}>Save Changes</Text>
+                  </TouchableOpacity>
+                )}
 
-              {activeModuleModal === 'Exams & Results' && (
-                <TouchableOpacity
-                  style={styles.moduleHeaderPrimaryBtn}
-                  onPress={() => setShowCreateExamModal(true)}>
-                  <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.moduleHeaderBtnText}>Create Exam</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+                {activeModuleModal === 'Exams & Results' && (
+                  <TouchableOpacity
+                    style={styles.moduleHeaderPrimaryBtn}
+                    onPress={() => setShowCreateExamModal(true)}>
+                    <IconComp name="add-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.moduleHeaderBtnText}>Create Exam</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
 
             {/* --- MODULE: CANTEEN ORDERS & REQUESTS (Images 3, 4, 5 Matching) --- */}
             {(activeModuleModal === 'Canteen Requests' || activeModuleModal === 'Canteen') && (() => {
@@ -18642,6 +19457,7 @@ function App() {
             {activeModuleModal === 'Staff Directory' && (
               <StaffDirectoryScreen
                 staffList={staffList}
+                setStaffList={setStaffList}
                 classesList={classList}
                 schoolId={adminSchoolId}
                 showToast={showToast}
@@ -18994,7 +19810,7 @@ function App() {
                 <View style={[styles.actionButtonsTopRow, { justifyContent: 'flex-end' }]}>
                   <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={handleOpenAddSubjectModal}>
                     <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>+ Add Subject</Text>
+                    <Text style={styles.purplePrimaryBtnText}>Add Subject</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -19011,10 +19827,10 @@ function App() {
                           </View>
                         </View>
                         <View style={{ flexDirection: 'row', gap: 8 }}>
-                          <TouchableOpacity onPress={() => showToast(`Edit subject ${sub.name}`)}>
+                          <TouchableOpacity onPress={() => handleOpenEditSubjectModal(sub)} style={{ padding: 4 }}>
                             <IconComp name="pencil-outline" size={16} color="#64748B" />
                           </TouchableOpacity>
-                          <TouchableOpacity onPress={() => showToast(`Delete subject ${sub.name}`)}>
+                          <TouchableOpacity onPress={() => handleDeleteSubject(sub)} style={{ padding: 4 }}>
                             <IconComp name="trash-outline" size={16} color="#DC2626" />
                           </TouchableOpacity>
                         </View>
@@ -20045,26 +20861,52 @@ function App() {
                           key={dayNum}
                           style={{ width: '14.28%', height: 44, justifyContent: 'center', alignItems: 'center' }}
                           onPress={() => setCalendarSelectedDayNum(dayNum)}>
-                          <View
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 16,
-                              backgroundColor: isSelected ? '#b07fa8' : isTodayCell ? '#faedf7' : 'transparent',
-                              borderWidth: isTodayCell && !isSelected ? 1.5 : 0,
-                              borderColor: '#b07fa8',
-                              justifyContent: 'center',
-                              alignItems: 'center',
-                            }}>
-                            <Text
-                              style={{
-                                fontSize: 13,
-                                fontWeight: isSelected || isTodayCell ? '800' : '600',
-                                color: isSelected ? '#FFFFFF' : isTodayCell ? '#b07fa8' : isSunday ? '#DC2626' : '#1E293B',
-                              }}>
-                              {dayNum}
-                            </Text>
-                          </View>
+                          {(() => {
+                            const dayEvents = calendarEventsList.filter(ev => {
+                              const dStr = ev.startDate || ev.start || ev.date;
+                              if (!dStr) return false;
+                              const clean = typeof dStr === 'string' ? dStr.trim().split('T')[0] : '';
+                              const parts = clean.split(/[-/]/);
+                              if (parts.length === 3) {
+                                if (parts[0].length === 4) {
+                                  return parseInt(parts[0], 10) === year && (parseInt(parts[1], 10) - 1) === month && parseInt(parts[2], 10) === dayNum;
+                                } else {
+                                  return parseInt(parts[2], 10) === year && (parseInt(parts[1], 10) - 1) === month && parseInt(parts[0], 10) === dayNum;
+                                }
+                              }
+                              return false;
+                            });
+                            const hasHoliday = dayEvents.some(ev => (ev.type || '').toLowerCase().includes('holiday'));
+                            const hasOther = dayEvents.some(ev => !(ev.type || '').toLowerCase().includes('holiday'));
+                            return (
+                              <View
+                                style={{
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: 16,
+                                  backgroundColor: isSelected ? '#b07fa8' : isTodayCell ? '#faedf7' : 'transparent',
+                                  borderWidth: isTodayCell && !isSelected ? 1.5 : 0,
+                                  borderColor: '#b07fa8',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                }}>
+                                <Text
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: isSelected || isTodayCell ? '800' : '600',
+                                    color: isSelected ? '#FFFFFF' : isTodayCell ? '#b07fa8' : isSunday ? '#DC2626' : '#1E293B',
+                                  }}>
+                                  {dayNum}
+                                </Text>
+                                {dayEvents.length > 0 && !isSelected && (
+                                  <View style={{ flexDirection: 'row', gap: 2, position: 'absolute', bottom: 2 }}>
+                                    {hasHoliday && <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#DC2626' }} />}
+                                    {hasOther && <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#EAB308' }} />}
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })()}
                         </TouchableOpacity>
                       );
                     }
@@ -20084,6 +20926,229 @@ function App() {
                     <Text style={[styles.smallWhiteOutlineBtnText, { color: '#b07fa8' }]}>Add Event</Text>
                   </TouchableOpacity>
                 </View>
+
+                {/* Lower Event List for Selected Month (Matching Requirement 3) */}
+                {(() => {
+                  const currentYear = calendarDate.getFullYear();
+                  const currentMonthIdx = calendarDate.getMonth();
+
+                  const parseEvDate = (ev: any): { year: number; month: number; day: number; dateObj: Date | null } => {
+                    const dStr = ev.startDate || ev.start || ev.date;
+                    if (!dStr) return { year: -1, month: -1, day: -1, dateObj: null };
+                    if (dStr instanceof Date) {
+                      return { year: dStr.getFullYear(), month: dStr.getMonth(), day: dStr.getDate(), dateObj: dStr };
+                    }
+                    if (typeof dStr === 'string') {
+                      const clean = dStr.trim().split('T')[0];
+                      const parts = clean.split(/[-/]/);
+                      if (parts.length === 3) {
+                        if (parts[0].length === 4) {
+                          const y = parseInt(parts[0], 10);
+                          const m = parseInt(parts[1], 10) - 1;
+                          const d = parseInt(parts[2], 10);
+                          return { year: y, month: m, day: d, dateObj: new Date(y, m, d) };
+                        } else {
+                          const d = parseInt(parts[0], 10);
+                          const m = parseInt(parts[1], 10) - 1;
+                          const y = parseInt(parts[2], 10);
+                          return { year: y, month: m, day: d, dateObj: new Date(y, m, d) };
+                        }
+                      }
+                      const parsed = new Date(dStr);
+                      if (!isNaN(parsed.getTime())) {
+                        return { year: parsed.getFullYear(), month: parsed.getMonth(), day: parsed.getDate(), dateObj: parsed };
+                      }
+                    }
+                    return { year: -1, month: -1, day: -1, dateObj: null };
+                  };
+
+                  const monthEvents = calendarEventsList.filter(ev => {
+                    if (ev.isCustomDates && Array.isArray(ev.customDates) && ev.customDates.length > 0) {
+                      return ev.customDates.some((cd: string) => {
+                        const parsed = parseEvDate({ start: cd });
+                        return parsed.year === currentYear && parsed.month === currentMonthIdx;
+                      });
+                    }
+                    const parsed = parseEvDate(ev);
+                    return parsed.year === currentYear && parsed.month === currentMonthIdx;
+                  });
+
+                  const getDisplayDateStr = (ev: any) => {
+                    const parsed = parseEvDate(ev);
+                    if (ev.isCustomDates && Array.isArray(ev.customDates) && ev.customDates.length > 0) {
+                      return `${ev.customDates.length} Custom Dates`;
+                    }
+                    if (parsed.dateObj) {
+                      const shortM = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      let res = `${parsed.day} ${shortM[parsed.month]} ${parsed.year}`;
+                      if (ev.endDate && ev.endDate !== ev.startDate) {
+                        const parsedEnd = parseEvDate({ start: ev.endDate });
+                        if (parsedEnd.dateObj) {
+                          res += ` - ${parsedEnd.day} ${shortM[parsedEnd.month]} ${parsedEnd.year}`;
+                        }
+                      }
+                      return res;
+                    }
+                    return ev.startDate || ev.start || 'Scheduled Date';
+                  };
+
+                  const getBadgeConfig = (ev: any) => {
+                    const typeLower = (ev.type || '').toLowerCase();
+                    if (typeLower.includes('holiday')) {
+                      return {
+                        label: 'Holiday',
+                        bg: '#FEF2F2',
+                        border: '#FCA5A5',
+                        badgeBg: '#FEE2E2',
+                        text: '#DC2626',
+                        icon: 'sparkles-outline',
+                      };
+                    }
+                    if (typeLower.includes('exam')) {
+                      return {
+                        label: 'Exam',
+                        bg: '#FEFCE8',
+                        border: '#FDE047',
+                        badgeBg: '#FEF9C3',
+                        text: '#A16207',
+                        icon: 'document-text-outline',
+                      };
+                    }
+                    if (typeLower.includes('meeting')) {
+                      return {
+                        label: 'Meeting',
+                        bg: '#FEFCE8',
+                        border: '#FDE047',
+                        badgeBg: '#FEF9C3',
+                        text: '#A16207',
+                        icon: 'people-outline',
+                      };
+                    }
+                    if (typeLower.includes('sport')) {
+                      return {
+                        label: 'Sports',
+                        bg: '#FEFCE8',
+                        border: '#FDE047',
+                        badgeBg: '#FEF9C3',
+                        text: '#A16207',
+                        icon: 'trophy-outline',
+                      };
+                    }
+                    if (typeLower.includes('cultural')) {
+                      return {
+                        label: 'Cultural',
+                        bg: '#FEFCE8',
+                        border: '#FDE047',
+                        badgeBg: '#FEF9C3',
+                        text: '#A16207',
+                        icon: 'color-palette-outline',
+                      };
+                    }
+                    return {
+                      label: ev.type ? ev.type.charAt(0).toUpperCase() + ev.type.slice(1) : 'Event',
+                      bg: '#FEFCE8',
+                      border: '#FDE047',
+                      badgeBg: '#FEF9C3',
+                      text: '#A16207',
+                      icon: 'calendar-outline',
+                    };
+                  };
+
+                  if (monthEvents.length === 0) {
+                    return (
+                      <View
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: 16,
+                          padding: 24,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: 1,
+                          borderColor: '#E2E8F0',
+                          marginBottom: 20,
+                        }}>
+                        <View
+                          style={{
+                            width: 50,
+                            height: 50,
+                            borderRadius: 25,
+                            backgroundColor: '#F8FAFC',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginBottom: 8,
+                          }}>
+                          <IconComp name="calendar-outline" size={26} color="#94A3B8" />
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#334155' }}>
+                          No Events for {calendarCurrentMonth}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 4, textAlign: 'center' }}>
+                          Tap "Add Event" to schedule activities or holidays for this month.
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View style={{ gap: 10, marginBottom: 24 }}>
+                      {monthEvents.map((ev, idx) => {
+                        const badge = getBadgeConfig(ev);
+                        const dateText = getDisplayDateStr(ev);
+                        return (
+                          <View
+                            key={ev.id || `ev-${idx}`}
+                            style={{
+                              backgroundColor: '#FFFFFF',
+                              borderRadius: 14,
+                              padding: 14,
+                              borderWidth: 1,
+                              borderColor: '#E2E8F0',
+                              borderLeftWidth: 5,
+                              borderLeftColor: badge.text,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              shadowColor: '#000000',
+                              shadowOffset: { width: 0, height: 1 },
+                              shadowOpacity: 0.05,
+                              shadowRadius: 2,
+                              elevation: 1,
+                            }}>
+                            <View style={{ flex: 1, marginRight: 10 }}>
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A', marginBottom: 4 }}>
+                                {ev.title}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <IconComp name="calendar-outline" size={13} color="#64748B" />
+                                <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '500' }}>
+                                  {dateText}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View
+                              style={{
+                                backgroundColor: badge.badgeBg,
+                                borderWidth: 1,
+                                borderColor: badge.border,
+                                paddingHorizontal: 10,
+                                paddingVertical: 4,
+                                borderRadius: 12,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                              }}>
+                              <IconComp name={badge.icon} size={12} color={badge.text} />
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: badge.text }}>
+                                {badge.label}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })()}
               </ScrollView>
             )}
 
@@ -20095,7 +21160,7 @@ function App() {
                   title="Examinations & Results"
                   subtitle="Manage school-wide exams and generate report cards."
                   primaryButton={examActiveSubTab === 'manage' ? {
-                    label: "+ Create Exam",
+                    label: "Create Exam",
                     icon: "add-outline",
                     onPress: () => setShowCreateExamModal(true),
                   } : undefined}
@@ -20562,107 +21627,13 @@ function App() {
             {/* --- MODULE: FEE MANAGEMENT (Full) (Image 3 Matching) --- */}
             {activeModuleModal === 'Fee Management' && renderFeeManagementContent()}
 
-            {/* --- MODULE: TRANSPORT MANAGEMENT --- */}
+            {/* --- MODULE: TRANSPORT MANAGEMENT (Matching Images 1, 2, 3, 4, 5) --- */}
             {activeModuleModal === 'Transport' && (
-              <ScrollView contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-                <ModuleHeaderCard
-                  icon="bus-outline"
-                  title="Transport Management"
-                  subtitle="Manage bus routes, drivers, school vehicles, and student assignments."
-                  primaryButton={{
-                    label: transportActiveTab === 'vehicles' ? '+ Add Vehicle' : '+ Add Route',
-                    icon: "add-outline",
-                    onPress: () => transportActiveTab === 'routes' ? setShowAddRouteModal(true) : setShowAddVehicleModal(true),
-                  }}
-                />
-
-                {/* Sub-Tabs */}
-                <View style={styles.moduleTabRow}>
-                  {(['routes', 'vehicles', 'assignments'] as const).map(tab => (
-                    <TouchableOpacity
-                      key={tab}
-                      style={[styles.moduleTabBtn, transportActiveTab === tab && styles.moduleTabBtnActive]}
-                      onPress={() => setTransportActiveTab(tab)}>
-                      <Text style={[styles.moduleTabText, transportActiveTab === tab && styles.moduleTabTextActive]}>
-                        {tab === 'routes' ? 'Transport Routes' : tab === 'vehicles' ? 'Vehicle Management' : 'Student Assignments'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Routes Tab */}
-                {transportActiveTab === 'routes' && (
-                  transportRoutesList.length === 0 ? (
-                    <View style={styles.emptyModuleCardContainer}>
-                      <View style={styles.emptyIconCircleLarge}>
-                        <IconComp name="bus-outline" size={40} color="#94A3B8" />
-                      </View>
-                      <Text style={styles.emptyModuleTitle}>No Routes Found</Text>
-                      <Text style={styles.emptyModuleSub}>Create your first transport route to begin assigning students.</Text>
-                      <TouchableOpacity style={styles.emptyActionPurpleBtn} onPress={() => setShowAddRouteModal(true)}>
-                        <IconComp name="add-outline" size={16} color="#FFFFFF" />
-                        <Text style={styles.emptyActionBtnText}>Create Route</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={{ gap: 12 }}>
-                      {transportRoutesList.map((route: any) => (
-                        <View key={route.id} style={styles.noticeCardItem}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                            <Text style={styles.noticeItemTitle}>{route.name}</Text>
-                            <View style={[styles.priorityPill, { backgroundColor: '#ECFDF5' }]}>
-                              <Text style={[styles.priorityPillText, { color: '#059669' }]}>Active</Text>
-                            </View>
-                          </View>
-                          <Text style={{ fontSize: 12, color: '#64748B' }}>Vehicle: {route.vehicleNumber}</Text>
-                          <Text style={{ fontSize: 12, color: '#64748B' }}>Driver: {route.driverName} • {route.driverPhone}</Text>
-                          <Text style={{ fontSize: 12, color: '#64748B' }}>Capacity: {route.capacity} seats</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )
-                )}
-
-                {/* Vehicles Tab */}
-                {transportActiveTab === 'vehicles' && (
-                  transportVehiclesList.length === 0 ? (
-                    <View style={styles.emptyModuleCardContainer}>
-                      <View style={styles.emptyIconCircleLarge}>
-                        <IconComp name="car-outline" size={40} color="#94A3B8" />
-                      </View>
-                      <Text style={styles.emptyModuleTitle}>No Vehicles Added</Text>
-                      <Text style={styles.emptyModuleSub}>Add school vehicles to manage fleet and compliance.</Text>
-                      <TouchableOpacity style={styles.emptyActionPurpleBtn} onPress={() => setShowAddVehicleModal(true)}>
-                        <IconComp name="add-outline" size={16} color="#FFFFFF" />
-                        <Text style={styles.emptyActionBtnText}>Add Vehicle</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={{ gap: 12 }}>
-                      {transportVehiclesList.map((v: any) => (
-                        <View key={v.id} style={styles.noticeCardItem}>
-                          <Text style={styles.noticeItemTitle}>{v.vehicleName}</Text>
-                          <Text style={{ fontSize: 12, color: '#64748B' }}>Reg: {v.registrationNumber} • {v.seatingCapacity} seats</Text>
-                          <View style={[styles.priorityPill, { backgroundColor: '#ECFDF5', alignSelf: 'flex-start', marginTop: 6 }]}>
-                            <Text style={[styles.priorityPillText, { color: '#059669' }]}>{v.status}</Text>
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-                  )
-                )}
-
-                {/* Assignments Tab */}
-                {transportActiveTab === 'assignments' && (
-                  <View style={styles.emptyModuleCardContainer}>
-                    <View style={styles.emptyIconCircleLarge}>
-                      <IconComp name="people-outline" size={40} color="#94A3B8" />
-                    </View>
-                    <Text style={styles.emptyModuleTitle}>No Student Assignments</Text>
-                    <Text style={styles.emptyModuleSub}>Create routes first, then assign students to routes.</Text>
-                  </View>
-                )}
-              </ScrollView>
+              <TransportManagementModule
+                schoolId={adminSchoolId}
+                onClose={() => setActiveModuleModal(null)}
+                showToast={showToast}
+              />
             )}
 
             {/* --- MODULE: LIBRARY MANAGEMENT --- */}
@@ -20682,7 +21653,7 @@ function App() {
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.purplePrimaryActionBtn} onPress={() => setShowAddBookModal(true)}>
                     <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                    <Text style={styles.purplePrimaryBtnText}>+ Add New Book</Text>
+                    <Text style={styles.purplePrimaryBtnText}>Add New Book</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -21485,7 +22456,7 @@ function App() {
                             setShowAddItemModal(true);
                           }}>
                           <IconComp name="add-outline" size={14} color="#FFFFFF" />
-                          <Text style={styles.purplePrimaryBtnText}>+ Add Item</Text>
+                          <Text style={styles.purplePrimaryBtnText}>Add Item</Text>
                         </TouchableOpacity>
                       ) : (
                         <TouchableOpacity
@@ -22633,7 +23604,7 @@ function App() {
                   title="Leads Management"
                   subtitle="Design lead forms, embed links, and track enquiries."
                   primaryButton={{
-                    label: "+ Add Form",
+                    label: "Add Form",
                     icon: "add-outline",
                     onPress: () => {
                       setNewFormConfig({
@@ -23450,7 +24421,7 @@ function App() {
                           }}
                           onPress={handleAddSectionDirect}>
                           <IconComp name="add-outline" size={14} color="#986794" />
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>+ Add Section</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#986794' }}>Add Section</Text>
                         </TouchableOpacity>
                       </View>
 
@@ -23571,7 +24542,7 @@ function App() {
                                   }}
                                   onPress={() => handleAddFieldDirect(sec.id)}>
                                   <IconComp name="add" size={14} color="#986794" />
-                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#986794' }}>+ Add Field</Text>
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#986794' }}>Add Field</Text>
                                 </TouchableOpacity>
 
                                 {/* Delete Section Trash Icon */}
@@ -23909,7 +24880,7 @@ function App() {
                       style={styles.rolesAddRoleBtn}
                       onPress={() => setShowAddRoleModal(true)}>
                       <IconComp name="add-outline" size={14} color="#b07fa8" />
-                      <Text style={styles.rolesAddRoleBtnText}>+ Add Role</Text>
+                      <Text style={styles.rolesAddRoleBtnText}>Add Role</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -24375,7 +25346,7 @@ function App() {
                         <TouchableOpacity
                           style={styles.envTimePickerField}
                           activeOpacity={0.8}
-                          onPress={() => openNativeTimePicker(setupWorkStart, setSetupWorkStart)}>
+                          onPress={() => openClockPicker(setupWorkStart || '09:00', 'Working Hours Start', setSetupWorkStart)}>
                           <Text style={styles.envTimePickerFieldText}>{setupWorkStart || '09:00'}</Text>
                           <IconComp name="time-outline" size={18} color="#64748B" />
                         </TouchableOpacity>
@@ -24385,7 +25356,7 @@ function App() {
                         <TouchableOpacity
                           style={styles.envTimePickerField}
                           activeOpacity={0.8}
-                          onPress={() => openNativeTimePicker(setupWorkEnd, setSetupWorkEnd)}>
+                          onPress={() => openClockPicker(setupWorkEnd || '16:00', 'Working Hours End', setSetupWorkEnd)}>
                           <Text style={styles.envTimePickerFieldText}>{setupWorkEnd || '16:00'}</Text>
                           <IconComp name="time-outline" size={18} color="#64748B" />
                         </TouchableOpacity>
@@ -24398,7 +25369,7 @@ function App() {
                         <TouchableOpacity
                           style={styles.envTimePickerField}
                           activeOpacity={0.8}
-                          onPress={() => openNativeTimePicker(setupGraceTime, setSetupGraceTime)}>
+                          onPress={() => openClockPicker(setupGraceTime || '09:30', 'Cutoff Time (Late)', setSetupGraceTime)}>
                           <Text style={styles.envTimePickerFieldText}>{setupGraceTime || '09:30'}</Text>
                           <IconComp name="time-outline" size={18} color="#64748B" />
                         </TouchableOpacity>
@@ -24840,8 +25811,8 @@ function App() {
             <View style={[styles.modalCardContainer, { maxWidth: 440, width: '92%', maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
               {/* Modal Header Matching Image 3 */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-                <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>Add Subject</Text>
-                <TouchableOpacity onPress={() => setShowAddSubjectModal(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#0F172A' }}>{editingSubjectId ? 'Edit Subject' : 'Add Subject'}</Text>
+                <TouchableOpacity onPress={() => { setShowAddSubjectModal(false); setEditingSubjectId(null); }} style={{ padding: 4 }}>
                   <IconComp name="close" size={20} color="#94A3B8" />
                 </TouchableOpacity>
               </View>
@@ -24960,7 +25931,7 @@ function App() {
                 backgroundColor: '#FFFFFF',
               }}>
                 <TouchableOpacity
-                  onPress={() => setShowAddSubjectModal(false)}
+                  onPress={() => { setShowAddSubjectModal(false); setEditingSubjectId(null); }}
                   style={{
                     paddingVertical: 9,
                     paddingHorizontal: 16,
@@ -24980,7 +25951,9 @@ function App() {
                     borderRadius: 8,
                     backgroundColor: '#b07fa8',
                   }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Save Subject</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                    {editingSubjectId ? 'Save Changes' : 'Save Subject'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -31617,6 +32590,7 @@ function App() {
         {/* --- GLOBAL MOBILE DATE PICKER CALENDAR MODAL (Admin & Teacher) --- */}
         {/* ========================================================================= */}
         {renderGlobalDatePickerModal()}
+        {renderClockPickerModal()}
 
       </SafeAreaView>
 

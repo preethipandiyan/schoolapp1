@@ -18,8 +18,16 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import * as XLSX from 'xlsx';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { KeyboardAwareFormScrollView } from './KeyboardAwareFormScrollView';
+
+// Try importing Firestore from react-native-firebase
+let db: any = null;
+try {
+  const { getFirestore } = require('@react-native-firebase/firestore');
+  db = getFirestore();
+} catch (e) {
+  console.warn('Firestore Native import failed in StaffDirectoryModule:', e);
+}
 
 // Native Bridge for File Picking & Opening
 const { NativeModules } = require('react-native');
@@ -165,6 +173,7 @@ const FocusTextInput = forwardRef<any, TextInputProps>((props, ref) => {
 // =========================================================================
 interface StaffDirectoryScreenProps {
   staffList: StaffItem[];
+  setStaffList?: React.Dispatch<React.SetStateAction<StaffItem[]>>;
   classesList?: any[];
   schoolId: string;
   onRefresh?: () => void;
@@ -177,6 +186,7 @@ interface StaffDirectoryScreenProps {
 
 export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
   staffList,
+  setStaffList,
   classesList = [],
   schoolId,
   showToast,
@@ -184,6 +194,12 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
   updateSubDocument,
   deleteSubDocument,
 }) => {
+  // Local state for immediate responsiveness on add/edit/delete
+  const [localStaffList, setLocalStaffList] = useState<StaffItem[]>(staffList);
+  React.useEffect(() => {
+    setLocalStaffList(staffList);
+  }, [staffList]);
+
   // Search & Filters state
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('All Roles');
@@ -204,16 +220,16 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
   const [staffToDelete, setStaffToDelete] = useState<StaffItem | null>(null);
 
   // Metric counts (calculated from all real staff data)
-  const totalStaffCount = staffList.length;
-  const activeStaffCount = staffList.filter(s => (s.status || 'Active').toLowerCase() === 'active').length;
-  const maleStaffCount = staffList.filter(s => (s.gender || '').toLowerCase() === 'male').length;
-  const femaleStaffCount = staffList.filter(s => (s.gender || '').toLowerCase() === 'female').length;
-  const teachersCount = staffList.filter(s => (s.staffType || '').toLowerCase().includes('teach') && !(s.staffType || '').toLowerCase().includes('non')).length;
-  const nonTeachingCount = staffList.filter(s => (s.staffType || '').toLowerCase().includes('non')).length;
+  const totalStaffCount = localStaffList.length;
+  const activeStaffCount = localStaffList.filter(s => (s.status || 'Active').toLowerCase() === 'active').length;
+  const maleStaffCount = localStaffList.filter(s => (s.gender || '').toLowerCase() === 'male').length;
+  const femaleStaffCount = localStaffList.filter(s => (s.gender || '').toLowerCase() === 'female').length;
+  const teachersCount = localStaffList.filter(s => (s.staffType || '').toLowerCase().includes('teach') && !(s.staffType || '').toLowerCase().includes('non')).length;
+  const nonTeachingCount = localStaffList.filter(s => (s.staffType || '').toLowerCase().includes('non')).length;
 
   // Combined filtering logic
   const filteredStaff = useMemo(() => {
-    return staffList.filter(st => {
+    return localStaffList.filter(st => {
       // 1. Search Query (matches name, staffId, email, mobileNumber)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -327,7 +343,23 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
   const confirmDeleteStaff = async () => {
     if (!staffToDelete) return;
     try {
-      await deleteSubDocument(schoolId, 'teachers', staffToDelete.id);
+      const targetSchool = schoolId || 'school1';
+      if (db) {
+        try {
+          await db.collection('schools').doc(targetSchool).collection('teachers').doc(staffToDelete.id).delete();
+          if (targetSchool === 'school1') {
+            try {
+              await db.collection('schools').doc('SchoolS001').collection('teachers').doc(staffToDelete.id).delete();
+            } catch (e) {}
+          }
+        } catch (e) {}
+      } else if (deleteSubDocument) {
+        await deleteSubDocument(targetSchool, 'teachers', staffToDelete.id);
+      }
+      setLocalStaffList(prev => prev.filter(s => s.id !== staffToDelete.id));
+      if (setStaffList) {
+        setStaffList(prev => prev.filter(s => s.id !== staffToDelete.id));
+      }
       showToast(`Removed staff member: ${staffToDelete.name}`);
       setStaffToDelete(null);
     } catch (err: any) {
@@ -796,10 +828,14 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
         visible={showAddStaffModal}
         schoolId={schoolId}
         classesList={classesList}
-        existingStaff={staffList}
+        existingStaff={localStaffList}
         onClose={() => setShowAddStaffModal(false)}
         onStaffAdded={(newStaff) => {
           setShowAddStaffModal(false);
+          setLocalStaffList(prev => [newStaff, ...prev.filter(s => s.id !== newStaff.id)]);
+          if (setStaffList) {
+            setStaffList(prev => [newStaff, ...prev.filter(s => s.id !== newStaff.id)]);
+          }
           showToast(`Added staff member ${newStaff.name}!`);
         }}
         addSubDocument={addSubDocument}
@@ -813,10 +849,14 @@ export const StaffDirectoryScreen: React.FC<StaffDirectoryScreenProps> = ({
           editStaff={selectedStaffForEdit}
           schoolId={schoolId}
           classesList={classesList}
-          existingStaff={staffList}
+          existingStaff={localStaffList}
           onClose={() => setSelectedStaffForEdit(null)}
           onStaffAdded={(updated) => {
             setSelectedStaffForEdit(null);
+            setLocalStaffList(prev => prev.map(s => s.id === updated.id ? updated : s));
+            if (setStaffList) {
+              setStaffList(prev => prev.map(s => s.id === updated.id ? updated : s));
+            }
             showToast(`Updated staff member ${updated.name}!`);
           }}
           addSubDocument={addSubDocument}
@@ -1157,14 +1197,31 @@ export const AddStaffModal: React.FC<AddStaffModalProps> = ({
         staffData.photoUrl = uploadedFiles.photo[0].uri || '';
       }
 
-      if (editStaff && editStaff.id && updateSubDocument) {
-        await updateSubDocument(schoolId, 'teachers', editStaff.id, staffData);
-        onStaffAdded({ id: editStaff.id, ...staffData });
-      } else {
-        staffData.createdAt = new Date().toISOString();
-        const newId = await addSubDocument(schoolId, 'teachers', staffData);
-        onStaffAdded({ id: newId, ...staffData });
+      const targetSchool = schoolId || 'school1';
+      let docId = editStaff?.id || `staff_${Date.now()}`;
+      staffData.id = docId;
+
+      if (db) {
+        try {
+          await db.collection('schools').doc(targetSchool).collection('teachers').doc(docId).set(staffData, { merge: true });
+          if (targetSchool === 'school1') {
+            try {
+              await db.collection('schools').doc('SchoolS001').collection('teachers').doc(docId).set(staffData, { merge: true });
+            } catch (e) {}
+          }
+        } catch (fbErr) {
+          console.warn('Direct Firestore staff write err:', fbErr);
+        }
       }
+
+      if (editStaff && editStaff.id && updateSubDocument) {
+        await updateSubDocument(targetSchool, 'teachers', editStaff.id, staffData);
+      } else if (addSubDocument) {
+        const newId = await addSubDocument(targetSchool, 'teachers', staffData);
+        if (newId) docId = newId;
+      }
+      staffData.id = docId;
+      onStaffAdded(staffData);
     } catch (err: any) {
       console.warn('Save staff error:', err);
       Alert.alert('Save Failed', err?.message || 'Failed to save staff member.');

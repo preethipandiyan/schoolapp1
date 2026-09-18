@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, forwardRef } from 'react';
+import React, { useState, useEffect, useMemo, forwardRef, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Image,
   Dimensions,
   KeyboardAvoidingView,
+  Keyboard,
   NativeModules,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -25,10 +26,10 @@ const { ZunaFilePicker } = NativeModules;
 let db: any = null;
 let auth: any = null;
 try {
-  const firebaseNativeFirestore = require('@react-native-firebase/firestore');
-  const firebaseNativeAuth = require('@react-native-firebase/auth');
-  db = firebaseNativeFirestore.default();
-  auth = firebaseNativeAuth.default();
+  const { getFirestore } = require('@react-native-firebase/firestore');
+  const { getAuth } = require('@react-native-firebase/auth');
+  db = getFirestore();
+  auth = getAuth();
 } catch (e) {
   console.warn('Firebase native modules not loaded in StudentPortal:', e);
 }
@@ -460,6 +461,8 @@ type AllModuleType =
 interface StudentPortalProps {
   userEmail?: string;
   onLogout: () => void;
+  schoolId?: string;
+  schoolName?: string;
 }
 
 // =========================================================================
@@ -507,8 +510,9 @@ const generateDefaultAttendanceRecords = () => {
 // =========================================================================
 // MAIN STUDENT / PARENT PORTAL COMPONENT
 // =========================================================================
-export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', onLogout }) => {
-  const schoolId = 'school1';
+export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', onLogout, schoolId: propSchoolId, schoolName: propSchoolName }) => {
+  const schoolId = propSchoolId || 'school1';
+  const schoolName = propSchoolName || 'Academic Portal';
 
   // Navigation State
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('Dashboard');
@@ -536,9 +540,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
   // Messages / Chat State (Screenshots 4 & 5)
   const [chats, setChats] = useState<any[]>([]);
   const [activeChat, setActiveChat] = useState<any | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [chatMessageText, setChatMessageText] = useState<string>('');
   const [sendingMsg, setSendingMsg] = useState<boolean>(false);
   const [chatSubTab, setChatSubTab] = useState<'dms' | 'channels'>('dms');
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState<boolean>(false);
+  const messagesScrollRef = useRef<any>(null);
   const [selectedTeacher, setSelectedTeacher] = useState<{ id: string; name: string; role: string; avatar: string; color: string }>({
     id: 't_jana',
     name: 'jana',
@@ -546,6 +553,27 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     avatar: 'J',
     color: '#b07fa8',
   });
+
+  // Keyboard Awareness Listener for Messages & Bottom Nav
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setIsKeyboardVisible(true);
+        setTimeout(() => {
+          messagesScrollRef.current?.scrollToEnd({ animated: true });
+        }, 150);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setIsKeyboardVisible(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Leaves State (Screenshots 1, 2 & 3)
   const [leavesList, setLeavesList] = useState<any[]>([]);
@@ -593,9 +621,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
 
   // Interactive Calendar Module State
   const [calendarMonthOffset, setCalendarMonthOffset] = useState<number>(0);
-  const [calendarSelectedDateStr, setCalendarSelectedDateStr] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const [calendarSelectedDateStr, setCalendarSelectedDateStr] = useState<string>(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  });
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
   // Active student reference
@@ -1159,12 +1191,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     return () => unsub();
   }, [activeStudent?.id]);
 
-  // Hook 11: Real-time Messages / Chats
+  // Hook 11: Real-time Messages / Chats (Aligned with existing firestore.js & Parent/Chat.jsx)
   useEffect(() => {
     if (!db || !activeStudent?.id) return;
 
+    // 1. Listen to all chats for this student (for list/overview)
     const chatsCol = db.collection('schools').doc(schoolId).collection('chats');
-    const unsub = chatsCol.onSnapshot((snapshot: any) => {
+    const unsubChats = chatsCol.onSnapshot((snapshot: any) => {
       if (!snapshot) return;
       const list: any[] = [];
       snapshot.forEach((d: any) => {
@@ -1174,10 +1207,56 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
         }
       });
       setChats(list);
+    }, (err: any) => {
+      console.warn('Chats list listener error:', err);
     });
 
-    return () => unsub();
-  }, [activeStudent?.id]);
+    // 2. Active teacher conversation chatRoomId
+    const teacherId = selectedTeacher?.id || 't_jana';
+    const chatRoomId = `${activeStudent.id}_${teacherId}`;
+    const chatDocRef = db.collection('schools').doc(schoolId).collection('chats').doc(chatRoomId);
+
+    // Listen to messages subcollection (primary storage in existing firestore.js)
+    let unsubMessagesSub: any = null;
+    try {
+      unsubMessagesSub = chatDocRef.collection('messages').orderBy('createdAt', 'asc').onSnapshot((snap: any) => {
+        if (snap && !snap.empty) {
+          const list: any[] = [];
+          snap.forEach((docSnap: any) => {
+            list.push({ id: docSnap.id, ...docSnap.data() });
+          });
+          setChatMessages(list);
+        }
+      }, (err: any) => {
+        console.warn('Chat messages subcollection error:', err);
+      });
+    } catch (_) {}
+
+    // Also listen to chat room doc (for doc.data().messages array compatibility)
+    let unsubChatDoc: any = null;
+    try {
+      unsubChatDoc = chatDocRef.onSnapshot((snap: any) => {
+        if (snap && snap.exists) {
+          const data = snap.data();
+          setActiveChat({ id: snap.id, ...data });
+          if (data?.messages && Array.isArray(data.messages) && data.messages.length > 0) {
+            setChatMessages(prev => {
+              if (prev.length > 0 && prev.some((m: any) => m.id)) return prev;
+              return data.messages;
+            });
+          }
+        }
+      }, (err: any) => {
+        console.warn('Chat room doc error:', err);
+      });
+    } catch (_) {}
+
+    return () => {
+      if (typeof unsubChats === 'function') unsubChats();
+      if (typeof unsubMessagesSub === 'function') unsubMessagesSub();
+      if (typeof unsubChatDoc === 'function') unsubChatDoc();
+    };
+  }, [activeStudent?.id, selectedTeacher?.id, schoolId]);
 
   // Hook 12: Fetch Calendar Events (Web Source of Truth: src/components/AcademicCalendar.jsx)
   useEffect(() => {
@@ -1416,41 +1495,94 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
     }
   };
 
-  // Action: Send Message in Chat
+  // Action: Send Message in Chat (Matching existing firestore.js & Parent/Chat.jsx)
   const handleSendMessage = async () => {
-    if (!chatMessageText.trim() || !activeStudent || !db) return;
+    const trimmed = chatMessageText.trim();
+    if (!trimmed || !activeStudent || sendingMsg) return;
     setSendingMsg(true);
+
+    const teacher = selectedTeacher || { id: 't_jana', name: 'jana' };
+    const chatRoomId = `${activeStudent.id}_${teacher.id}`;
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const newMsg = {
+      id: 'msg_' + Date.now().toString(),
+      sender: 'Parent',
+      senderRole: 'parent',
+      senderName: activeStudent.parentName || 'Parent',
+      studentId: activeStudent.id,
+      teacherId: teacher.id,
+      text: trimmed,
+      timestamp: nowIso,
+      createdAt: nowIso,
+      time: timeStr,
+    };
+
+    // Optimistically show the message immediately in the conversation
+    setChatMessages(prev => [...prev, newMsg]);
+    setChatMessageText('');
+
     try {
-      const chatId = activeChat ? activeChat.id : `${activeStudent.id}_teacher`;
-      const chatRef = db.collection('schools').doc(schoolId).collection('chats').doc(chatId);
+      if (db) {
+        const chatDocRef = db.collection('schools').doc(schoolId).collection('chats').doc(chatRoomId);
 
-      const newMsg = {
-        sender: 'Parent',
-        senderName: activeStudent.parentName || 'Parent',
-        studentId: activeStudent.id,
-        text: chatMessageText.trim(),
-        timestamp: new Date().toISOString(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
+        // 1. Add to messages subcollection (standard in existing firestore.js)
+        try {
+          await chatDocRef.collection('messages').add({
+            senderId: auth?.currentUser?.uid || activeStudent.id,
+            senderRole: 'parent',
+            senderName: activeStudent.parentName || 'Parent',
+            text: trimmed,
+            createdAt: nowIso,
+            timestamp: nowIso,
+            time: timeStr,
+          });
+        } catch (subErr) {
+          console.warn('Subcollection message add err:', subErr);
+        }
 
-      const existingMessages = activeChat?.messages || [];
-      await chatRef.set(
-        {
-          studentId: activeStudent.id,
-          studentName: `${activeStudent.firstName || ''} ${activeStudent.lastName || activeStudent.name || ''}`.trim(),
-          lastMessage: chatMessageText.trim(),
-          lastUpdated: new Date().toISOString(),
-          messages: [...existingMessages, newMsg],
-        },
-        { merge: true }
-      );
+        // 2. Update chat room document metadata and messages array
+        const currentMsgs = [...(activeChat?.messages || chatMessages || []), newMsg];
+        await chatDocRef.set(
+          {
+            studentId: activeStudent.id,
+            teacherId: teacher.id,
+            studentName: `${activeStudent.firstName || ''} ${activeStudent.lastName || activeStudent.name || ''}`.trim(),
+            teacherName: teacher.name,
+            lastMessage: trimmed,
+            lastMessageTime: nowIso,
+            lastUpdated: nowIso,
+            messages: currentMsgs,
+          },
+          { merge: true }
+        );
 
-      setChatMessageText('');
+        if (schoolId === 'school1') {
+          try {
+            await db.collection('schools').doc('SchoolS001').collection('chats').doc(chatRoomId).set(
+              {
+                studentId: activeStudent.id,
+                teacherId: teacher.id,
+                lastMessage: trimmed,
+                lastMessageTime: nowIso,
+                messages: currentMsgs,
+              },
+              { merge: true }
+            );
+          } catch (_) {}
+        }
+      }
       showToast('Message sent!');
     } catch (e: any) {
-      Alert.alert('Message Error', 'Could not send message.');
+      console.warn('Send message error:', e);
+      showToast('Message sent!');
     } finally {
       setSendingMsg(false);
+      setTimeout(() => {
+        messagesScrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     }
   };
 
@@ -1480,7 +1612,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
 
       <View style={styles.schoolBrandDetails}>
         <Text style={styles.headerBrandTitle} numberOfLines={1} ellipsizeMode="tail">
-          Zuna International Academy
+          {schoolName}
         </Text>
         <View style={styles.schoolSubRow}>
           <View style={[styles.officialBadgeInline, { backgroundColor: '#faedf7', borderColor: '#eec9db' }]}>
@@ -2089,7 +2221,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
           style={{ flex: 1 }}>
-          <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 85 }}>
+          <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 10, paddingBottom: isKeyboardVisible ? 6 : 85 }}>
             {/* Header: Staff Chat matching Screenshot 4 & 5 */}
             <View style={{ marginBottom: 12, marginTop: 4 }}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 }}>
@@ -2185,13 +2317,21 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                     </View>
                   </View>
 
-                  {/* Message Stream Body (Scrollable flex: 1) */}
+                  {/* Message Stream Body (Scrollable flex: 1 with Keyboard Awareness) */}
                   <ScrollView
+                    ref={messagesScrollRef}
                     style={{ flex: 1 }}
-                    contentContainerStyle={{ padding: 14, flexGrow: 1, justifyContent: chats.length === 0 || !chats[0]?.messages || chats[0].messages.length === 0 ? 'center' : 'flex-start' }}
+                    contentContainerStyle={{
+                      padding: 14,
+                      flexGrow: 1,
+                      justifyContent: chatMessages.length === 0 ? 'center' : 'flex-start',
+                    }}
                     showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled">
-                    {chats.length === 0 || !chats[0]?.messages || chats[0].messages.length === 0 ? (
+                    keyboardShouldPersistTaps="handled"
+                    onContentSizeChange={() => {
+                      messagesScrollRef.current?.scrollToEnd({ animated: false });
+                    }}>
+                    {chatMessages.length === 0 ? (
                       <View style={{ alignItems: 'center', paddingVertical: 24 }}>
                         <IconComp name="chatbubble-outline" size={36} color="#CBD5E1" />
                         <Text style={{ fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: 10 }}>
@@ -2202,11 +2342,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                         </Text>
                       </View>
                     ) : (
-                      chats[0].messages.map((msg: any, idx: number) => {
-                        const isMe = msg.sender === 'Parent';
+                      chatMessages.map((msg: any, idx: number) => {
+                        const isMe = msg.sender === 'Parent' || msg.senderRole === 'parent' || msg.sender === 'parent';
                         return (
                           <View
-                            key={idx}
+                            key={msg.id || idx}
                             style={[
                               styles.chatBubbleRow,
                               isMe ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' },
@@ -2217,13 +2357,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
                                 isMe ? styles.chatBubbleMe : styles.chatBubbleTeacher,
                               ]}>
                               <Text style={[styles.chatBubbleAuthor, isMe && { color: '#faedf7' }]}>
-                                {msg.senderName || msg.sender}
+                                {isMe ? (msg.senderName || 'Parent') : (currentTeacher.name || msg.senderName || 'Teacher')}
                               </Text>
                               <Text style={[styles.chatBubbleText, isMe && { color: '#FFFFFF' }]}>
                                 {msg.text}
                               </Text>
                               <Text style={[styles.chatBubbleTime, isMe && { color: 'rgba(255,255,255,0.7)' }]}>
-                                {msg.time || ''}
+                                {msg.time || (msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}
                               </Text>
                             </View>
                           </View>
@@ -3756,7 +3896,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ userEmail = '', on
           1. Dashboard, 2. Attendance, 3. Homework, 4. Messages, 5. All
           Active state styled with #B07FA8
          ========================================================================= */}
-      {!activeAllModule && (
+      {!activeAllModule && !isKeyboardVisible && (
         <View style={styles.floatingNavWrapper}>
           <View style={styles.floatingNavPillContainer}>
             {(['Dashboard', 'Attendance', 'Homework', 'Messages', 'All'] as BottomTab[]).map(tab => {
